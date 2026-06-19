@@ -20,6 +20,7 @@ export interface WorkItem {
   details: string | null;
   category: string | null;
   tags: string[];
+  parent: number | null;
   archived: boolean;
   created: string;
   updated: string;

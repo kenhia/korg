@@ -262,6 +262,7 @@ pub struct WorkItemRow {
     pub details: Option<String>,
     pub category: Option<String>,
     pub tags: Vec<String>,
+    pub parent: Option<i64>,
     pub archived: bool,
     pub created: OffsetDateTime,
     pub updated: OffsetDateTime,
@@ -270,11 +271,12 @@ pub struct WorkItemRow {
 const WORKITEM_SELECT: &str = "SELECT w.wi_number, w.node_id, \
         pj.name AS project, a.name AS area, \
         w.wi_type, w.wi_status, w.wi_tshirt, w.sprint, w.title, w.content, w.details, \
-        n.category, n.tags, n.archived, n.created, n.updated \
+        n.category, n.tags, pw.wi_number AS parent, n.archived, n.created, n.updated \
      FROM workitem w \
      JOIN node n ON n.id = w.node_id \
      LEFT JOIN project pj ON pj.id = n.project_id \
-     LEFT JOIN area a ON a.id = w.area_id";
+     LEFT JOIN area a ON a.id = w.area_id \
+     LEFT JOIN workitem pw ON pw.node_id = w.parent_node_id";
 
 pub async fn list_work_items(pool: &PgPool) -> Result<Vec<WorkItemRow>> {
     let sql = format!("{WORKITEM_SELECT} ORDER BY w.wi_number");
