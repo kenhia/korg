@@ -334,11 +334,15 @@ pub async fn list_projects(pool: &PgPool) -> Result<Vec<ProjectRow>> {
 // --- projects (write) -----------------------------------------------------
 
 pub async fn create_project(pool: &PgPool, name: &str) -> Result<i64> {
-    let id: i64 = sqlx::query("INSERT INTO project (name) VALUES ($1) RETURNING id")
-        .bind(name)
-        .fetch_one(pool)
-        .await?
-        .get("id");
+    // Idempotent: return the existing id if the project already exists.
+    let id: i64 = sqlx::query(
+        "INSERT INTO project (name) VALUES ($1) \
+         ON CONFLICT (name) DO UPDATE SET name = project.name RETURNING id",
+    )
+    .bind(name)
+    .fetch_one(pool)
+    .await?
+    .get("id");
     Ok(id)
 }
 

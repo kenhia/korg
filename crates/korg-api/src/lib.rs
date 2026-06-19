@@ -35,7 +35,7 @@ type ApiResult = Result<Json<Value>, ApiError>;
 pub fn build_router(state: AppState) -> Router {
     let api = Router::new()
         .route("/api/health", get(health))
-        .route("/api/projects", get(list_projects))
+        .route("/api/projects", get(list_projects).post(create_project))
         .route("/api/projects/recent", get(recent_project))
         .route("/api/work-items", get(list_work_items).post(create_work_item))
         .route("/api/work-items/:wi_number", get(get_work_item))
@@ -106,6 +106,16 @@ async fn health() -> Json<Value> {
 
 async fn list_projects(State(s): State<AppState>) -> ApiResult {
     Ok(Json(json!(repo::list_projects(&s.pool).await?)))
+}
+
+#[derive(Deserialize)]
+struct CreateProject {
+    name: String,
+}
+
+async fn create_project(State(s): State<AppState>, Json(b): Json<CreateProject>) -> ApiResult {
+    let id = repo::create_project(&s.pool, &b.name).await?;
+    Ok(Json(json!({ "id": id, "name": b.name })))
 }
 
 async fn recent_project(State(s): State<AppState>) -> ApiResult {

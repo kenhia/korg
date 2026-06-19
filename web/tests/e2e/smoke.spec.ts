@@ -29,10 +29,10 @@ test("cards board shows all columns and toggles to list", async ({ page }) => {
   await expect(page.getByRole("columnheader", { name: "Title" })).toBeVisible();
 });
 
-test("work items page has a project selector", async ({ page }) => {
+test("work items page has a project rail", async ({ page }) => {
   await page.goto("/work-items");
   await expect(page.getByRole("heading", { name: "Work items" })).toBeVisible();
-  await expect(page.locator("select")).toBeVisible();
+  await expect(page.getByRole("button", { name: "All projects" })).toBeVisible();
 });
 
 test("reading list has an add control", async ({ page }) => {

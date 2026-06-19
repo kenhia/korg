@@ -159,4 +159,24 @@ async fn api_end_to_end() {
     // Recent project resolves to the one we touched.
     let (_st, recent) = req(&router, "GET", "/api/projects/recent", None).await;
     assert!(recent["project"].is_null() || recent["project"].is_string());
+
+    // Create a project (idempotent) and create a work item in it.
+    let (st, proj) = req(&router, "POST", "/api/projects", Some(json!({"name":"alpha"}))).await;
+    assert_eq!(st, StatusCode::OK);
+    let pid = proj["id"].as_i64().unwrap();
+    let (st, _) = req(&router, "POST", "/api/projects", Some(json!({"name":"alpha"}))).await;
+    assert_eq!(st, StatusCode::OK, "creating the same project twice is idempotent");
+    let (_st, projects) = req(&router, "GET", "/api/projects", None).await;
+    assert!(projects.as_array().unwrap().iter().any(|p| p["name"] == "alpha"));
+
+    let (st, _) = req(
+        &router,
+        "POST",
+        "/api/work-items",
+        Some(json!({"title":"in alpha","content":"x","project_id":pid})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (_st, alpha_items) = req(&router, "GET", "/api/work-items?project=alpha", None).await;
+    assert_eq!(alpha_items.as_array().unwrap().len(), 1);
 }

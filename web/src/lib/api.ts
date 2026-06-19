@@ -83,6 +83,20 @@ export interface Neighbor {
   label: string;
 }
 
+export const WI_TYPES = [
+  "task",
+  "bug",
+  "idea",
+  "research",
+  "tweak",
+  "issue",
+  "feature",
+  "epic",
+  "story",
+] as const;
+export const WI_STATUSES = ["open", "active", "resolved", "closed", "draft"] as const;
+export const TSHIRTS = ["XS", "S", "M", "L", "XL", "Huge", "Unknown"] as const;
+
 async function http<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,
@@ -107,6 +121,7 @@ export const api = {
   // projects
   projects: () => http<Project[]>("GET", "/api/projects"),
   recentProject: () => http<{ project: string | null }>("GET", "/api/projects/recent"),
+  createProject: (name: string) => http<{ id: number; name: string }>("POST", "/api/projects", { name }),
 
   // work items
   workItems: (project?: string) =>
@@ -115,6 +130,14 @@ export const api = {
       project ? `/api/work-items?project=${encodeURIComponent(project)}` : "/api/work-items",
     ),
   workItem: (wi: number) => http<WorkItem | null>("GET", `/api/work-items/${wi}`),
+  createWorkItem: (b: {
+    title: string;
+    content: string;
+    wi_type?: string;
+    wi_status?: string;
+    wi_tshirt?: string;
+    project_id?: number;
+  }) => http<{ node_id: number; wi_number: number }>("POST", "/api/work-items", b),
 
   // cards
   cards: () => http<Card[]>("GET", "/api/cards"),
