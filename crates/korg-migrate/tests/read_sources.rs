@@ -36,6 +36,6 @@ async fn read_sources_matches_row_counts() {
     );
 
     // Sanity: every source actually has data (guards against an empty restore).
-    assert!(kwi.workitems.len() > 0, "kwi work items should be non-empty");
-    assert!(kcard.cards.len() > 0, "kcard cards should be non-empty");
+    assert!(!kwi.workitems.is_empty(), "kwi work items should be non-empty");
+    assert!(!kcard.cards.is_empty(), "kcard cards should be non-empty");
 }

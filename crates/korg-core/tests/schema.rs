@@ -43,6 +43,8 @@ async fn schema_applies_cleanly() {
         "comment",
         "relationship",
         "link",
+        "slot_template",
+        "slot",
     ] {
         let exists: bool = sqlx::query(
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
@@ -77,7 +79,7 @@ async fn schema_applies_cleanly() {
     assert!(seq_exists, "workitem_wi_number_seq should exist");
 
     // The `link` node kind is accepted (and others still are).
-    for kind in ["workitem", "card", "link"] {
+    for kind in ["workitem", "card", "link", "slot"] {
         sqlx::query("INSERT INTO node (kind) VALUES ($1)")
             .bind(kind)
             .execute(&pool)

@@ -10,3 +10,4 @@ pub fn migrator() -> sqlx::migrate::Migrator {
 }
 
 pub mod repo;
+pub mod slots;
