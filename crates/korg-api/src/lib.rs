@@ -5,10 +5,10 @@ use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, Method};
-use axum::routing::{get, patch, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use rust_decimal::Decimal;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use time::macros::format_description;
@@ -38,7 +38,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/projects", get(list_projects).post(create_project))
         .route("/api/projects/recent", get(recent_project))
         .route("/api/work-items", get(list_work_items).post(create_work_item))
-        .route("/api/work-items/:wi_number", get(get_work_item))
+        .route("/api/work-items/:wi_number", get(get_work_item).patch(update_work_item))
+        .route("/api/areas", get(list_areas))
         .route("/api/cards", get(list_cards).post(create_card))
         .route("/api/cards/:node_id", patch(update_card))
         .route("/api/links", get(list_links).post(create_link))
@@ -48,6 +49,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/slots/:node_id", patch(update_slot))
         .route("/api/slot-templates", get(list_slot_templates).put(set_slot_templates))
         .route("/api/relationships", post(create_relationship))
+        .route("/api/relationships/:id", delete(delete_relationship))
         .route("/api/nodes/:id/neighbors", get(neighbors))
         .with_state(state);
 
@@ -188,6 +190,79 @@ async fn create_work_item(State(s): State<AppState>, Json(b): Json<CreateWorkIte
     )
     .await?;
     Ok(Json(json!({ "node_id": r.node_id, "wi_number": r.wi_number })))
+}
+
+fn deser_nullable_str<'de, D>(d: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(d).map(Some)
+}
+
+fn deser_nullable_i64<'de, D>(d: D) -> Result<Option<Option<i64>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<i64>::deserialize(d).map(Some)
+}
+
+#[derive(Deserialize)]
+struct UpdateWorkItem {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default, deserialize_with = "deser_nullable_str")]
+    details: Option<Option<String>>,
+    #[serde(default)]
+    wi_type: Option<String>,
+    #[serde(default)]
+    wi_status: Option<String>,
+    #[serde(default)]
+    wi_tshirt: Option<String>,
+    #[serde(default, deserialize_with = "deser_nullable_str")]
+    sprint: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deser_nullable_i64")]
+    area_id: Option<Option<i64>>,
+    #[serde(default)]
+    archived: Option<bool>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+}
+
+async fn update_work_item(
+    State(s): State<AppState>,
+    Path(wi): Path<i64>,
+    Json(b): Json<UpdateWorkItem>,
+) -> ApiResult {
+    repo::update_work_item(
+        &s.pool,
+        wi,
+        repo::WorkItemPatch {
+            title: b.title,
+            content: b.content,
+            details: b.details,
+            wi_type: b.wi_type,
+            wi_status: b.wi_status,
+            wi_tshirt: b.wi_tshirt,
+            sprint: b.sprint,
+            area_id: b.area_id,
+            archived: b.archived,
+            category: None,
+            tags: b.tags,
+        },
+    )
+    .await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct AreasQuery {
+    project: String,
+}
+
+async fn list_areas(State(s): State<AppState>, Query(q): Query<AreasQuery>) -> ApiResult {
+    Ok(Json(json!(repo::list_areas(&s.pool, &q.project).await?)))
 }
 
 // --- cards ----------------------------------------------------------------
@@ -424,6 +499,11 @@ async fn create_relationship(
 ) -> ApiResult {
     let id = repo::relate(&s.pool, b.left, b.right, &b.label).await?;
     Ok(Json(json!({ "id": id })))
+}
+
+async fn delete_relationship(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
+    repo::unrelate(&s.pool, id).await?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn neighbors(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {

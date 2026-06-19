@@ -79,6 +79,7 @@ export interface Slot {
 }
 
 export interface Neighbor {
+  rel_id: number;
   node_id: number;
   kind: string;
   label: string;
@@ -137,8 +138,28 @@ export const api = {
     wi_type?: string;
     wi_status?: string;
     wi_tshirt?: string;
+    sprint?: string;
+    details?: string;
+    area_id?: number;
     project_id?: number;
   }) => http<{ node_id: number; wi_number: number }>("POST", "/api/work-items", b),
+  updateWorkItem: (
+    wi: number,
+    patch: Partial<{
+      title: string;
+      content: string;
+      details: string | null;
+      wi_type: string;
+      wi_status: string;
+      wi_tshirt: string;
+      sprint: string | null;
+      area_id: number | null;
+      archived: boolean;
+      tags: string[];
+    }>,
+  ) => http<{ ok: true }>("PATCH", `/api/work-items/${wi}`, patch),
+  areas: (project: string) =>
+    http<{ id: number; name: string }[]>("GET", `/api/areas?project=${encodeURIComponent(project)}`),
 
   // cards
   cards: () => http<Card[]>("GET", "/api/cards"),
@@ -176,5 +197,6 @@ export const api = {
   // relationships
   relate: (left: number, right: number, label: string) =>
     http<{ id: number }>("POST", "/api/relationships", { left, right, label }),
+  unrelate: (id: number) => http<{ ok: true }>("DELETE", `/api/relationships/${id}`),
   neighbors: (id: number) => http<Neighbor[]>("GET", `/api/nodes/${id}/neighbors`),
 };

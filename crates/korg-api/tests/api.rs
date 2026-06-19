@@ -179,4 +179,26 @@ async fn api_end_to_end() {
     assert_eq!(st, StatusCode::OK);
     let (_st, alpha_items) = req(&router, "GET", "/api/work-items?project=alpha", None).await;
     assert_eq!(alpha_items.as_array().unwrap().len(), 1);
+
+    // Edit + archive the work item via PATCH.
+    let (st, _) = req(
+        &router,
+        "PATCH",
+        "/api/work-items/1",
+        Some(json!({"wi_status":"resolved","archived":true,"tags":["edited"]})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (_st, one) = req(&router, "GET", "/api/work-items/1", None).await;
+    assert_eq!(one["wi_status"], "resolved");
+    assert_eq!(one["archived"], true);
+    assert_eq!(one["tags"][0], "edited");
+
+    // Relationship has an id and can be deleted.
+    let (_st, ns) = req(&router, "GET", &format!("/api/nodes/{slot_node}/neighbors"), None).await;
+    let rel_id = ns[0]["rel_id"].as_i64().unwrap();
+    let (st, _) = req(&router, "DELETE", &format!("/api/relationships/{rel_id}"), None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (_st, ns2) = req(&router, "GET", &format!("/api/nodes/{slot_node}/neighbors"), None).await;
+    assert_eq!(ns2.as_array().unwrap().len(), 0);
 }

@@ -201,6 +201,7 @@ pub async fn mark_link_read(pool: &PgPool, node_id: i64, read: bool) -> Result<(
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq)]
 pub struct Neighbor {
+    pub rel_id: i64,
     pub node_id: i64,
     pub kind: String,
     pub label: String,
@@ -224,7 +225,7 @@ pub async fn relate(pool: &PgPool, left: i64, right: i64, label: &str) -> Result
 /// with that node's kind and the relationship label. Works across kinds.
 pub async fn neighbors(pool: &PgPool, node: i64) -> Result<Vec<Neighbor>> {
     let rows = sqlx::query_as::<_, Neighbor>(
-        "SELECT n.id AS node_id, n.kind, r.relationship AS label \
+        "SELECT r.id AS rel_id, n.id AS node_id, n.kind, r.relationship AS label \
          FROM relationship r \
          JOIN node n \
            ON n.id = CASE WHEN r.left_id = $1 THEN r.right_id ELSE r.left_id END \
@@ -433,6 +434,97 @@ pub async fn update_card(pool: &PgPool, node_id: i64, patch: CardPatch) -> Resul
             .execute(&mut *tx)
             .await?;
     }
+    tx.commit().await?;
+    Ok(())
+}
+
+// --- areas ----------------------------------------------------------------
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct AreaRow {
+    pub id: i64,
+    pub name: String,
+}
+
+pub async fn list_areas(pool: &PgPool, project: &str) -> Result<Vec<AreaRow>> {
+    let rows = sqlx::query_as::<_, AreaRow>(
+        "SELECT a.id, a.name FROM area a \
+         JOIN project p ON p.id = a.project_id \
+         WHERE p.name = $1 ORDER BY a.name",
+    )
+    .bind(project)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// Resolve a work item's node id from its user-facing wi_number.
+pub async fn node_id_for_wi(pool: &PgPool, wi_number: i64) -> Result<Option<i64>> {
+    let id: Option<i64> = sqlx::query_scalar("SELECT node_id FROM workitem WHERE wi_number = $1")
+        .bind(wi_number)
+        .fetch_optional(pool)
+        .await?;
+    Ok(id)
+}
+
+// --- work item update (Edit + Archive) ------------------------------------
+
+#[derive(Debug, Clone, Default)]
+pub struct WorkItemPatch {
+    pub title: Option<String>,
+    pub content: Option<String>,
+    pub details: Option<Option<String>>,
+    pub wi_type: Option<String>,
+    pub wi_status: Option<String>,
+    pub wi_tshirt: Option<String>,
+    pub sprint: Option<Option<String>>,
+    pub area_id: Option<Option<i64>>,
+    pub archived: Option<bool>,
+    pub category: Option<Option<String>>,
+    pub tags: Option<Vec<String>>,
+}
+
+pub async fn update_work_item(pool: &PgPool, wi_number: i64, patch: WorkItemPatch) -> Result<()> {
+    let node_id = match node_id_for_wi(pool, wi_number).await? {
+        Some(n) => n,
+        None => return Ok(()),
+    };
+    let mut tx = pool.begin().await?;
+
+    if let Some(v) = &patch.title {
+        sqlx::query("UPDATE workitem SET title = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = &patch.content {
+        sqlx::query("UPDATE workitem SET content = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = &patch.details {
+        sqlx::query("UPDATE workitem SET details = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = &patch.wi_type {
+        sqlx::query("UPDATE workitem SET wi_type = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = &patch.wi_status {
+        sqlx::query("UPDATE workitem SET wi_status = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = &patch.wi_tshirt {
+        sqlx::query("UPDATE workitem SET wi_tshirt = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = &patch.sprint {
+        sqlx::query("UPDATE workitem SET sprint = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = &patch.area_id {
+        sqlx::query("UPDATE workitem SET area_id = $2 WHERE node_id = $1").bind(node_id).bind(*v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = patch.archived {
+        sqlx::query("UPDATE node SET archived = $2 WHERE id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = &patch.category {
+        sqlx::query("UPDATE node SET category = $2 WHERE id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = &patch.tags {
+        sqlx::query("UPDATE node SET tags = $2 WHERE id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+
     tx.commit().await?;
     Ok(())
 }

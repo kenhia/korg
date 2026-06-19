@@ -129,12 +129,114 @@
   async function open(item: WorkItem) {
     detail = item;
     cursor = item.wi_number;
+    editing = false;
     related = [];
+    projectAreas = [];
     try {
       related = await api.neighbors(item.node_id);
     } catch {
       related = [];
     }
+    try {
+      projectAreas = item.project ? await api.areas(item.project) : [];
+    } catch {
+      projectAreas = [];
+    }
+  }
+
+  async function refreshDetail() {
+    if (!detail) return;
+    const u = await api.workItem(detail.wi_number).catch(() => null);
+    if (u) {
+      detail = u;
+      related = await api.neighbors(u.node_id).catch(() => []);
+    }
+  }
+
+  // --- edit / archive ---
+  let editing = $state(false);
+  let projectAreas = $state<{ id: number; name: string }[]>([]);
+  let ef = $state({
+    title: "",
+    content: "",
+    details: "",
+    wi_type: "task",
+    wi_status: "open",
+    wi_tshirt: "Unknown",
+    sprint: "",
+    area: "",
+    tags: "",
+  });
+
+  function startEdit(it: WorkItem) {
+    ef = {
+      title: it.title,
+      content: it.content,
+      details: it.details ?? "",
+      wi_type: it.wi_type,
+      wi_status: it.wi_status,
+      wi_tshirt: it.wi_tshirt,
+      sprint: it.sprint ?? "",
+      area: it.area ?? "",
+      tags: it.tags.join(", "),
+    };
+    editing = true;
+  }
+
+  async function saveEdit() {
+    if (!detail) return;
+    const areaId =
+      ef.area === "" ? null : (projectAreas.find((a) => a.name === ef.area)?.id ?? null);
+    await api.updateWorkItem(detail.wi_number, {
+      title: ef.title,
+      content: ef.content,
+      details: ef.details.trim() === "" ? null : ef.details,
+      wi_type: ef.wi_type,
+      wi_status: ef.wi_status,
+      wi_tshirt: ef.wi_tshirt,
+      sprint: ef.sprint.trim() === "" ? null : ef.sprint,
+      area_id: areaId,
+      tags: ef.tags
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t !== ""),
+    });
+    editing = false;
+    await refreshDetail();
+    await loadItems();
+  }
+
+  async function toggleArchive() {
+    if (!detail) return;
+    await api.updateWorkItem(detail.wi_number, { archived: !detail.archived });
+    await refreshDetail();
+    await loadItems();
+  }
+
+  // --- relationships ---
+  let relAdding = $state(false);
+  let relTarget = $state("");
+  let relLabel = $state("related-to");
+
+  async function addRel() {
+    if (!detail) return;
+    const wn = parseInt(relTarget, 10);
+    if (!wn) return;
+    const target = await api.workItem(wn).catch(() => null);
+    if (!target) {
+      error = `No work item #${wn}`;
+      return;
+    }
+    await api.relate(detail.node_id, target.node_id, relLabel.trim() || "related-to");
+    relTarget = "";
+    relAdding = false;
+    related = await api.neighbors(detail.node_id).catch(() => []);
+  }
+
+  async function removeRel(relId: number) {
+    if (!detail) return;
+    await api.unrelate(relId);
+    related = await api.neighbors(detail.node_id).catch(() => []);
   }
 
   function relatedLabel(n: Neighbor): string {
@@ -180,7 +282,10 @@
     const tag = (e.target as HTMLElement)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if (detail) {
-      if (e.key === "Escape") detail = null;
+      if (e.key === "Escape") {
+        if (editing) editing = false;
+        else detail = null;
+      }
       return;
     }
     if (e.key === "ArrowDown") {
@@ -346,60 +451,116 @@
   <article class="max-w-3xl space-y-4">
     <div class="flex items-center justify-between">
       <button class="rounded border border-[var(--color-border)] px-3 py-1 text-sm hover:bg-[var(--color-surface-hi)]" onclick={() => (detail = null)}>← Back</button>
+      <div class="flex gap-2">
+        {#if !editing}
+          <button class="rounded bg-[var(--color-accent-soft)] px-3 py-1 text-sm hover:bg-[var(--color-accent)]" onclick={() => startEdit(item)}>Edit</button>
+        {/if}
+        <button class="rounded border border-[var(--color-border)] px-3 py-1 text-sm hover:bg-[var(--color-surface-hi)]" onclick={toggleArchive}>
+          {item.archived ? "Un-archive" : "Archive"}
+        </button>
+      </div>
     </div>
 
-    <h2 class="text-2xl font-semibold">
-      {item.title}
-      {#if item.archived}<span class="ml-2 rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs uppercase text-[var(--color-muted)]">Archived</span>{/if}
-    </h2>
-
-    <dl class="flex flex-wrap gap-x-6 gap-y-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm">
-      <div class="flex gap-1"><dt class="text-[var(--color-muted)]">ID</dt><dd class="font-mono">{item.wi_number}</dd></div>
-      <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Project</dt><dd>{item.project ?? "—"}</dd></div>
-      <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Area</dt><dd>{item.area ?? "—"}</dd></div>
-      <div class="flex items-center gap-1"><dt class="text-[var(--color-muted)]">Type</dt><dd>{@render badge(item.wi_type)}</dd></div>
-      <div class="flex items-center gap-1"><dt class="text-[var(--color-muted)]">Status</dt><dd>{@render badge(item.wi_status)}</dd></div>
-      <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Size</dt><dd>{item.wi_tshirt}</dd></div>
-      <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Sprint</dt><dd>{item.sprint ?? "—"}</dd></div>
-      {#if item.parent != null}
-        <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Parent</dt><dd>#{item.parent}</dd></div>
-      {/if}
-      <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Created</dt><dd>{new Date(item.created).toLocaleString()}</dd></div>
-      <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Updated</dt><dd>{new Date(item.updated).toLocaleString()}</dd></div>
-    </dl>
-
-    {#if item.tags.length > 0}
-      <div class="flex flex-wrap gap-1">
-        {#each item.tags as tag (tag)}<span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs text-[var(--color-muted)]">#{tag}</span>{/each}
+    {#if editing}
+      <div class="space-y-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+        <input class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none" placeholder="Title" bind:value={ef.title} />
+        <div class="flex flex-wrap gap-2 text-sm">
+          <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]">Type
+            <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 outline-none" bind:value={ef.wi_type}>{#each WI_TYPES as t (t)}<option value={t}>{t}</option>{/each}</select>
+          </label>
+          <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]">Status
+            <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 outline-none" bind:value={ef.wi_status}>{#each WI_STATUSES as s (s)}<option value={s}>{s}</option>{/each}</select>
+          </label>
+          <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]">Size
+            <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 outline-none" bind:value={ef.wi_tshirt}>{#each TSHIRTS as ts (ts)}<option value={ts}>{ts}</option>{/each}</select>
+          </label>
+          <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]">Area
+            <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 outline-none" bind:value={ef.area}>
+              <option value="">—</option>
+              {#each projectAreas as a (a.id)}<option value={a.name}>{a.name}</option>{/each}
+            </select>
+          </label>
+          <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]">Sprint
+            <input class="w-24 rounded bg-[var(--color-surface-hi)] px-2 py-1 outline-none" bind:value={ef.sprint} />
+          </label>
+        </div>
+        <textarea class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none" rows="5" placeholder="Content (markdown)" bind:value={ef.content}></textarea>
+        <textarea class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none" rows="4" placeholder="Details (markdown)" bind:value={ef.details}></textarea>
+        <input class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none" placeholder="tags, comma, separated" bind:value={ef.tags} />
+        <div class="flex justify-end gap-2">
+          <button class="rounded px-3 py-1.5 text-sm hover:bg-[var(--color-surface-hi)]" onclick={() => (editing = false)}>Cancel</button>
+          <button class="rounded bg-[var(--color-accent-soft)] px-3 py-1.5 text-sm hover:bg-[var(--color-accent)]" onclick={saveEdit}>Save</button>
+        </div>
       </div>
-    {/if}
+    {:else}
+      <h2 class="text-2xl font-semibold">
+        {item.title}
+        {#if item.archived}<span class="ml-2 rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs uppercase text-[var(--color-muted)]">Archived</span>{/if}
+      </h2>
 
-    <section>
-      <h3 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Content</h3>
-      <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
-      <div class="prose prose-invert max-w-none text-sm">{@html renderMarkdown(item.content)}</div>
-    </section>
+      <dl class="flex flex-wrap gap-x-6 gap-y-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm">
+        <div class="flex gap-1"><dt class="text-[var(--color-muted)]">ID</dt><dd class="font-mono">{item.wi_number}</dd></div>
+        <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Project</dt><dd>{item.project ?? "—"}</dd></div>
+        <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Area</dt><dd>{item.area ?? "—"}</dd></div>
+        <div class="flex items-center gap-1"><dt class="text-[var(--color-muted)]">Type</dt><dd>{@render badge(item.wi_type)}</dd></div>
+        <div class="flex items-center gap-1"><dt class="text-[var(--color-muted)]">Status</dt><dd>{@render badge(item.wi_status)}</dd></div>
+        <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Size</dt><dd>{item.wi_tshirt}</dd></div>
+        <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Sprint</dt><dd>{item.sprint ?? "—"}</dd></div>
+        {#if item.parent != null}
+          <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Parent</dt><dd>#{item.parent}</dd></div>
+        {/if}
+        <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Created</dt><dd>{new Date(item.created).toLocaleString()}</dd></div>
+        <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Updated</dt><dd>{new Date(item.updated).toLocaleString()}</dd></div>
+      </dl>
 
-    {#if item.details}
+      {#if item.tags.length > 0}
+        <div class="flex flex-wrap gap-1">
+          {#each item.tags as tag (tag)}<span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs text-[var(--color-muted)]">#{tag}</span>{/each}
+        </div>
+      {/if}
+
       <section>
-        <h3 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Details</h3>
+        <h3 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Content</h3>
         <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
-        <div class="prose prose-invert max-w-none text-sm">{@html renderMarkdown(item.details)}</div>
+        <div class="prose prose-invert max-w-none text-sm">{@html renderMarkdown(item.content)}</div>
       </section>
+
+      {#if item.details}
+        <section>
+          <h3 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Details</h3>
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
+          <div class="prose prose-invert max-w-none text-sm">{@html renderMarkdown(item.details)}</div>
+        </section>
+      {/if}
     {/if}
 
-    {#if related.length > 0}
-      <section>
-        <h3 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Related</h3>
+    <!-- Relationships (view + add/remove) -->
+    <section>
+      <div class="mb-1 flex items-center justify-between border-b border-[var(--color-border)] pb-1">
+        <h3 class="text-sm font-semibold">Relationships</h3>
+        <button class="rounded bg-[var(--color-surface-hi)] px-2 py-0.5 text-xs hover:bg-[var(--color-accent-soft)]" onclick={() => (relAdding = !relAdding)}>+ Add</button>
+      </div>
+      {#if relAdding}
+        <div class="mb-2 flex flex-wrap items-center gap-2 text-sm">
+          <input class="w-24 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none" placeholder="label" bind:value={relLabel} />
+          <span class="text-xs text-[var(--color-muted)]">→ work item #</span>
+          <input class="w-20 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none" placeholder="42" bind:value={relTarget} onkeydown={(e) => e.key === "Enter" && addRel()} />
+          <button class="rounded bg-[var(--color-accent-soft)] px-2 py-1 text-xs hover:bg-[var(--color-accent)]" onclick={addRel}>Add</button>
+        </div>
+      {/if}
+      {#if related.length > 0}
         <ul class="space-y-1 text-sm">
-          {#each related as n (n.node_id + n.label)}
+          {#each related as n (n.rel_id)}
             <li class="flex items-center gap-2">
               <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs text-[var(--color-muted)]">{n.label}</span>
               <span>{relatedLabel(n)}</span>
+              <button class="ml-auto rounded px-1 text-xs text-[var(--color-muted)] hover:text-red-400" aria-label="Remove" title="Remove" onclick={() => removeRel(n.rel_id)}>✕</button>
             </li>
           {/each}
         </ul>
-      </section>
-    {/if}
+      {:else}
+        <p class="text-xs text-[var(--color-muted)]">No relationships.</p>
+      {/if}
+    </section>
   </article>
 {/snippet}
