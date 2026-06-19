@@ -8,3 +8,5 @@
 pub fn migrator() -> sqlx::migrate::Migrator {
     sqlx::migrate!("./migrations")
 }
+
+pub mod repo;
