@@ -12,6 +12,55 @@
   let view = $state<"board" | "list">("board");
   let newTitle = $state("");
 
+  // --- edit modal with dirty-close guard ---
+  let editing = $state<Card | null>(null);
+  let form = $state({ title: "", description: "", status: "Backlog" as CardStatus, tags: "" });
+  let original = $state("");
+  let showDiscard = $state(false);
+  const dirty = $derived(editing !== null && JSON.stringify(form) !== original);
+
+  function openEdit(card: Card) {
+    editing = card;
+    form = {
+      title: card.title,
+      description: card.description,
+      status: card.status,
+      tags: card.tags.join(", "),
+    };
+    original = JSON.stringify(form);
+    showDiscard = false;
+  }
+
+  function requestClose() {
+    if (dirty) showDiscard = true;
+    else editing = null;
+  }
+
+  function discard() {
+    showDiscard = false;
+    editing = null;
+  }
+
+  async function saveEdit() {
+    if (!editing) return;
+    const tags = form.tags
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t !== "");
+    await api.updateCard(editing.node_id, {
+      title: form.title,
+      description: form.description,
+      status: form.status,
+      tags,
+    });
+    editing = null;
+    await load();
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.key === "Escape" && editing) requestClose();
+  }
+
   const flip = 150;
 
   function emptyBoard(): Record<CardStatus, DndItem[]> {
@@ -86,6 +135,8 @@
   onMount(load);
 </script>
 
+<svelte:window onkeydown={onKey} />
+
 <section class="space-y-4">
   <div class="flex items-center justify-between">
     <h1 class="text-xl font-semibold">Cards</h1>
@@ -131,6 +182,10 @@
               <div
                 class="cursor-grab rounded bg-[var(--color-surface-hi)] p-2 active:cursor-grabbing"
                 data-testid={`card-${item.id}`}
+                onclick={() => openEdit(item.card)}
+                role="button"
+                tabindex="0"
+                onkeydown={(e) => e.key === "Enter" && openEdit(item.card)}
               >
                 <div class="text-sm">{item.card.title}</div>
                 {#if item.card.tags.length > 0}
@@ -178,5 +233,65 @@
         {/each}
       </tbody>
     </table>
+  {/if}
+
+  {#if editing}
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button
+        class="absolute inset-0 bg-black/60"
+        aria-label="Close"
+        onclick={requestClose}
+      ></button>
+      <div
+        class="relative z-10 w-full max-w-lg space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-xl"
+        data-testid="card-modal"
+      >
+        <div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold">Edit card</h2>
+          <button
+            class="rounded px-2 py-1 text-[var(--color-muted)] hover:bg-[var(--color-surface-hi)]"
+            aria-label="Close"
+            data-testid="modal-close"
+            onclick={requestClose}>✕</button>
+        </div>
+
+        <input
+          class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none"
+          placeholder="Title"
+          data-testid="edit-title"
+          bind:value={form.title}
+        />
+        <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={form.status}>
+          {#each CARD_STATUSES as s (s)}<option value={s}>{s}</option>{/each}
+        </select>
+        <textarea
+          class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none"
+          rows="5"
+          placeholder="Description"
+          bind:value={form.description}
+        ></textarea>
+        <input
+          class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none"
+          placeholder="tags, comma, separated"
+          bind:value={form.tags}
+        />
+
+        <div class="flex items-center justify-end gap-2">
+          {#if dirty}<span class="mr-auto text-xs text-[var(--color-muted)]">Unsaved changes</span>{/if}
+          <button class="rounded px-3 py-1.5 text-sm hover:bg-[var(--color-surface-hi)]" onclick={requestClose}>Close</button>
+          <button class="rounded bg-[var(--color-accent-soft)] px-3 py-1.5 text-sm hover:bg-[var(--color-accent)]" onclick={saveEdit}>Save</button>
+        </div>
+
+        {#if showDiscard}
+          <div class="rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-3" data-testid="discard-prompt">
+            <p class="mb-2 text-sm">Discard unsaved changes?</p>
+            <div class="flex justify-end gap-2">
+              <button class="rounded px-3 py-1.5 text-sm hover:bg-[var(--color-surface-hi)]" onclick={() => (showDiscard = false)}>Keep editing</button>
+              <button class="rounded bg-red-900 px-3 py-1.5 text-sm hover:bg-red-800" data-testid="discard-confirm" onclick={discard}>Discard</button>
+            </div>
+          </div>
+        {/if}
+      </div>
+    </div>
   {/if}
 </section>
