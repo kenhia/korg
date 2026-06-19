@@ -1,0 +1,114 @@
+//! M5a — repo support for the web API: link dispositions/tags, card move+rank,
+//! project creation, and project-scoped / recent work-item queries.
+
+use korg_core::repo::{
+    create_card, create_link, create_project, create_work_item, list_cards, list_links,
+    list_work_items_by_project, recent_project, set_link_disposition, set_node_tags, update_card,
+    CardPatch, NewCard, NewLink, NewWorkItem,
+};
+use rust_decimal::Decimal;
+use sqlx::postgres::PgPoolOptions;
+use sqlx::PgPool;
+use testcontainers_modules::postgres::Postgres;
+use testcontainers_modules::testcontainers::runners::AsyncRunner;
+use testcontainers_modules::testcontainers::ImageExt;
+
+async fn fresh_korg() -> (impl Sized, PgPool) {
+    let container = Postgres::default()
+        .with_tag("18-alpine")
+        .start()
+        .await
+        .expect("start postgres");
+    let port = container.get_host_port_ipv4(5432).await.expect("port");
+    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+    let pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&url)
+        .await
+        .expect("connect");
+    korg_core::migrator().run(&pool).await.expect("migrate");
+    (container, pool)
+}
+
+fn wi(title: &str, project_id: i64) -> NewWorkItem {
+    NewWorkItem {
+        project_id: Some(project_id),
+        area_id: None,
+        wi_type: "task".into(),
+        wi_status: "open".into(),
+        wi_tshirt: "Unknown".into(),
+        sprint: None,
+        title: title.into(),
+        content: "x".into(),
+        details: None,
+        category: None,
+        tags: vec![],
+    }
+}
+
+#[tokio::test]
+async fn api_repo_links_cards_projects() {
+    let (_c, pool) = fresh_korg().await;
+
+    // Reading-list link: default Unread, then disposition + tags.
+    let link = create_link(
+        &pool,
+        NewLink {
+            project_id: None,
+            category: None,
+            tags: vec![],
+            url: "https://example.com".into(),
+            title: Some("Ex".into()),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(list_links(&pool).await.unwrap()[0].disposition, "Unread");
+    set_link_disposition(&pool, link, "Revisit").await.unwrap();
+    set_node_tags(&pool, link, &["rust".into(), "mcp".into()]).await.unwrap();
+    let links = list_links(&pool).await.unwrap();
+    assert_eq!(links[0].disposition, "Revisit");
+    assert_eq!(links[0].tags, vec!["rust".to_string(), "mcp".to_string()]);
+
+    // Card move + rank in one update.
+    let card = create_card(
+        &pool,
+        NewCard {
+            project_id: None,
+            category: None,
+            tags: vec![],
+            status: "Backlog".into(),
+            title: "Move me".into(),
+            description: String::new(),
+            rank: Decimal::new(10, 0),
+        },
+    )
+    .await
+    .unwrap();
+    update_card(
+        &pool,
+        card,
+        CardPatch {
+            status: Some("Active".into()),
+            rank: Some(Decimal::new(25, 1)),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let cards = list_cards(&pool).await.unwrap();
+    assert_eq!(cards[0].status, "Active");
+    assert_eq!(cards[0].rank, Decimal::new(25, 1));
+
+    // Projects + recent/by-project work items.
+    let alpha = create_project(&pool, "alpha").await.unwrap();
+    let beta = create_project(&pool, "beta").await.unwrap();
+    create_work_item(&pool, wi("a1", alpha)).await.unwrap();
+    create_work_item(&pool, wi("b1", beta)).await.unwrap();
+    // beta touched most recently -> recent project.
+    assert_eq!(recent_project(&pool).await.unwrap().as_deref(), Some("beta"));
+    let a_items = list_work_items_by_project(&pool, "alpha").await.unwrap();
+    assert_eq!(a_items.len(), 1);
+    assert_eq!(a_items[0].title, "a1");
+    assert_eq!(a_items[0].project.as_deref(), Some("alpha"));
+}

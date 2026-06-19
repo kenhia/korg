@@ -128,6 +128,9 @@ pub struct LinkRow {
     pub url: String,
     pub title: Option<String>,
     pub read: bool,
+    pub disposition: String,
+    pub category: Option<String>,
+    pub tags: Vec<String>,
 }
 
 pub async fn create_link(pool: &PgPool, new: NewLink) -> Result<i64> {
@@ -156,11 +159,33 @@ pub async fn create_link(pool: &PgPool, new: NewLink) -> Result<i64> {
 
 pub async fn list_links(pool: &PgPool) -> Result<Vec<LinkRow>> {
     let rows = sqlx::query_as::<_, LinkRow>(
-        "SELECT node_id, url, title, read FROM link ORDER BY node_id",
+        "SELECT l.node_id, l.url, l.title, l.read, l.disposition::text AS disposition, \
+                n.category, n.tags \
+         FROM link l JOIN node n ON n.id = l.node_id \
+         ORDER BY l.node_id",
     )
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+pub async fn set_link_disposition(pool: &PgPool, node_id: i64, disposition: &str) -> Result<()> {
+    sqlx::query("UPDATE link SET disposition = $2::link_disposition WHERE node_id = $1")
+        .bind(node_id)
+        .bind(disposition)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Update the cross-cutting tags on any node (work item, card, link, slot).
+pub async fn set_node_tags(pool: &PgPool, node_id: i64, tags: &[String]) -> Result<()> {
+    sqlx::query("UPDATE node SET tags = $2 WHERE id = $1")
+        .bind(node_id)
+        .bind(tags)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 pub async fn mark_link_read(pool: &PgPool, node_id: i64, read: bool) -> Result<()> {
@@ -304,4 +329,104 @@ pub async fn list_projects(pool: &PgPool) -> Result<Vec<ProjectRow>> {
         .fetch_all(pool)
         .await?;
     Ok(rows)
+}
+
+// --- projects (write) -----------------------------------------------------
+
+pub async fn create_project(pool: &PgPool, name: &str) -> Result<i64> {
+    let id: i64 = sqlx::query("INSERT INTO project (name) VALUES ($1) RETURNING id")
+        .bind(name)
+        .fetch_one(pool)
+        .await?
+        .get("id");
+    Ok(id)
+}
+
+/// The project most recently touched via its work items (by node.updated),
+/// used as the default landing project for the work-items view.
+pub async fn recent_project(pool: &PgPool) -> Result<Option<String>> {
+    let row = sqlx::query(
+        "SELECT p.name FROM project p \
+         JOIN node n ON n.project_id = p.id AND n.kind = 'workitem' \
+         GROUP BY p.name ORDER BY max(n.updated) DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| r.get::<String, _>("name")))
+}
+
+pub async fn list_work_items_by_project(pool: &PgPool, project: &str) -> Result<Vec<WorkItemRow>> {
+    let sql = format!("{WORKITEM_SELECT} WHERE pj.name = $1 ORDER BY w.wi_number");
+    Ok(sqlx::query_as::<_, WorkItemRow>(&sql)
+        .bind(project)
+        .fetch_all(pool)
+        .await?)
+}
+
+// --- cards (update: move + rank in one) -----------------------------------
+
+#[derive(Debug, Clone, Default)]
+pub struct CardPatch {
+    pub status: Option<String>,
+    pub rank: Option<Decimal>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub archived: Option<bool>,
+    pub category: Option<Option<String>>,
+    pub tags: Option<Vec<String>>,
+}
+
+pub async fn update_card(pool: &PgPool, node_id: i64, patch: CardPatch) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    if let Some(status) = &patch.status {
+        sqlx::query("UPDATE card SET status = $2::card_status WHERE node_id = $1")
+            .bind(node_id)
+            .bind(status)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(rank) = patch.rank {
+        sqlx::query("UPDATE card SET rank = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(rank)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(title) = &patch.title {
+        sqlx::query("UPDATE card SET title = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(title)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(description) = &patch.description {
+        sqlx::query("UPDATE card SET description = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(description)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(archived) = patch.archived {
+        sqlx::query("UPDATE node SET archived = $2 WHERE id = $1")
+            .bind(node_id)
+            .bind(archived)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(category) = &patch.category {
+        sqlx::query("UPDATE node SET category = $2 WHERE id = $1")
+            .bind(node_id)
+            .bind(category)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(tags) = &patch.tags {
+        sqlx::query("UPDATE node SET tags = $2 WHERE id = $1")
+            .bind(node_id)
+            .bind(tags)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }

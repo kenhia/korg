@@ -1,0 +1,421 @@
+//! korg-api — axum REST API over korg-core, and static host for the web bundle.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderValue, Method};
+use axum::routing::{get, patch, post};
+use axum::{Json, Router};
+use rust_decimal::Decimal;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use sqlx::PgPool;
+use time::macros::format_description;
+use time::Date;
+use tower_http::cors::CorsLayer;
+use tower_http::services::{ServeDir, ServeFile};
+use tower_http::trace::TraceLayer;
+
+use korg_core::repo::{
+    self, CardPatch, NewCard, NewLink, NewWorkItem,
+};
+use korg_core::slots::{self, NewTemplateSlot};
+
+pub mod error;
+use error::ApiError;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub pool: Arc<PgPool>,
+}
+
+type ApiResult = Result<Json<Value>, ApiError>;
+
+pub fn build_router(state: AppState) -> Router {
+    let api = Router::new()
+        .route("/api/health", get(health))
+        .route("/api/projects", get(list_projects))
+        .route("/api/projects/recent", get(recent_project))
+        .route("/api/work-items", get(list_work_items).post(create_work_item))
+        .route("/api/work-items/:wi_number", get(get_work_item))
+        .route("/api/cards", get(list_cards).post(create_card))
+        .route("/api/cards/:node_id", patch(update_card))
+        .route("/api/links", get(list_links).post(create_link))
+        .route("/api/links/:node_id", patch(update_link))
+        .route("/api/slots", get(list_slots))
+        .route("/api/slots/generate", post(generate_slots))
+        .route("/api/slots/:node_id", patch(update_slot))
+        .route("/api/slot-templates", get(list_slot_templates).put(set_slot_templates))
+        .route("/api/relationships", post(create_relationship))
+        .route("/api/nodes/:id/neighbors", get(neighbors))
+        .with_state(state);
+
+    let router = match web_dir() {
+        Some(dir) => {
+            let index = dir.join("index.html");
+            let serve = ServeDir::new(&dir).not_found_service(ServeFile::new(index));
+            api.fallback_service(serve)
+        }
+        None => api,
+    };
+    router.layer(TraceLayer::new_for_http()).layer(cors_layer())
+}
+
+fn web_dir() -> Option<PathBuf> {
+    let candidate = std::env::var("KORG_WEB_DIR").unwrap_or_else(|_| "/app/web/build".to_string());
+    let path = PathBuf::from(candidate);
+    path.join("index.html").is_file().then_some(path)
+}
+
+fn cors_layer() -> CorsLayer {
+    let origins_env = std::env::var("KORG_CORS_ORIGINS").unwrap_or_default();
+    let origins: Vec<HeaderValue> = origins_env
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| HeaderValue::from_str(s).ok())
+        .collect();
+    let layer = CorsLayer::new()
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([axum::http::header::CONTENT_TYPE]);
+    if origins.is_empty() {
+        layer
+    } else {
+        layer.allow_origin(origins)
+    }
+}
+
+fn parse_date(s: &str) -> Result<Date, ApiError> {
+    let fmt = format_description!("[year]-[month]-[day]");
+    Date::parse(s, &fmt).map_err(|e| ApiError(anyhow::anyhow!("invalid date `{s}`: {e}")))
+}
+
+async fn health() -> Json<Value> {
+    Json(json!({ "status": "ok" }))
+}
+
+// --- projects -------------------------------------------------------------
+
+async fn list_projects(State(s): State<AppState>) -> ApiResult {
+    Ok(Json(json!(repo::list_projects(&s.pool).await?)))
+}
+
+async fn recent_project(State(s): State<AppState>) -> ApiResult {
+    Ok(Json(json!({ "project": repo::recent_project(&s.pool).await? })))
+}
+
+// --- work items -----------------------------------------------------------
+
+#[derive(Deserialize)]
+struct WorkItemsQuery {
+    project: Option<String>,
+}
+
+async fn list_work_items(State(s): State<AppState>, Query(q): Query<WorkItemsQuery>) -> ApiResult {
+    let items = match q.project {
+        Some(p) => repo::list_work_items_by_project(&s.pool, &p).await?,
+        None => repo::list_work_items(&s.pool).await?,
+    };
+    Ok(Json(json!(items)))
+}
+
+async fn get_work_item(State(s): State<AppState>, Path(wi): Path<i64>) -> ApiResult {
+    Ok(Json(json!(repo::get_work_item(&s.pool, wi).await?)))
+}
+
+#[derive(Deserialize)]
+struct CreateWorkItem {
+    title: String,
+    content: String,
+    #[serde(default = "d_task")]
+    wi_type: String,
+    #[serde(default = "d_open")]
+    wi_status: String,
+    #[serde(default = "d_unknown")]
+    wi_tshirt: String,
+    #[serde(default)]
+    sprint: Option<String>,
+    #[serde(default)]
+    details: Option<String>,
+    #[serde(default)]
+    project_id: Option<i64>,
+    #[serde(default)]
+    area_id: Option<i64>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+fn d_task() -> String { "task".into() }
+fn d_open() -> String { "open".into() }
+fn d_unknown() -> String { "Unknown".into() }
+fn d_backlog() -> String { "Backlog".into() }
+
+async fn create_work_item(State(s): State<AppState>, Json(b): Json<CreateWorkItem>) -> ApiResult {
+    let r = repo::create_work_item(
+        &s.pool,
+        NewWorkItem {
+            project_id: b.project_id,
+            area_id: b.area_id,
+            wi_type: b.wi_type,
+            wi_status: b.wi_status,
+            wi_tshirt: b.wi_tshirt,
+            sprint: b.sprint,
+            title: b.title,
+            content: b.content,
+            details: b.details,
+            category: b.category,
+            tags: b.tags,
+        },
+    )
+    .await?;
+    Ok(Json(json!({ "node_id": r.node_id, "wi_number": r.wi_number })))
+}
+
+// --- cards ----------------------------------------------------------------
+
+async fn list_cards(State(s): State<AppState>) -> ApiResult {
+    Ok(Json(json!(repo::list_cards(&s.pool).await?)))
+}
+
+#[derive(Deserialize)]
+struct CreateCard {
+    title: String,
+    #[serde(default = "d_backlog")]
+    status: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    rank: f64,
+    #[serde(default)]
+    project_id: Option<i64>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+async fn create_card(State(s): State<AppState>, Json(b): Json<CreateCard>) -> ApiResult {
+    let rank = Decimal::try_from(b.rank).map_err(|e| ApiError(anyhow::anyhow!("rank: {e}")))?;
+    let node_id = repo::create_card(
+        &s.pool,
+        NewCard {
+            project_id: b.project_id,
+            category: b.category,
+            tags: b.tags,
+            status: b.status,
+            title: b.title,
+            description: b.description,
+            rank,
+        },
+    )
+    .await?;
+    Ok(Json(json!({ "node_id": node_id })))
+}
+
+#[derive(Deserialize)]
+struct UpdateCard {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    rank: Option<f64>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    archived: Option<bool>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+}
+
+async fn update_card(
+    State(s): State<AppState>,
+    Path(node_id): Path<i64>,
+    Json(b): Json<UpdateCard>,
+) -> ApiResult {
+    let rank = match b.rank {
+        Some(r) => Some(Decimal::try_from(r).map_err(|e| ApiError(anyhow::anyhow!("rank: {e}")))?),
+        None => None,
+    };
+    repo::update_card(
+        &s.pool,
+        node_id,
+        CardPatch {
+            status: b.status,
+            rank,
+            title: b.title,
+            description: b.description,
+            archived: b.archived,
+            category: b.category.map(Some),
+            tags: b.tags,
+        },
+    )
+    .await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+// --- links (reading list) -------------------------------------------------
+
+async fn list_links(State(s): State<AppState>) -> ApiResult {
+    Ok(Json(json!(repo::list_links(&s.pool).await?)))
+}
+
+#[derive(Deserialize)]
+struct CreateLink {
+    url: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    project_id: Option<i64>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+async fn create_link(State(s): State<AppState>, Json(b): Json<CreateLink>) -> ApiResult {
+    let node_id = repo::create_link(
+        &s.pool,
+        NewLink {
+            project_id: b.project_id,
+            category: b.category,
+            tags: b.tags,
+            url: b.url,
+            title: b.title,
+        },
+    )
+    .await?;
+    Ok(Json(json!({ "node_id": node_id })))
+}
+
+#[derive(Deserialize)]
+struct UpdateLink {
+    #[serde(default)]
+    disposition: Option<String>,
+    #[serde(default)]
+    read: Option<bool>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+}
+
+async fn update_link(
+    State(s): State<AppState>,
+    Path(node_id): Path<i64>,
+    Json(b): Json<UpdateLink>,
+) -> ApiResult {
+    if let Some(d) = &b.disposition {
+        repo::set_link_disposition(&s.pool, node_id, d).await?;
+    }
+    if let Some(r) = b.read {
+        repo::mark_link_read(&s.pool, node_id, r).await?;
+    }
+    if let Some(t) = &b.tags {
+        repo::set_node_tags(&s.pool, node_id, t).await?;
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+// --- slots ----------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SlotRange {
+    from: String,
+    to: String,
+}
+
+async fn list_slots(State(s): State<AppState>, Query(q): Query<SlotRange>) -> ApiResult {
+    let (from, to) = (parse_date(&q.from)?, parse_date(&q.to)?);
+    Ok(Json(json!(slots::list_slots(&s.pool, from, to).await?)))
+}
+
+#[derive(Deserialize)]
+struct GenerateSlots {
+    start: String,
+    days: i64,
+}
+
+async fn generate_slots(State(s): State<AppState>, Json(b): Json<GenerateSlots>) -> ApiResult {
+    let start = parse_date(&b.start)?;
+    let created = slots::generate_slots(&s.pool, start, b.days).await?;
+    Ok(Json(json!({ "created": created })))
+}
+
+#[derive(Deserialize)]
+struct UpdateSlot {
+    #[serde(default)]
+    goal: Option<String>,
+}
+
+async fn update_slot(
+    State(s): State<AppState>,
+    Path(node_id): Path<i64>,
+    Json(b): Json<UpdateSlot>,
+) -> ApiResult {
+    slots::set_slot_goal(&s.pool, node_id, b.goal.as_deref()).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn list_slot_templates(State(s): State<AppState>) -> ApiResult {
+    Ok(Json(json!(slots::list_templates(&s.pool).await?)))
+}
+
+#[derive(Deserialize)]
+struct TemplateRow {
+    dow: i16,
+    position: i32,
+    duration_minutes: i32,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SetTemplates {
+    slots: Vec<TemplateRow>,
+}
+
+async fn set_slot_templates(State(s): State<AppState>, Json(b): Json<SetTemplates>) -> ApiResult {
+    let rows: Vec<NewTemplateSlot> = b
+        .slots
+        .into_iter()
+        .map(|t| NewTemplateSlot {
+            dow: t.dow,
+            position: t.position,
+            duration_minutes: t.duration_minutes,
+            label: t.label,
+        })
+        .collect();
+    slots::set_weekly_template(&s.pool, &rows).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+// --- relationships --------------------------------------------------------
+
+#[derive(Deserialize)]
+struct CreateRelationship {
+    left: i64,
+    right: i64,
+    label: String,
+}
+
+async fn create_relationship(
+    State(s): State<AppState>,
+    Json(b): Json<CreateRelationship>,
+) -> ApiResult {
+    let id = repo::relate(&s.pool, b.left, b.right, &b.label).await?;
+    Ok(Json(json!({ "id": id })))
+}
+
+async fn neighbors(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
+    Ok(Json(json!(repo::neighbors(&s.pool, id).await?)))
+}

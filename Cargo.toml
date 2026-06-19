@@ -4,6 +4,7 @@ members = [
     "crates/korg-core",
     "crates/korg-migrate",
     "crates/korg-mcp",
+    "crates/korg-api",
 ]
 
 [workspace.package]
@@ -44,6 +45,12 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 
 # MCP
 rmcp = { version = "0.1", features = ["server", "transport-io"] }
+
+# HTTP server
+axum = "0.7"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+http-body-util = "0.1"
 
 # Test helpers
 testcontainers = "0.23"
