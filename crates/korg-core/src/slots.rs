@@ -8,6 +8,20 @@ use serde::Serialize;
 use sqlx::{PgPool, Row};
 use time::Date;
 
+/// Serialize a `Date` as an ISO `YYYY-MM-DD` string (time's default emits an
+/// ordinal array, which is awkward for the web client).
+mod date_str {
+    use serde::Serializer;
+    use time::macros::format_description;
+    use time::Date;
+
+    pub fn serialize<S: Serializer>(d: &Date, s: S) -> Result<S::Ok, S::Error> {
+        let fmt = format_description!("[year]-[month]-[day]");
+        let out = d.format(&fmt).map_err(serde::ser::Error::custom)?;
+        s.serialize_str(&out)
+    }
+}
+
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq)]
 pub struct TemplateSlot {
     pub id: i64,
@@ -28,6 +42,7 @@ pub struct NewTemplateSlot {
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq)]
 pub struct Slot {
     pub node_id: i64,
+    #[serde(with = "date_str")]
     pub slot_date: Date,
     pub duration_minutes: i32,
     pub label: Option<String>,
