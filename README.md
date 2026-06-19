@@ -39,6 +39,28 @@ links, generalized cross-kind relationships, and calendar timebox slots.
 DATABASE_URL=postgres://user:pass@host:5432/korg cargo run -p korg-mcp
 ```
 
+## Web UI
+
+`korg-api` (axum) exposes the REST API and serves the SvelteKit bundle when
+`KORG_WEB_DIR` points at a build.
+
+```bash
+cd web && pnpm install && pnpm build
+DATABASE_URL=... KORG_WEB_DIR=$PWD/build KORG_LISTEN_ADDR=0.0.0.0:8090 \
+  cargo run -p korg-api          # open http://<host>:8090
+
+# Or hot-reload the UI against a running API:
+cd web && KORG_API=http://localhost:8090 pnpm dev    # http://localhost:5173
+```
+
+End-to-end smoke tests (Playwright/Chromium) run against a running korg-api:
+
+```bash
+cd web
+npx playwright install chromium                       # once
+KORG_E2E_URL=http://127.0.0.1:8090 npx playwright test
+```
+
 ## Migration & fidelity
 
 Imports run off frozen, read-only `pg_dump` snapshots — the source databases
