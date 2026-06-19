@@ -22,9 +22,10 @@ test("nav reaches all four pages", async ({ page }) => {
 
 test("cards board shows all columns and toggles to list", async ({ page }) => {
   await page.goto("/cards");
-  for (const col of ["Backlog", "Research", "OnDeck", "Active", "Done", "Cut"]) {
+  for (const col of ["Backlog", "Research", "OnDeck", "Active", "Done"]) {
     await expect(page.getByText(col, { exact: true }).first()).toBeVisible();
   }
+  await expect(page.getByTestId("cut-toggle")).toBeVisible(); // Cut autohidden
   await page.getByRole("button", { name: "List" }).click();
   await expect(page.getByRole("columnheader", { name: "Title" })).toBeVisible();
 });

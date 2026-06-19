@@ -14,6 +14,7 @@ test("drag a card from Backlog to Active", async ({ page }) => {
 
   const card = page.locator('[data-testid^="card-"]', { hasText: title });
   await expect(card).toBeVisible();
+  await card.scrollIntoViewIfNeeded();
 
   // It starts in Backlog.
   await expect(page.getByTestId("col-Backlog").getByText(title)).toBeVisible();
@@ -23,16 +24,20 @@ test("drag a card from Backlog to Active", async ({ page }) => {
   const sbox = await card.boundingBox();
   if (!tbox || !sbox) throw new Error("missing bounding boxes");
 
-  // Stepped pointer drag so svelte-dnd-action registers the movement.
+  // Stepped pointer drag so svelte-dnd-action registers the movement, with
+  // short settles so the library's rAF keeps up under load.
   await page.mouse.move(sbox.x + sbox.width / 2, sbox.y + sbox.height / 2);
   await page.mouse.down();
   await page.mouse.move(sbox.x + sbox.width / 2, sbox.y + sbox.height / 2 + 8, { steps: 5 });
-  await page.mouse.move(tbox.x + tbox.width / 2, tbox.y + tbox.height / 2, { steps: 15 });
-  await page.mouse.move(tbox.x + tbox.width / 2, tbox.y + tbox.height / 2 + 4, { steps: 5 });
+  await page.waitForTimeout(120);
+  await page.mouse.move(tbox.x + tbox.width / 2, tbox.y + 24, { steps: 20 });
+  await page.waitForTimeout(120);
+  await page.mouse.move(tbox.x + tbox.width / 2, tbox.y + 28, { steps: 5 });
+  await page.waitForTimeout(120);
   await page.mouse.up();
 
   // The card now lives in Active...
-  await expect(page.getByTestId("col-Active").getByText(title)).toBeVisible();
+  await expect(page.getByTestId("col-Active").getByText(title)).toBeVisible({ timeout: 10000 });
   // ...and the move persisted: reload and it is still in Active.
   await page.reload();
   await expect(page.getByTestId("col-Active").getByText(title)).toBeVisible();

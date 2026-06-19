@@ -5,6 +5,9 @@
 
   type DndItem = { id: number; card: Card };
 
+  const NON_CUT = CARD_STATUSES.filter((s) => s !== "Cut");
+  let cutExpanded = $state(false);
+
   let cardsRaw = $state<Card[]>([]);
   let board = $state<Record<CardStatus, DndItem[]>>(emptyBoard());
   let loading = $state(true);
@@ -137,6 +140,26 @@
 
 <svelte:window onkeydown={onKey} />
 
+{#snippet tile(item: DndItem)}
+  <div
+    class="cursor-grab rounded bg-[var(--color-surface-hi)] p-2 active:cursor-grabbing"
+    data-testid={`card-${item.id}`}
+    onclick={() => openEdit(item.card)}
+    role="button"
+    tabindex="0"
+    onkeydown={(e) => e.key === "Enter" && openEdit(item.card)}
+  >
+    <div class="text-sm">{item.card.title}</div>
+    {#if item.card.tags.length > 0}
+      <div class="mt-1 flex flex-wrap gap-1">
+        {#each item.card.tags as tag (tag)}
+          <span class="rounded bg-[var(--color-bg)] px-1.5 py-0.5 text-xs text-[var(--color-muted)]">#{tag}</span>
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
 <section class="space-y-4">
   <div class="flex items-center justify-between">
     <h1 class="text-xl font-semibold">Cards</h1>
@@ -164,9 +187,9 @@
     <p class="text-[var(--color-muted)]">Loading…</p>
   {:else if view === "board"}
     <p class="text-xs text-[var(--color-muted)]">Drag cards within or across columns — drop anywhere to set order.</p>
-    <div class="grid grid-cols-2 gap-3 lg:grid-cols-6">
-      {#each CARD_STATUSES as status (status)}
-        <div class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-2">
+    <div class="flex flex-wrap gap-3">
+      {#each NON_CUT as status (status)}
+        <div class="min-w-[8rem] flex-1 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-2">
           <div class="mb-2 flex items-center justify-between">
             <span class="text-xs font-medium text-[var(--color-muted)]">{status}</span>
             <span class="text-xs text-[var(--color-muted)]">{board[status].length}</span>
@@ -179,27 +202,41 @@
             onfinalize={(e) => finalize(status, e as CustomEvent<DndEvent<DndItem>>)}
           >
             {#each board[status] as item (item.id)}
-              <div
-                class="cursor-grab rounded bg-[var(--color-surface-hi)] p-2 active:cursor-grabbing"
-                data-testid={`card-${item.id}`}
-                onclick={() => openEdit(item.card)}
-                role="button"
-                tabindex="0"
-                onkeydown={(e) => e.key === "Enter" && openEdit(item.card)}
-              >
-                <div class="text-sm">{item.card.title}</div>
-                {#if item.card.tags.length > 0}
-                  <div class="mt-1 flex flex-wrap gap-1">
-                    {#each item.card.tags as tag (tag)}
-                      <span class="rounded bg-[var(--color-bg)] px-1.5 py-0.5 text-xs text-[var(--color-muted)]">#{tag}</span>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
+              {@render tile(item)}
             {/each}
           </div>
         </div>
       {/each}
+
+      <!-- Cut: autohides to a narrow drop target; click to expand. -->
+      <div
+        class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-2 transition-all"
+        class:flex-1={cutExpanded}
+        class:min-w-[8rem]={cutExpanded}
+        class:w-12={!cutExpanded}
+      >
+        <button
+          class="mb-2 flex w-full items-center justify-between gap-1 text-xs font-medium text-[var(--color-muted)] hover:text-[var(--color-text)]"
+          data-testid="cut-toggle"
+          onclick={() => (cutExpanded = !cutExpanded)}
+          title={cutExpanded ? "Collapse Cut" : "Expand Cut"}
+        >
+          <span>{cutExpanded ? "Cut" : "CUT"}</span>
+          <span>{board["Cut"].length}</span>
+        </button>
+        <div
+          class="min-h-[3rem] space-y-2"
+          class:overflow-hidden={!cutExpanded}
+          data-testid="col-Cut"
+          use:dndzone={{ items: board["Cut"], flipDurationMs: flip, dropTargetStyle: {} }}
+          onconsider={(e) => consider("Cut", e as CustomEvent<DndEvent<DndItem>>)}
+          onfinalize={(e) => finalize("Cut", e as CustomEvent<DndEvent<DndItem>>)}
+        >
+          {#each board["Cut"] as item (item.id)}
+            <div class:hidden={!cutExpanded}>{@render tile(item)}</div>
+          {/each}
+        </div>
+      </div>
     </div>
   {:else}
     <table class="w-full text-sm">
