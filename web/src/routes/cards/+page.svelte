@@ -1,12 +1,89 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { dndzone, type DndEvent } from "svelte-dnd-action";
-  import { api, CARD_STATUSES, type Card, type CardStatus } from "$lib/api";
+  import { api, CARD_STATUSES, type Card, type CardStatus, type Slot } from "$lib/api";
+  import {
+    startOfWeek,
+    addDays,
+    isoDate,
+    weekDays,
+    WEEKDAY_LABELS,
+    prettyDuration,
+  } from "$lib/dates";
 
   type DndItem = { id: number; card: Card };
 
   const NON_CUT = CARD_STATUSES.filter((s) => s !== "Cut");
   let cutExpanded = $state(false);
+
+  // --- this-week slots strip (display + card drop = schedule) ---
+  let showSlots = $state(true);
+  let weekStart = $state(startOfWeek(new Date()));
+  let slots = $state<Slot[]>([]);
+  let scheduled = $state<Record<number, { node_id: number; title: string }[]>>({});
+  let slotBuf = $state<Record<number, DndItem[]>>({});
+
+  const days = $derived(weekDays(weekStart));
+
+  function slotsForDay(day: Date): Slot[] {
+    const key = isoDate(day);
+    return slots.filter((s) => s.slot_date === key).sort((a, b) => a.position - b.position);
+  }
+
+  function cardTitle(nodeId: number): string {
+    return cardsRaw.find((c) => c.node_id === nodeId)?.title ?? `#${nodeId}`;
+  }
+
+  async function loadSlots() {
+    const from = isoDate(weekStart);
+    const to = isoDate(addDays(weekStart, 6));
+    const fetched = await api.slots(from, to);
+    const sched: Record<number, { node_id: number; title: string }[]> = {};
+    const buf: Record<number, DndItem[]> = {};
+    await Promise.all(
+      fetched.map(async (s) => {
+        buf[s.node_id] = [];
+        const ns = await api.neighbors(s.node_id);
+        sched[s.node_id] = ns
+          .filter((n) => n.kind === "card")
+          .map((n) => ({ node_id: n.node_id, title: cardTitle(n.node_id) }));
+      }),
+    );
+    slots = fetched;
+    scheduled = sched;
+    slotBuf = buf;
+  }
+
+  async function generateWeek() {
+    await api.generateSlots(isoDate(weekStart), 7);
+    await loadSlots();
+  }
+
+  function shiftWeek(delta: number) {
+    weekStart = addDays(weekStart, delta * 7);
+    loadSlots();
+  }
+
+  function slotConsider(slotId: number, e: CustomEvent<DndEvent<DndItem>>) {
+    slotBuf[slotId] = e.detail.items;
+  }
+
+  async function slotFinalize(slotId: number, e: CustomEvent<DndEvent<DndItem>>) {
+    const dropped = e.detail.items[0];
+    slotBuf[slotId] = []; // a slot is a drop target, never a home for the card
+    if (!dropped) return;
+    const cardNode = dropped.card.node_id;
+    const already = (scheduled[slotId] ?? []).some((c) => c.node_id === cardNode);
+    try {
+      if (!already) await api.relate(slotId, cardNode, "scheduled");
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+    // Reload: the card returns to its column (its status never changed) and the
+    // slot shows it as a scheduled reference.
+    await load();
+    await loadSlots();
+  }
 
   let cardsRaw = $state<Card[]>([]);
   let board = $state<Record<CardStatus, DndItem[]>>(emptyBoard());
@@ -96,6 +173,11 @@
     }
   }
 
+  onMount(async () => {
+    await load();
+    await loadSlots();
+  });
+
   async function add() {
     if (newTitle.trim() === "") return;
     await api.createCard({ title: newTitle.trim() });
@@ -134,8 +216,6 @@
     if (p !== undefined) return p + 1;
     return 1;
   }
-
-  onMount(load);
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -182,6 +262,72 @@
   {#if error}
     <p class="rounded bg-red-950 px-3 py-2 text-sm text-red-300">{error}</p>
   {/if}
+
+  <!-- This week's timeboxes: drop a card onto a slot to schedule it
+       (a reference — the card stays in its column). -->
+  <div class="rounded border border-[var(--color-border)] bg-[var(--color-surface)]">
+    <div class="flex items-center justify-between px-3 py-2">
+      <button
+        class="flex items-center gap-2 text-sm font-medium hover:text-[var(--color-accent)]"
+        data-testid="slots-toggle"
+        onclick={() => (showSlots = !showSlots)}
+      >
+        <span>{showSlots ? "▾" : "▸"}</span> This week
+      </button>
+      {#if showSlots}
+        <div class="flex items-center gap-1 text-xs">
+          <button class="rounded px-2 py-1 hover:bg-[var(--color-surface-hi)]" onclick={() => shiftWeek(-1)}>← Prev</button>
+          <button class="rounded px-2 py-1 hover:bg-[var(--color-surface-hi)]" onclick={() => { weekStart = startOfWeek(new Date()); loadSlots(); }}>Today</button>
+          <button class="rounded px-2 py-1 hover:bg-[var(--color-surface-hi)]" onclick={() => shiftWeek(1)}>Next →</button>
+        </div>
+      {/if}
+    </div>
+
+    {#if showSlots}
+      {#if slots.length === 0}
+        <div class="px-3 pb-3 text-sm text-[var(--color-muted)]">
+          No timeboxes this week.
+          <button class="ml-2 rounded bg-[var(--color-accent-soft)] px-2 py-1 text-xs hover:bg-[var(--color-accent)]" onclick={generateWeek}>Generate</button>
+        </div>
+      {:else}
+        <div class="grid grid-cols-2 gap-2 p-3 sm:grid-cols-4 lg:grid-cols-7">
+          {#each days as day, i (isoDate(day))}
+            <div class="rounded bg-[var(--color-bg)] p-2">
+              <div class="mb-1 text-xs text-[var(--color-muted)]">{WEEKDAY_LABELS[i]} {day.getDate()}</div>
+              <div class="space-y-1">
+                {#each slotsForDay(day) as slot (slot.node_id)}
+                  <div class="rounded bg-[var(--color-surface)] p-1.5">
+                    <div class="mb-1 flex items-center justify-between">
+                      <span class="text-xs text-[var(--color-accent)]">{slot.label ?? prettyDuration(slot.duration_minutes)}</span>
+                      {#if slot.goal}<span class="truncate text-[10px] text-[var(--color-muted)]">{slot.goal}</span>{/if}
+                    </div>
+                    <!-- drop target -->
+                    <div
+                      class="min-h-[2rem] rounded border border-dashed border-[var(--color-border)] px-1 py-0.5 text-center text-[9px] text-[var(--color-muted)]"
+                      data-testid={`slot-${slot.node_id}`}
+                      use:dndzone={{ items: slotBuf[slot.node_id] ?? [], flipDurationMs: flip, dropFromOthersDisabled: false, dropTargetStyle: { outline: "2px dashed var(--color-accent)" } }}
+                      onconsider={(e) => slotConsider(slot.node_id, e as CustomEvent<DndEvent<DndItem>>)}
+                      onfinalize={(e) => slotFinalize(slot.node_id, e as CustomEvent<DndEvent<DndItem>>)}
+                    >
+                      {#each slotBuf[slot.node_id] ?? [] as it (it.id)}
+                        <div class="rounded bg-[var(--color-surface-hi)] px-1 text-[10px]">{it.card.title}</div>
+                      {:else}
+                        drop card
+                      {/each}
+                    </div>
+                    <!-- scheduled references -->
+                    {#each scheduled[slot.node_id] ?? [] as c (c.node_id)}
+                      <div class="mt-1 truncate rounded bg-[var(--color-accent-soft)] px-1 py-0.5 text-[10px]" data-testid={`sched-${slot.node_id}`}>{c.title}</div>
+                    {/each}
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    {/if}
+  </div>
 
   {#if loading}
     <p class="text-[var(--color-muted)]">Loading…</p>
