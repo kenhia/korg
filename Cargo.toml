@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/korg-core",
     "crates/korg-migrate",
+    "crates/korg-mcp",
 ]
 
 [workspace.package]
@@ -40,6 +41,9 @@ thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+
+# MCP
+rmcp = { version = "0.1", features = ["server", "transport-io"] }
 
 # Test helpers
 testcontainers = "0.23"

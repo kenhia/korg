@@ -1,0 +1,27 @@
+[package]
+name = "korg-mcp"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "korg-mcp"
+path = "src/main.rs"
+
+[dependencies]
+korg-core = { path = "../korg-core" }
+rmcp = { workspace = true }
+sqlx = { workspace = true }
+rust_decimal = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true }

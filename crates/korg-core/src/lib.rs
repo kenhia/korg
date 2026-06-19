@@ -9,5 +9,16 @@ pub fn migrator() -> sqlx::migrate::Migrator {
     sqlx::migrate!("./migrations")
 }
 
+/// Connect a pool to `url` and ensure the schema is migrated. Used by the
+/// MCP/CLI/web surfaces.
+pub async fn connect(url: &str) -> anyhow::Result<sqlx::PgPool> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(8)
+        .connect(url)
+        .await?;
+    migrator().run(&pool).await?;
+    Ok(pool)
+}
+
 pub mod repo;
 pub mod slots;

@@ -7,7 +7,9 @@
 
 use anyhow::Result;
 use rust_decimal::Decimal;
+use serde::Serialize;
 use sqlx::{PgPool, Row};
+use time::OffsetDateTime;
 
 // --- work items -----------------------------------------------------------
 
@@ -26,7 +28,7 @@ pub struct NewWorkItem {
     pub tags: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct WorkItemRef {
     pub node_id: i64,
     pub wi_number: i64,
@@ -120,7 +122,7 @@ pub struct NewLink {
     pub title: Option<String>,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
 pub struct LinkRow {
     pub node_id: i64,
     pub url: String,
@@ -172,7 +174,7 @@ pub async fn mark_link_read(pool: &PgPool, node_id: i64, read: bool) -> Result<(
 
 // --- generalized relationships --------------------------------------------
 
-#[derive(Debug, Clone, sqlx::FromRow, PartialEq, Eq)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq)]
 pub struct Neighbor {
     pub node_id: i64,
     pub kind: String,
@@ -216,4 +218,90 @@ pub async fn unrelate(pool: &PgPool, id: i64) -> Result<()> {
         .execute(pool)
         .await?;
     Ok(())
+}
+
+// --- read views -----------------------------------------------------------
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct WorkItemRow {
+    pub wi_number: i64,
+    pub node_id: i64,
+    pub project: Option<String>,
+    pub area: Option<String>,
+    pub wi_type: String,
+    pub wi_status: String,
+    pub wi_tshirt: String,
+    pub sprint: Option<String>,
+    pub title: String,
+    pub content: String,
+    pub details: Option<String>,
+    pub category: Option<String>,
+    pub tags: Vec<String>,
+    pub archived: bool,
+    pub created: OffsetDateTime,
+    pub updated: OffsetDateTime,
+}
+
+const WORKITEM_SELECT: &str = "SELECT w.wi_number, w.node_id, \
+        pj.name AS project, a.name AS area, \
+        w.wi_type, w.wi_status, w.wi_tshirt, w.sprint, w.title, w.content, w.details, \
+        n.category, n.tags, n.archived, n.created, n.updated \
+     FROM workitem w \
+     JOIN node n ON n.id = w.node_id \
+     LEFT JOIN project pj ON pj.id = n.project_id \
+     LEFT JOIN area a ON a.id = w.area_id";
+
+pub async fn list_work_items(pool: &PgPool) -> Result<Vec<WorkItemRow>> {
+    let sql = format!("{WORKITEM_SELECT} ORDER BY w.wi_number");
+    Ok(sqlx::query_as::<_, WorkItemRow>(&sql).fetch_all(pool).await?)
+}
+
+pub async fn get_work_item(pool: &PgPool, wi_number: i64) -> Result<Option<WorkItemRow>> {
+    let sql = format!("{WORKITEM_SELECT} WHERE w.wi_number = $1");
+    Ok(sqlx::query_as::<_, WorkItemRow>(&sql)
+        .bind(wi_number)
+        .fetch_optional(pool)
+        .await?)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct CardRow {
+    pub node_id: i64,
+    pub status: String,
+    pub title: String,
+    pub description: String,
+    pub rank: Decimal,
+    pub project: Option<String>,
+    pub category: Option<String>,
+    pub tags: Vec<String>,
+    pub archived: bool,
+    pub created: OffsetDateTime,
+    pub updated: OffsetDateTime,
+}
+
+pub async fn list_cards(pool: &PgPool) -> Result<Vec<CardRow>> {
+    let rows = sqlx::query_as::<_, CardRow>(
+        "SELECT c.node_id, c.status::text AS status, c.title, c.description, c.rank, \
+                pj.name AS project, n.category, n.tags, n.archived, n.created, n.updated \
+         FROM card c \
+         JOIN node n ON n.id = c.node_id \
+         LEFT JOIN project pj ON pj.id = n.project_id \
+         ORDER BY c.status, c.rank ASC",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct ProjectRow {
+    pub id: i64,
+    pub name: String,
+}
+
+pub async fn list_projects(pool: &PgPool) -> Result<Vec<ProjectRow>> {
+    let rows = sqlx::query_as::<_, ProjectRow>("SELECT id, name FROM project ORDER BY name")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows)
 }

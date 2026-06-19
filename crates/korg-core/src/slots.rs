@@ -4,10 +4,11 @@
 //! item / card they advance.
 
 use anyhow::Result;
+use serde::Serialize;
 use sqlx::{PgPool, Row};
 use time::Date;
 
-#[derive(Debug, Clone, sqlx::FromRow, PartialEq, Eq)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq)]
 pub struct TemplateSlot {
     pub id: i64,
     pub dow: i16,
@@ -24,7 +25,7 @@ pub struct NewTemplateSlot {
     pub label: Option<String>,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow, PartialEq, Eq)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq)]
 pub struct Slot {
     pub node_id: i64,
     pub slot_date: Date,

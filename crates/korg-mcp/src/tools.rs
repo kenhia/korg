@@ -1,0 +1,477 @@
+//! MCP tool implementations backed by `korg-core`.
+//!
+//! Exposes work items, cards, reading-list links, generalized relationships,
+//! and calendar slots to AI agents over the MCP protocol.
+
+use korg_core::repo::{
+    self, create_card, create_link, create_work_item, list_cards, list_links, list_projects,
+    list_work_items, NewCard, NewLink, NewWorkItem,
+};
+use korg_core::slots::{self, NewTemplateSlot};
+use rmcp::handler::server::ServerHandler;
+use rmcp::model::{
+    CallToolRequestParam, CallToolResult, Content, ErrorData, Implementation, JsonObject,
+    ListToolsResult, PaginatedRequestParam, ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
+};
+use rmcp::service::{RequestContext, RoleServer};
+use rust_decimal::Decimal;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use sqlx::PgPool;
+use time::macros::format_description;
+use time::Date;
+
+#[derive(Clone)]
+pub struct KorgServer {
+    pub pool: PgPool,
+}
+
+impl KorgServer {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+// --- tool descriptors -----------------------------------------------------
+
+pub fn tools() -> Vec<Tool> {
+    let tags = json!({"type":"array","items":{"type":"string","minLength":1}});
+    let id = json!({"type":"integer","format":"int64"});
+    let date = json!({"type":"string","description":"YYYY-MM-DD"});
+
+    vec![
+        tool("create_work_item", "Create a work item. Returns its node_id and serial wi_number.", json!({
+            "type":"object","additionalProperties":false,
+            "required":["title","content"],
+            "properties":{
+                "title":{"type":"string","minLength":1},
+                "content":{"type":"string"},
+                "wi_type":{"type":"string","default":"task"},
+                "wi_status":{"type":"string","default":"open"},
+                "wi_tshirt":{"type":"string","enum":["XS","S","M","L","XL","Huge","Unknown"],"default":"Unknown"},
+                "sprint":{"type":["string","null"]},
+                "details":{"type":["string","null"]},
+                "project_id":id,
+                "area_id":id,
+                "category":{"type":["string","null"]},
+                "tags":tags
+            }
+        })),
+        tool("list_work_items", "List all work items.", empty()),
+        tool("get_work_item", "Fetch a single work item by its wi_number.", json!({
+            "type":"object","additionalProperties":false,"required":["wi_number"],
+            "properties":{"wi_number":id}
+        })),
+        tool("create_card", "Create a kanban card. Returns its node_id.", json!({
+            "type":"object","additionalProperties":false,"required":["title"],
+            "properties":{
+                "title":{"type":"string","minLength":1},
+                "status":{"type":"string","enum":["Backlog","Research","OnDeck","Active","Done","Cut"],"default":"Backlog"},
+                "description":{"type":"string","default":""},
+                "rank":{"type":"number","default":0},
+                "project_id":id,
+                "category":{"type":["string","null"]},
+                "tags":tags
+            }
+        })),
+        tool("list_cards", "List all cards ordered by status then rank.", empty()),
+        tool("create_link", "Capture a reading-list URL. Returns its node_id.", json!({
+            "type":"object","additionalProperties":false,"required":["url"],
+            "properties":{
+                "url":{"type":"string","minLength":1},
+                "title":{"type":["string","null"]},
+                "project_id":id,
+                "category":{"type":["string","null"]},
+                "tags":tags
+            }
+        })),
+        tool("list_links", "List reading-list links.", empty()),
+        tool("mark_link_read", "Mark a reading-list link read or unread.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id","read"],
+            "properties":{"node_id":id,"read":{"type":"boolean"}}
+        })),
+        tool("relate", "Create a generalized relationship edge between any two nodes.", json!({
+            "type":"object","additionalProperties":false,"required":["left","right","label"],
+            "properties":{"left":id,"right":id,"label":{"type":"string","minLength":1}}
+        })),
+        tool("neighbors", "List the nodes linked to a node (any kind), with labels.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id"],
+            "properties":{"node_id":id}
+        })),
+        tool("list_slots", "List calendar timebox slots between two dates (inclusive).", json!({
+            "type":"object","additionalProperties":false,"required":["from","to"],
+            "properties":{"from":date.clone(),"to":date.clone()}
+        })),
+        tool("generate_slots", "Materialize slots from the weekly template for N days starting at a date.", json!({
+            "type":"object","additionalProperties":false,"required":["start","days"],
+            "properties":{"start":date,"days":{"type":"integer","minimum":1}}
+        })),
+        tool("set_slot_goal", "Set (or clear) the small goal on a slot.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id"],
+            "properties":{"node_id":id,"goal":{"type":["string","null"]}}
+        })),
+        tool("list_slot_templates", "List the editable weekly slot template.", empty()),
+        tool("set_slot_template", "Replace the entire weekly slot template.", json!({
+            "type":"object","additionalProperties":false,"required":["slots"],
+            "properties":{"slots":{"type":"array","items":{
+                "type":"object","additionalProperties":false,
+                "required":["dow","position","duration_minutes"],
+                "properties":{
+                    "dow":{"type":"integer","minimum":0,"maximum":6},
+                    "position":{"type":"integer"},
+                    "duration_minutes":{"type":"integer","minimum":1},
+                    "label":{"type":["string","null"]}
+                }}}}
+        })),
+        tool("list_projects", "List projects.", empty()),
+    ]
+}
+
+fn empty() -> Value {
+    json!({"type":"object","additionalProperties":false,"properties":{}})
+}
+
+fn tool(name: &'static str, desc: &'static str, schema: Value) -> Tool {
+    Tool::new(name, desc, obj(schema))
+}
+
+fn obj(v: Value) -> JsonObject {
+    match v {
+        Value::Object(m) => m,
+        _ => panic!("tool schema must be an object"),
+    }
+}
+
+fn ok_json(v: Value) -> Result<CallToolResult, ErrorData> {
+    let c = Content::json(v)
+        .map_err(|e| ErrorData::internal_error(format!("failed to encode response: {e}"), None))?;
+    Ok(CallToolResult::success(vec![c]))
+}
+
+fn to_err(e: anyhow::Error) -> CallToolResult {
+    CallToolResult::error(vec![
+        Content::json(json!({ "message": e.to_string() })).expect("encode error"),
+    ])
+}
+
+fn parse_args<T: serde::de::DeserializeOwned>(args: Option<JsonObject>) -> Result<T, ErrorData> {
+    let v = Value::Object(args.unwrap_or_default());
+    serde_json::from_value(v)
+        .map_err(|e| ErrorData::invalid_params(format!("invalid arguments: {e}"), None))
+}
+
+fn parse_date(s: &str) -> Result<Date, ErrorData> {
+    let fmt = format_description!("[year]-[month]-[day]");
+    Date::parse(s, &fmt).map_err(|e| ErrorData::invalid_params(format!("invalid date `{s}`: {e}"), None))
+}
+
+// --- argument shapes ------------------------------------------------------
+
+fn default_task() -> String { "task".into() }
+fn default_open() -> String { "open".into() }
+fn default_unknown() -> String { "Unknown".into() }
+fn default_backlog() -> String { "Backlog".into() }
+
+#[derive(Deserialize)]
+struct CreateWorkItemArgs {
+    title: String,
+    content: String,
+    #[serde(default = "default_task")]
+    wi_type: String,
+    #[serde(default = "default_open")]
+    wi_status: String,
+    #[serde(default = "default_unknown")]
+    wi_tshirt: String,
+    #[serde(default)]
+    sprint: Option<String>,
+    #[serde(default)]
+    details: Option<String>,
+    #[serde(default)]
+    project_id: Option<i64>,
+    #[serde(default)]
+    area_id: Option<i64>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct WiNumberArgs {
+    wi_number: i64,
+}
+
+#[derive(Deserialize)]
+struct CreateCardArgs {
+    title: String,
+    #[serde(default = "default_backlog")]
+    status: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    rank: f64,
+    #[serde(default)]
+    project_id: Option<i64>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct CreateLinkArgs {
+    url: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    project_id: Option<i64>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct MarkLinkReadArgs {
+    node_id: i64,
+    read: bool,
+}
+
+#[derive(Deserialize)]
+struct RelateArgs {
+    left: i64,
+    right: i64,
+    label: String,
+}
+
+#[derive(Deserialize)]
+struct NodeIdArgs {
+    node_id: i64,
+}
+
+#[derive(Deserialize)]
+struct ListSlotsArgs {
+    from: String,
+    to: String,
+}
+
+#[derive(Deserialize)]
+struct GenerateSlotsArgs {
+    start: String,
+    days: i64,
+}
+
+#[derive(Deserialize)]
+struct SetSlotGoalArgs {
+    node_id: i64,
+    #[serde(default)]
+    goal: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TemplateSlotArg {
+    dow: i16,
+    position: i32,
+    duration_minutes: i32,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SetSlotTemplateArgs {
+    slots: Vec<TemplateSlotArg>,
+}
+
+// --- dispatch -------------------------------------------------------------
+
+impl KorgServer {
+    pub async fn call(
+        &self,
+        name: &str,
+        args: Option<JsonObject>,
+    ) -> Result<CallToolResult, ErrorData> {
+        match name {
+            "create_work_item" => {
+                let a: CreateWorkItemArgs = parse_args(args)?;
+                let new = NewWorkItem {
+                    project_id: a.project_id,
+                    area_id: a.area_id,
+                    wi_type: a.wi_type,
+                    wi_status: a.wi_status,
+                    wi_tshirt: a.wi_tshirt,
+                    sprint: a.sprint,
+                    title: a.title,
+                    content: a.content,
+                    details: a.details,
+                    category: a.category,
+                    tags: a.tags,
+                };
+                match create_work_item(&self.pool, new).await {
+                    Ok(r) => ok_json(json!({"node_id": r.node_id, "wi_number": r.wi_number})),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "list_work_items" => match list_work_items(&self.pool).await {
+                Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                Err(e) => Ok(to_err(e)),
+            },
+            "get_work_item" => {
+                let a: WiNumberArgs = parse_args(args)?;
+                match repo::get_work_item(&self.pool, a.wi_number).await {
+                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "create_card" => {
+                let a: CreateCardArgs = parse_args(args)?;
+                let rank = Decimal::try_from(a.rank)
+                    .map_err(|e| ErrorData::invalid_params(format!("invalid rank: {e}"), None))?;
+                let new = NewCard {
+                    project_id: a.project_id,
+                    category: a.category,
+                    tags: a.tags,
+                    status: a.status,
+                    title: a.title,
+                    description: a.description,
+                    rank,
+                };
+                match create_card(&self.pool, new).await {
+                    Ok(node_id) => ok_json(json!({ "node_id": node_id })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "list_cards" => match list_cards(&self.pool).await {
+                Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                Err(e) => Ok(to_err(e)),
+            },
+            "create_link" => {
+                let a: CreateLinkArgs = parse_args(args)?;
+                let new = NewLink {
+                    project_id: a.project_id,
+                    category: a.category,
+                    tags: a.tags,
+                    url: a.url,
+                    title: a.title,
+                };
+                match create_link(&self.pool, new).await {
+                    Ok(node_id) => ok_json(json!({ "node_id": node_id })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "list_links" => match list_links(&self.pool).await {
+                Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                Err(e) => Ok(to_err(e)),
+            },
+            "mark_link_read" => {
+                let a: MarkLinkReadArgs = parse_args(args)?;
+                match repo::mark_link_read(&self.pool, a.node_id, a.read).await {
+                    Ok(()) => ok_json(json!({ "ok": true })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "relate" => {
+                let a: RelateArgs = parse_args(args)?;
+                match repo::relate(&self.pool, a.left, a.right, &a.label).await {
+                    Ok(id) => ok_json(json!({ "id": id })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "neighbors" => {
+                let a: NodeIdArgs = parse_args(args)?;
+                match repo::neighbors(&self.pool, a.node_id).await {
+                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "list_slots" => {
+                let a: ListSlotsArgs = parse_args(args)?;
+                let (from, to) = (parse_date(&a.from)?, parse_date(&a.to)?);
+                match slots::list_slots(&self.pool, from, to).await {
+                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "generate_slots" => {
+                let a: GenerateSlotsArgs = parse_args(args)?;
+                let start = parse_date(&a.start)?;
+                match slots::generate_slots(&self.pool, start, a.days).await {
+                    Ok(n) => ok_json(json!({ "created": n })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "set_slot_goal" => {
+                let a: SetSlotGoalArgs = parse_args(args)?;
+                match slots::set_slot_goal(&self.pool, a.node_id, a.goal.as_deref()).await {
+                    Ok(()) => ok_json(json!({ "ok": true })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "list_slot_templates" => match slots::list_templates(&self.pool).await {
+                Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                Err(e) => Ok(to_err(e)),
+            },
+            "set_slot_template" => {
+                let a: SetSlotTemplateArgs = parse_args(args)?;
+                let rows: Vec<NewTemplateSlot> = a
+                    .slots
+                    .into_iter()
+                    .map(|t| NewTemplateSlot {
+                        dow: t.dow,
+                        position: t.position,
+                        duration_minutes: t.duration_minutes,
+                        label: t.label,
+                    })
+                    .collect();
+                match slots::set_weekly_template(&self.pool, &rows).await {
+                    Ok(()) => ok_json(json!({ "ok": true })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "list_projects" => match list_projects(&self.pool).await {
+                Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                Err(e) => Ok(to_err(e)),
+            },
+            other => Err(ErrorData::invalid_params(
+                format!("unknown tool: {other}"),
+                None,
+            )),
+        }
+    }
+}
+
+impl ServerHandler for KorgServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            protocol_version: ProtocolVersion::default(),
+            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            server_info: Implementation {
+                name: "korg-mcp".into(),
+                version: env!("CARGO_PKG_VERSION").into(),
+            },
+            instructions: Some(
+                "korg MCP server — unified work items, cards, reading-list links, \
+                 generalized relationships, and calendar timebox slots, over Postgres."
+                    .into(),
+            ),
+        }
+    }
+
+    async fn list_tools(
+        &self,
+        _request: PaginatedRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, ErrorData> {
+        Ok(ListToolsResult {
+            tools: tools(),
+            next_cursor: None,
+        })
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.call(&request.name, request.arguments).await
+    }
+}

@@ -24,8 +24,20 @@ project-scoped; tags/category are shared across kinds.
 
 ## Crates
 
-- `korg-core` — schema (sqlx migrations) and domain model.
+- `korg-core` — schema (sqlx migrations), domain repos (work items, cards,
+  reading-list links, generalized relationships) and calendar slots.
 - `korg-migrate` — one-shot, fidelity-verified import of kwi + kcard data.
+- `korg-mcp` — stdio MCP server exposing the korg domain to AI agents.
+
+## MCP server
+
+`korg-mcp` is a stdio MCP server (rmcp) backed directly by `korg-core`. It
+needs `DATABASE_URL` and exposes tools for work items, cards, reading-list
+links, generalized cross-kind relationships, and calendar timebox slots.
+
+```bash
+DATABASE_URL=postgres://user:pass@host:5432/korg cargo run -p korg-mcp
+```
 
 ## Migration & fidelity
 
