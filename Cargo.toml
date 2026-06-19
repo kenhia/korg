@@ -1,0 +1,46 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/korg-core",
+    "crates/korg-migrate",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Database
+sqlx = { version = "0.8", default-features = false, features = [
+    "postgres",
+    "runtime-tokio",
+    "tls-rustls",
+    "macros",
+    "time",
+    "rust_decimal",
+    "migrate",
+    "uuid",
+] }
+rust_decimal = { version = "1", features = ["serde", "db-postgres"] }
+
+# Serde / JSON
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Time / IDs
+time = { version = "0.3", features = ["serde", "macros"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Errors / logging
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+
+# Test helpers
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["postgres"] }
