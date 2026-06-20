@@ -17,6 +17,7 @@
     WEEKDAY_LABELS,
     prettyDuration,
   } from "$lib/dates";
+  import { extractUrls } from "$lib/urls";
 
   type DndItem = { id: number; card: Card };
 
@@ -214,6 +215,7 @@
   let showDiscard = $state(false);
   let comments = $state<CardComment[]>([]);
   let newComment = $state("");
+  let launchUrls = $derived(extractUrls(form.description, ...comments.map((c) => c.body)));
   const dirty = $derived(editing !== null && JSON.stringify(form) !== original);
 
   async function openEdit(card: Card) {
@@ -509,6 +511,19 @@
             <button class="self-start rounded bg-[var(--color-surface-hi)] px-3 py-1 text-sm hover:bg-[var(--color-accent-soft)]" onclick={addComment}>Add</button>
           </div>
         </div>
+
+        {#if launchUrls.length}
+          <div class="border-t border-[var(--color-border)] pt-2" data-testid="launch-links">
+            <p class="mb-1 text-xs font-semibold text-[var(--color-muted)]">Links</p>
+            <ul class="space-y-1">
+              {#each launchUrls as url (url)}
+                <li>
+                  <a class="block truncate text-sm text-[var(--color-accent)] hover:underline" href={url} target="_blank" rel="noopener noreferrer" title={url}>{url}</a>
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
 
         {#if showDiscard}
           <div class="rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-3" data-testid="discard-prompt">
