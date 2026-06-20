@@ -42,6 +42,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/areas", get(list_areas).post(create_area))
         .route("/api/cards", get(list_cards).post(create_card))
         .route("/api/cards/:node_id", patch(update_card))
+        .route("/api/cards/:node_id/comments", get(list_comments).post(add_comment))
+        .route("/api/comments/:id", delete(delete_comment))
         .route("/api/links", get(list_links).post(create_link))
         .route("/api/links/:node_id", patch(update_link))
         .route("/api/slots", get(list_slots))
@@ -334,8 +336,10 @@ struct UpdateCard {
     description: Option<String>,
     #[serde(default)]
     archived: Option<bool>,
-    #[serde(default)]
-    category: Option<String>,
+    #[serde(default, deserialize_with = "deser_nullable_str")]
+    project: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deser_nullable_str")]
+    category: Option<Option<String>>,
     #[serde(default)]
     tags: Option<Vec<String>>,
 }
@@ -349,6 +353,14 @@ async fn update_card(
         Some(r) => Some(Decimal::try_from(r).map_err(|e| ApiError(anyhow::anyhow!("rank: {e}")))?),
         None => None,
     };
+    // Resolve a free-text project name to a project id (creating it if needed).
+    let project_id: Option<Option<i64>> = match &b.project {
+        Some(Some(name)) if !name.trim().is_empty() => {
+            Some(Some(repo::create_project(&s.pool, name.trim()).await?))
+        }
+        Some(_) => Some(None),
+        None => None,
+    };
     repo::update_card(
         &s.pool,
         node_id,
@@ -358,11 +370,34 @@ async fn update_card(
             title: b.title,
             description: b.description,
             archived: b.archived,
-            category: b.category.map(Some),
+            project_id,
+            category: b.category,
             tags: b.tags,
         },
     )
     .await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn list_comments(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
+    Ok(Json(json!(repo::list_comments(&s.pool, node_id).await?)))
+}
+
+#[derive(Deserialize)]
+struct NewComment {
+    body: String,
+}
+
+async fn add_comment(
+    State(s): State<AppState>,
+    Path(node_id): Path<i64>,
+    Json(b): Json<NewComment>,
+) -> ApiResult {
+    Ok(Json(json!(repo::add_comment(&s.pool, node_id, &b.body).await?)))
+}
+
+async fn delete_comment(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
+    repo::delete_comment(&s.pool, id).await?;
     Ok(Json(json!({ "ok": true })))
 }
 

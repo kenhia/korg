@@ -6,13 +6,15 @@ test("cut bucket autohides and expands", async ({ page }) => {
   const title = `cut ${Date.now()}`;
 
   await page.goto("/cards");
-  // Seed a card and move it to Cut via the list view (deterministic).
   await page.getByPlaceholder("New card title…").fill(title);
   await page.getByPlaceholder("New card title…").press("Enter");
-  await page.getByRole("button", { name: "List" }).click();
-  const row = page.getByRole("row", { name: new RegExp(title) });
-  await row.locator("select").selectOption("Cut");
-  await page.getByRole("button", { name: "Board" }).click();
+
+  // Move it to Cut via the edit modal (status is edited by opening a card).
+  await page.getByTestId("col-Backlog").getByText(title).click();
+  await expect(page.getByTestId("card-modal")).toBeVisible();
+  await page.getByTestId("card-modal").getByRole("combobox").first().selectOption("Cut");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("card-modal")).toBeHidden();
 
   // Collapsed: toggle shows "CUT" and the card is not visible.
   const toggle = page.getByTestId("cut-toggle");

@@ -384,6 +384,7 @@ pub struct CardPatch {
     pub title: Option<String>,
     pub description: Option<String>,
     pub archived: Option<bool>,
+    pub project_id: Option<Option<i64>>,
     pub category: Option<Option<String>>,
     pub tags: Option<Vec<String>>,
 }
@@ -425,6 +426,13 @@ pub async fn update_card(pool: &PgPool, node_id: i64, patch: CardPatch) -> Resul
             .execute(&mut *tx)
             .await?;
     }
+    if let Some(project_id) = &patch.project_id {
+        sqlx::query("UPDATE node SET project_id = $2 WHERE id = $1")
+            .bind(node_id)
+            .bind(*project_id)
+            .execute(&mut *tx)
+            .await?;
+    }
     if let Some(category) = &patch.category {
         sqlx::query("UPDATE node SET category = $2 WHERE id = $1")
             .bind(node_id)
@@ -440,6 +448,48 @@ pub async fn update_card(pool: &PgPool, node_id: i64, patch: CardPatch) -> Resul
             .await?;
     }
     tx.commit().await?;
+    Ok(())
+}
+
+// --- comments -------------------------------------------------------------
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct Comment {
+    pub id: i64,
+    pub card_node_id: i64,
+    pub body: String,
+    pub created: OffsetDateTime,
+    pub updated: OffsetDateTime,
+}
+
+pub async fn list_comments(pool: &PgPool, card_node_id: i64) -> Result<Vec<Comment>> {
+    let rows = sqlx::query_as::<_, Comment>(
+        "SELECT id, card_node_id, body, created, updated FROM comment \
+         WHERE card_node_id = $1 ORDER BY created",
+    )
+    .bind(card_node_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn add_comment(pool: &PgPool, card_node_id: i64, body: &str) -> Result<Comment> {
+    let c = sqlx::query_as::<_, Comment>(
+        "INSERT INTO comment (card_node_id, body) VALUES ($1, $2) \
+         RETURNING id, card_node_id, body, created, updated",
+    )
+    .bind(card_node_id)
+    .bind(body)
+    .fetch_one(pool)
+    .await?;
+    Ok(c)
+}
+
+pub async fn delete_comment(pool: &PgPool, id: i64) -> Result<()> {
+    sqlx::query("DELETE FROM comment WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

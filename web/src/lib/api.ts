@@ -102,6 +102,14 @@ export const WI_TYPES = [
 export const WI_STATUSES = ["open", "active", "resolved", "closed", "draft"] as const;
 export const TSHIRTS = ["XS", "S", "M", "L", "XL", "Huge", "Unknown"] as const;
 
+export interface CardComment {
+  id: number;
+  card_node_id: number;
+  body: string;
+  created: string;
+  updated: string;
+}
+
 async function http<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,
@@ -179,9 +187,16 @@ export const api = {
       title: string;
       description: string;
       archived: boolean;
+      project: string | null;
+      category: string | null;
       tags: string[];
     }>,
   ) => http<{ ok: true }>("PATCH", `/api/cards/${node_id}`, patch),
+  cardComments: (node_id: number) =>
+    http<CardComment[]>("GET", `/api/cards/${node_id}/comments`),
+  addComment: (node_id: number, body: string) =>
+    http<CardComment>("POST", `/api/cards/${node_id}/comments`, { body }),
+  deleteComment: (id: number) => http<{ ok: true }>("DELETE", `/api/comments/${id}`),
 
   // reading-list links
   links: () => http<Link[]>("GET", "/api/links"),

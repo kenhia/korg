@@ -15,18 +15,19 @@
     onCancel: () => void;
   } = $props();
 
-  const isEdit = editItem !== null;
+  const seed = editItem; // snapshot for one-time field init (form remounts per item)
+  const isEdit = seed !== null;
 
-  let title = $state(editItem?.title ?? "");
-  let content = $state(editItem?.content ?? "");
-  let details = $state(editItem?.details ?? "");
-  let wiType = $state(editItem?.wi_type ?? "task");
-  let wiStatus = $state(editItem?.wi_status ?? "open");
-  let wiTshirt = $state(editItem?.wi_tshirt ?? "S");
-  let area = $state(editItem?.area ?? "");
-  let sprint = $state(editItem?.sprint ?? "");
-  let parent = $state(editItem?.parent != null ? String(editItem.parent) : "");
-  let tags = $state(editItem ? editItem.tags.join(", ") : "");
+  let title = $state(seed?.title ?? "");
+  let content = $state(seed?.content ?? "");
+  let details = $state(seed?.details ?? "");
+  let wiType = $state(seed?.wi_type ?? "task");
+  let wiStatus = $state(seed?.wi_status ?? "open");
+  let wiTshirt = $state(seed?.wi_tshirt ?? "S");
+  let area = $state(seed?.area ?? "");
+  let sprint = $state(seed?.sprint ?? "");
+  let parent = $state(seed?.parent != null ? String(seed.parent) : "");
+  let tags = $state(seed ? seed.tags.join(", ") : "");
 
   let saving = $state(false);
   let err = $state<string | null>(null);

@@ -94,6 +94,36 @@ async fn api_end_to_end() {
     let (_st, cards) = req(&router, "GET", "/api/cards", None).await;
     assert_eq!(cards[0]["status"], "Active");
 
+    // Card project (free-text resolves/creates) + a comment thread.
+    let (st, _) = req(
+        &router,
+        "PATCH",
+        &format!("/api/cards/{card_node}"),
+        Some(json!({"project":"boardproj","category":"chores","tags":["x","y"]})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (_st, cards) = req(&router, "GET", "/api/cards", None).await;
+    assert_eq!(cards[0]["project"], "boardproj");
+    assert_eq!(cards[0]["category"], "chores");
+
+    let (st, cm) = req(
+        &router,
+        "POST",
+        &format!("/api/cards/{card_node}/comments"),
+        Some(json!({"body":"first note"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let cmid = cm["id"].as_i64().unwrap();
+    let (_st, comments) = req(&router, "GET", &format!("/api/cards/{card_node}/comments"), None).await;
+    assert_eq!(comments.as_array().unwrap().len(), 1);
+    assert_eq!(comments[0]["body"], "first note");
+    let (st, _) = req(&router, "DELETE", &format!("/api/comments/{cmid}"), None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (_st, comments) = req(&router, "GET", &format!("/api/cards/{card_node}/comments"), None).await;
+    assert_eq!(comments.as_array().unwrap().len(), 0);
+
     // Reading list: create, disposition, tags.
     let (_st, link) = req(
         &router,
