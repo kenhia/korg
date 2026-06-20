@@ -505,8 +505,8 @@
             {:else}<li class="text-xs text-[var(--color-muted)]">No comments.</li>{/each}
           </ul>
           <div class="mt-2 flex gap-2">
-            <input class="flex-1 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" placeholder="Add a comment…" data-testid="comment-input" bind:value={newComment} onkeydown={(e) => e.key === "Enter" && addComment()} />
-            <button class="rounded bg-[var(--color-surface-hi)] px-3 py-1 text-sm hover:bg-[var(--color-accent-soft)]" onclick={addComment}>Add</button>
+            <textarea class="min-h-[3rem] flex-1 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" placeholder="Add a comment… (Ctrl/⌘-Enter to post)" data-testid="comment-input" bind:value={newComment} onkeydown={(e) => (e.key === "Enter" && (e.ctrlKey || e.metaKey)) && addComment()}></textarea>
+            <button class="self-start rounded bg-[var(--color-surface-hi)] px-3 py-1 text-sm hover:bg-[var(--color-accent-soft)]" onclick={addComment}>Add</button>
           </div>
         </div>
 

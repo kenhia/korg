@@ -265,7 +265,9 @@ pub struct WorkItemRow {
     pub tags: Vec<String>,
     pub parent: Option<i64>,
     pub archived: bool,
+    #[serde(with = "time::serde::rfc3339")]
     pub created: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
     pub updated: OffsetDateTime,
 }
 
@@ -303,7 +305,9 @@ pub struct CardRow {
     pub category: Option<String>,
     pub tags: Vec<String>,
     pub archived: bool,
+    #[serde(with = "time::serde::rfc3339")]
     pub created: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
     pub updated: OffsetDateTime,
 }
 
@@ -458,7 +462,9 @@ pub struct Comment {
     pub id: i64,
     pub card_node_id: i64,
     pub body: String,
+    #[serde(with = "time::serde::rfc3339")]
     pub created: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
     pub updated: OffsetDateTime,
 }
 

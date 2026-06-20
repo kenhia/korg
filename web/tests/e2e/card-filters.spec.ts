@@ -22,6 +22,6 @@ test("card filter search + comments", async ({ page }) => {
   await page.getByRole("row", { name: new RegExp(uniq) }).click();
   await expect(page.getByTestId("card-modal")).toBeVisible();
   await page.getByTestId("comment-input").fill("a note");
-  await page.getByTestId("comment-input").press("Enter");
+  await page.getByTestId("comment-input").press("Control+Enter");
   await expect(page.getByTestId("comment-list").getByText("a note")).toBeVisible();
 });

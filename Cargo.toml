@@ -34,7 +34,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # Time / IDs
-time = { version = "0.3", features = ["serde", "macros"] }
+time = { version = "0.3", features = ["serde", "serde-well-known", "macros", "formatting", "parsing"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
 # Errors / logging

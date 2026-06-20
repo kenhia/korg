@@ -14,6 +14,9 @@
   function active(href: string, path: string): boolean {
     return href === "/" ? path === "/" : path.startsWith(href);
   }
+
+  // Cards uses the full width (kanban needs room); other pages stay narrow.
+  const wide = $derived($page.url.pathname.startsWith("/cards"));
 </script>
 
 <div class="min-h-screen">
@@ -34,7 +37,7 @@
     </nav>
   </header>
 
-  <main class="mx-auto max-w-5xl px-4 py-6">
+  <main class="mx-auto w-full px-4 py-6" class:max-w-5xl={!wide} class:max-w-[120rem]={wide}>
     {@render children()}
   </main>
 </div>
