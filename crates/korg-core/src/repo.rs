@@ -325,12 +325,17 @@ pub async fn list_cards(pool: &PgPool) -> Result<Vec<CardRow>> {
 pub struct ProjectRow {
     pub id: i64,
     pub name: String,
+    pub gh_repo: Option<String>,
+    pub cn_path: Option<String>,
+    pub description: Option<String>,
 }
 
 pub async fn list_projects(pool: &PgPool) -> Result<Vec<ProjectRow>> {
-    let rows = sqlx::query_as::<_, ProjectRow>("SELECT id, name FROM project ORDER BY name")
-        .fetch_all(pool)
-        .await?;
+    let rows = sqlx::query_as::<_, ProjectRow>(
+        "SELECT id, name, gh_repo, cn_path, description FROM project ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await?;
     Ok(rows)
 }
 
@@ -458,6 +463,31 @@ pub async fn list_areas(pool: &PgPool, project: &str) -> Result<Vec<AreaRow>> {
     Ok(rows)
 }
 
+/// Create (or return existing) an area under a project by name.
+pub async fn create_area(
+    pool: &PgPool,
+    project: &str,
+    name: &str,
+    description: Option<&str>,
+) -> Result<i64> {
+    let pid: i64 = sqlx::query_scalar("SELECT id FROM project WHERE name = $1")
+        .bind(project)
+        .fetch_one(pool)
+        .await?;
+    let id: i64 = sqlx::query(
+        "INSERT INTO area (project_id, name, description) VALUES ($1, $2, $3) \
+         ON CONFLICT (project_id, name) DO UPDATE SET description = EXCLUDED.description \
+         RETURNING id",
+    )
+    .bind(pid)
+    .bind(name)
+    .bind(description)
+    .fetch_one(pool)
+    .await?
+    .get("id");
+    Ok(id)
+}
+
 /// Resolve a work item's node id from its user-facing wi_number.
 pub async fn node_id_for_wi(pool: &PgPool, wi_number: i64) -> Result<Option<i64>> {
     let id: Option<i64> = sqlx::query_scalar("SELECT node_id FROM workitem WHERE wi_number = $1")
@@ -479,6 +509,8 @@ pub struct WorkItemPatch {
     pub wi_tshirt: Option<String>,
     pub sprint: Option<Option<String>>,
     pub area_id: Option<Option<i64>>,
+    /// Parent expressed as the parent's user-facing wi_number (None clears).
+    pub parent: Option<Option<i64>>,
     pub archived: Option<bool>,
     pub category: Option<Option<String>>,
     pub tags: Option<Vec<String>>,
@@ -488,6 +520,12 @@ pub async fn update_work_item(pool: &PgPool, wi_number: i64, patch: WorkItemPatc
     let node_id = match node_id_for_wi(pool, wi_number).await? {
         Some(n) => n,
         None => return Ok(()),
+    };
+    // Resolve parent wi_number -> node id before the transaction.
+    let parent_node: Option<Option<i64>> = match &patch.parent {
+        Some(Some(num)) => Some(node_id_for_wi(pool, *num).await?),
+        Some(None) => Some(None),
+        None => None,
     };
     let mut tx = pool.begin().await?;
 
@@ -514,6 +552,9 @@ pub async fn update_work_item(pool: &PgPool, wi_number: i64, patch: WorkItemPatc
     }
     if let Some(v) = &patch.area_id {
         sqlx::query("UPDATE workitem SET area_id = $2 WHERE node_id = $1").bind(node_id).bind(*v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = parent_node {
+        sqlx::query("UPDATE workitem SET parent_node_id = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
     }
     if let Some(v) = patch.archived {
         sqlx::query("UPDATE node SET archived = $2 WHERE id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;

@@ -3,7 +3,6 @@
   import {
     api,
     WI_TYPES,
-    WI_STATUSES,
     TSHIRTS,
     type Project,
     type WorkItem,
@@ -11,6 +10,7 @@
   } from "$lib/api";
   import { renderMarkdown } from "$lib/markdown";
   import MultiSelectFilter from "$lib/components/MultiSelectFilter.svelte";
+  import WorkItemForm from "$lib/components/WorkItemForm.svelte";
 
   const ALL = "\u0000all";
   const UNASSIGNED = "Unassigned";
@@ -21,19 +21,25 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
 
-  // master/detail
   let detail = $state<WorkItem | null>(null);
-  let cursor = $state<number | null>(null); // highlighted wi_number in the list
+  let cursor = $state<number | null>(null);
   let related = $state<Neighbor[]>([]);
+  let currentAreas = $state<{ id: number; name: string }[]>([]);
+  let detailAreas = $state<{ id: number; name: string }[]>([]);
 
-  // forms
+  let creating = $state(false);
+  let editing = $state(false);
+
+  // project rail: area-add
   let newProject = $state("");
-  let showNewWi = $state(false);
-  let wiTitle = $state("");
-  let wiContent = $state("");
-  let wiType = $state("task");
-  let wiStatus = $state("open");
-  let wiTshirt = $state("Unknown");
+  let areaAddFor = $state<string | null>(null);
+  let areaName = $state("");
+  let areaDesc = $state("");
+
+  // relationships
+  let relAdding = $state(false);
+  let relTarget = $state("");
+  let relLabel = $state("related-to");
 
   // filters
   let search = $state("");
@@ -103,6 +109,7 @@
 
   async function loadItems() {
     items = await api.workItems(current === ALL ? undefined : current);
+    currentAreas = current === ALL ? [] : await api.areas(current).catch(() => []);
     resetFilters();
     cursor = filtered[0]?.wi_number ?? null;
   }
@@ -123,6 +130,7 @@
   async function pick(name: string) {
     current = name;
     detail = null;
+    creating = false;
     await loadItems();
   }
 
@@ -131,17 +139,9 @@
     cursor = item.wi_number;
     editing = false;
     related = [];
-    projectAreas = [];
-    try {
-      related = await api.neighbors(item.node_id);
-    } catch {
-      related = [];
-    }
-    try {
-      projectAreas = item.project ? await api.areas(item.project) : [];
-    } catch {
-      projectAreas = [];
-    }
+    detailAreas = [];
+    related = await api.neighbors(item.node_id).catch(() => []);
+    detailAreas = item.project ? await api.areas(item.project).catch(() => []) : [];
   }
 
   async function refreshDetail() {
@@ -153,57 +153,22 @@
     }
   }
 
-  // --- edit / archive ---
-  let editing = $state(false);
-  let projectAreas = $state<{ id: number; name: string }[]>([]);
-  let ef = $state({
-    title: "",
-    content: "",
-    details: "",
-    wi_type: "task",
-    wi_status: "open",
-    wi_tshirt: "Unknown",
-    sprint: "",
-    area: "",
-    tags: "",
-  });
-
-  function startEdit(it: WorkItem) {
-    ef = {
-      title: it.title,
-      content: it.content,
-      details: it.details ?? "",
-      wi_type: it.wi_type,
-      wi_status: it.wi_status,
-      wi_tshirt: it.wi_tshirt,
-      sprint: it.sprint ?? "",
-      area: it.area ?? "",
-      tags: it.tags.join(", "),
-    };
-    editing = true;
+  async function addProject() {
+    const name = newProject.trim();
+    if (name === "") return;
+    await api.createProject(name);
+    newProject = "";
+    await loadProjects();
+    await pick(name);
   }
 
-  async function saveEdit() {
-    if (!detail) return;
-    const areaId =
-      ef.area === "" ? null : (projectAreas.find((a) => a.name === ef.area)?.id ?? null);
-    await api.updateWorkItem(detail.wi_number, {
-      title: ef.title,
-      content: ef.content,
-      details: ef.details.trim() === "" ? null : ef.details,
-      wi_type: ef.wi_type,
-      wi_status: ef.wi_status,
-      wi_tshirt: ef.wi_tshirt,
-      sprint: ef.sprint.trim() === "" ? null : ef.sprint,
-      area_id: areaId,
-      tags: ef.tags
-        .split(",")
-        .map((t) => t.trim())
-        .filter((t) => t !== ""),
-    });
-    editing = false;
-    await refreshDetail();
-    await loadItems();
+  async function addArea() {
+    if (!areaAddFor || areaName.trim() === "") return;
+    await api.createArea(areaAddFor, areaName.trim(), areaDesc.trim() || undefined);
+    if (areaAddFor === current) currentAreas = await api.areas(current).catch(() => []);
+    areaName = "";
+    areaDesc = "";
+    areaAddFor = null;
   }
 
   async function toggleArchive() {
@@ -212,11 +177,6 @@
     await refreshDetail();
     await loadItems();
   }
-
-  // --- relationships ---
-  let relAdding = $state(false);
-  let relTarget = $state("");
-  let relLabel = $state("related-to");
 
   async function addRel() {
     if (!detail) return;
@@ -245,31 +205,6 @@
     return `${n.kind} #${n.node_id}`;
   }
 
-  async function addProject() {
-    const name = newProject.trim();
-    if (name === "") return;
-    await api.createProject(name);
-    newProject = "";
-    await loadProjects();
-    await pick(name);
-  }
-
-  async function addWorkItem() {
-    if (wiTitle.trim() === "") return;
-    await api.createWorkItem({
-      title: wiTitle.trim(),
-      content: wiContent.trim(),
-      wi_type: wiType,
-      wi_status: wiStatus,
-      wi_tshirt: wiTshirt,
-      project_id: currentProject?.id,
-    });
-    wiTitle = "";
-    wiContent = "";
-    showNewWi = false;
-    await loadItems();
-  }
-
   function moveCursor(delta: number) {
     const list = filtered;
     if (list.length === 0) return;
@@ -281,6 +216,10 @@
   function onKey(e: KeyboardEvent) {
     const tag = (e.target as HTMLElement)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (creating) {
+      if (e.key === "Escape") creating = false;
+      return;
+    }
     if (detail) {
       if (e.key === "Escape") {
         if (editing) editing = false;
@@ -323,7 +262,7 @@
   {#if loading}
     <p class="text-[var(--color-muted)]">Loading…</p>
   {:else}
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-[13rem_1fr]">
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-[14rem_1fr]">
       <!-- project rail -->
       <aside class="space-y-2">
         <nav class="overflow-hidden rounded border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -332,24 +271,39 @@
             class:bg-[var(--color-surface-hi)]={current === ALL}
             onclick={() => pick(ALL)}>All projects</button>
           {#each projects as p (p.id)}
-            <button
-              class="block w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-hi)]"
-              class:bg-[var(--color-surface-hi)]={current === p.name}
-              class:text-[var(--color-accent)]={current === p.name}
-              onclick={() => pick(p.name)}>{p.name}</button>
+            <div class="flex items-center" class:bg-[var(--color-surface-hi)]={current === p.name}>
+              <button
+                class="flex-1 px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-hi)]"
+                class:text-[var(--color-accent)]={current === p.name}
+                onclick={() => pick(p.name)}>{p.name}</button>
+              <button
+                class="px-2 py-2 text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+                title={`Add area to ${p.name}`}
+                aria-label={`Add area to ${p.name}`}
+                onclick={() => { areaAddFor = areaAddFor === p.name ? null : p.name; areaName = ""; areaDesc = ""; }}
+              >◇</button>
+            </div>
           {/each}
         </nav>
+
+        {#if areaAddFor}
+          <div class="space-y-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-2 text-sm">
+            <p class="text-xs text-[var(--color-muted)]">Add area to <span class="text-[var(--color-accent)]">{areaAddFor}</span></p>
+            <input class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" placeholder="area name" bind:value={areaName} onkeydown={(e) => e.key === "Enter" && addArea()} />
+            <input class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none" placeholder="description (optional)" bind:value={areaDesc} />
+            <div class="flex justify-end gap-2">
+              <button class="rounded px-2 py-1 text-xs hover:bg-[var(--color-surface-hi)]" onclick={() => (areaAddFor = null)}>Cancel</button>
+              <button class="rounded bg-[var(--color-accent-soft)] px-2 py-1 text-xs hover:bg-[var(--color-accent)]" onclick={addArea}>Create</button>
+            </div>
+          </div>
+        {/if}
+
         <div class="flex gap-1">
-          <input
-            class="min-w-0 flex-1 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none"
-            placeholder="new project…"
-            bind:value={newProject}
-            onkeydown={(e) => e.key === "Enter" && addProject()} />
+          <input class="min-w-0 flex-1 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" placeholder="new project…" bind:value={newProject} onkeydown={(e) => e.key === "Enter" && addProject()} />
           <button class="rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm hover:bg-[var(--color-accent-soft)]" onclick={addProject}>+</button>
         </div>
       </aside>
 
-      <!-- main: list or detail -->
       <div class="min-w-0">
         {#if detail}
           {@render detailView(detail)}
@@ -367,41 +321,45 @@
 
 {#snippet listView()}
   <div class="space-y-3">
+    {#if current !== ALL && currentProject}
+      <details class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm">
+        <summary class="cursor-pointer text-xs font-semibold text-[var(--color-muted)] hover:text-[var(--color-accent)]">Project Details</summary>
+        <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+          <dt class="text-[var(--color-muted)]">Short Name</dt><dd>{currentProject.name}</dd>
+          {#if currentProject.cn_path}<dt class="text-[var(--color-muted)]">CN Path</dt><dd>{currentProject.cn_path}</dd>{/if}
+          {#if currentProject.gh_repo}<dt class="text-[var(--color-muted)]">GitHub Repo</dt><dd>{currentProject.gh_repo}</dd>{/if}
+          {#if currentProject.description}<dt class="text-[var(--color-muted)]">Description</dt><dd>{currentProject.description}</dd>{/if}
+        </dl>
+      </details>
+    {/if}
+
     <!-- toolbar -->
     <div class="flex flex-wrap items-center gap-2">
-      <input
-        class="w-40 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none"
-        placeholder="search…"
-        bind:value={search} />
+      <input class="w-40 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" placeholder="search…" bind:value={search} />
       <MultiSelectFilter label="areas" options={areaOptions} selected={fAreas} modified={modified.areas} onchange={(v) => (fAreas = v)} />
       <MultiSelectFilter label="types" options={typeOptions} selected={fTypes} modified={modified.types} onchange={(v) => (fTypes = v)} />
       <MultiSelectFilter label="statuses" options={statusOptions} selected={fStatuses} modified={modified.statuses} onchange={(v) => (fStatuses = v)} />
       <MultiSelectFilter label="sizes" options={sizeOptions} selected={fSizes} modified={modified.sizes} onchange={(v) => (fSizes = v)} />
       <MultiSelectFilter label="sprints" options={sprintOptions()} selected={fSprints} modified={modified.sprints} onchange={(v) => (fSprints = v)} />
-      <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]">
-        <input type="checkbox" bind:checked={showArchived} /> archived
-      </label>
+      <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]"><input type="checkbox" bind:checked={showArchived} /> archived</label>
       <button class="rounded border border-[var(--color-border)] px-2 py-1 text-xs hover:bg-[var(--color-surface-hi)]" onclick={resetFilters}>Clear</button>
+      <button class="rounded border border-[var(--color-border)] px-2 py-1 text-xs hover:bg-[var(--color-surface-hi)]" title="Refresh" aria-label="Refresh" onclick={loadItems}>↻</button>
       <div class="ml-auto">
         <button
           class="rounded bg-[var(--color-accent-soft)] px-3 py-1.5 text-sm hover:bg-[var(--color-accent)] disabled:opacity-40"
           disabled={current === ALL}
           title={current === ALL ? "Pick a project first" : "New work item"}
-          onclick={() => (showNewWi = !showNewWi)}>+ New Work Item</button>
+          onclick={() => (creating = !creating)}>+ New Work Item</button>
       </div>
     </div>
 
-    {#if showNewWi}
-      <div class="space-y-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-        <input class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none" placeholder="Title" bind:value={wiTitle} />
-        <textarea class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none" rows="3" placeholder="Content (markdown)" bind:value={wiContent}></textarea>
-        <div class="flex flex-wrap gap-2 text-sm">
-          <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 outline-none" bind:value={wiType}>{#each WI_TYPES as t (t)}<option value={t}>{t}</option>{/each}</select>
-          <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 outline-none" bind:value={wiStatus}>{#each WI_STATUSES as s (s)}<option value={s}>{s}</option>{/each}</select>
-          <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 outline-none" bind:value={wiTshirt}>{#each TSHIRTS as ts (ts)}<option value={ts}>{ts}</option>{/each}</select>
-          <button class="rounded bg-[var(--color-accent-soft)] px-3 py-1 hover:bg-[var(--color-accent)]" onclick={addWorkItem}>Create</button>
-        </div>
-      </div>
+    {#if creating}
+      <WorkItemForm
+        projectId={currentProject?.id}
+        areas={currentAreas}
+        onSaved={async () => { creating = false; await loadItems(); }}
+        onCancel={() => (creating = false)}
+      />
     {/if}
 
     <p class="text-xs text-[var(--color-muted)]">{filtered.length} items · ↑/↓ select · Enter open</p>
@@ -448,50 +406,25 @@
 {/snippet}
 
 {#snippet detailView(item: WorkItem)}
-  <article class="max-w-3xl space-y-4">
+  <article class="space-y-4">
     <div class="flex items-center justify-between">
       <button class="rounded border border-[var(--color-border)] px-3 py-1 text-sm hover:bg-[var(--color-surface-hi)]" onclick={() => (detail = null)}>← Back</button>
-      <div class="flex gap-2">
-        {#if !editing}
-          <button class="rounded bg-[var(--color-accent-soft)] px-3 py-1 text-sm hover:bg-[var(--color-accent)]" onclick={() => startEdit(item)}>Edit</button>
-        {/if}
-        <button class="rounded border border-[var(--color-border)] px-3 py-1 text-sm hover:bg-[var(--color-surface-hi)]" onclick={toggleArchive}>
-          {item.archived ? "Un-archive" : "Archive"}
-        </button>
-      </div>
+      {#if !editing}
+        <div class="flex gap-2">
+          <button class="rounded bg-[var(--color-accent-soft)] px-3 py-1 text-sm hover:bg-[var(--color-accent)]" onclick={() => (editing = true)}>Edit</button>
+          <button class="rounded border border-[var(--color-border)] px-3 py-1 text-sm hover:bg-[var(--color-surface-hi)]" onclick={toggleArchive}>{item.archived ? "Un-archive" : "Archive"}</button>
+        </div>
+      {/if}
     </div>
 
     {#if editing}
-      <div class="space-y-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-        <input class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none" placeholder="Title" bind:value={ef.title} />
-        <div class="flex flex-wrap gap-2 text-sm">
-          <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]">Type
-            <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 outline-none" bind:value={ef.wi_type}>{#each WI_TYPES as t (t)}<option value={t}>{t}</option>{/each}</select>
-          </label>
-          <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]">Status
-            <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 outline-none" bind:value={ef.wi_status}>{#each WI_STATUSES as s (s)}<option value={s}>{s}</option>{/each}</select>
-          </label>
-          <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]">Size
-            <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 outline-none" bind:value={ef.wi_tshirt}>{#each TSHIRTS as ts (ts)}<option value={ts}>{ts}</option>{/each}</select>
-          </label>
-          <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]">Area
-            <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 outline-none" bind:value={ef.area}>
-              <option value="">—</option>
-              {#each projectAreas as a (a.id)}<option value={a.name}>{a.name}</option>{/each}
-            </select>
-          </label>
-          <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]">Sprint
-            <input class="w-24 rounded bg-[var(--color-surface-hi)] px-2 py-1 outline-none" bind:value={ef.sprint} />
-          </label>
-        </div>
-        <textarea class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none" rows="5" placeholder="Content (markdown)" bind:value={ef.content}></textarea>
-        <textarea class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none" rows="4" placeholder="Details (markdown)" bind:value={ef.details}></textarea>
-        <input class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none" placeholder="tags, comma, separated" bind:value={ef.tags} />
-        <div class="flex justify-end gap-2">
-          <button class="rounded px-3 py-1.5 text-sm hover:bg-[var(--color-surface-hi)]" onclick={() => (editing = false)}>Cancel</button>
-          <button class="rounded bg-[var(--color-accent-soft)] px-3 py-1.5 text-sm hover:bg-[var(--color-accent)]" onclick={saveEdit}>Save</button>
-        </div>
-      </div>
+      <WorkItemForm
+        editItem={item}
+        projectId={currentProject?.id}
+        areas={detailAreas}
+        onSaved={async () => { editing = false; await refreshDetail(); await loadItems(); }}
+        onCancel={() => (editing = false)}
+      />
     {:else}
       <h2 class="text-2xl font-semibold">
         {item.title}
@@ -529,12 +462,11 @@
         <section>
           <h3 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Details</h3>
           <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
-          <div class="prose prose-invert max-w-none text-sm">{@html renderMarkdown(item.details)}</div>
+          <div class="prose prose-invert max-w-none rounded p-2 text-sm" style="background: color-mix(in oklch, var(--color-surface) 75%, var(--color-accent) 25%)">{@html renderMarkdown(item.details)}</div>
         </section>
       {/if}
     {/if}
 
-    <!-- Relationships (view + add/remove) -->
     <section>
       <div class="mb-1 flex items-center justify-between border-b border-[var(--color-border)] pb-1">
         <h3 class="text-sm font-semibold">Relationships</h3>

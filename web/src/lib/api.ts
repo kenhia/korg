@@ -4,6 +4,9 @@
 export interface Project {
   id: number;
   name: string;
+  gh_repo: string | null;
+  cn_path: string | null;
+  description: string | null;
 }
 
 export interface WorkItem {
@@ -154,12 +157,15 @@ export const api = {
       wi_tshirt: string;
       sprint: string | null;
       area_id: number | null;
+      parent: number | null;
       archived: boolean;
       tags: string[];
     }>,
   ) => http<{ ok: true }>("PATCH", `/api/work-items/${wi}`, patch),
   areas: (project: string) =>
     http<{ id: number; name: string }[]>("GET", `/api/areas?project=${encodeURIComponent(project)}`),
+  createArea: (project: string, name: string, description?: string) =>
+    http<{ id: number; name: string }>("POST", "/api/areas", { project, name, description }),
 
   // cards
   cards: () => http<Card[]>("GET", "/api/cards"),

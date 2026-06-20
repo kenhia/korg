@@ -16,7 +16,7 @@ test("create a project and a work item, view detail fields", async ({ page }) =>
   await page.getByRole("button", { name: "+ New Work Item" }).click();
   await page.getByPlaceholder("Title").fill(title);
   await page.getByPlaceholder("Content (markdown)").fill("**bold** body");
-  await page.getByRole("button", { name: "Create" }).click();
+  await page.getByRole("button", { name: "Save" }).first().click();
 
   const row = page.getByRole("row", { name: new RegExp(title) });
   await expect(row).toBeVisible();

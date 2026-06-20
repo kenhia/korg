@@ -39,7 +39,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/projects/recent", get(recent_project))
         .route("/api/work-items", get(list_work_items).post(create_work_item))
         .route("/api/work-items/:wi_number", get(get_work_item).patch(update_work_item))
-        .route("/api/areas", get(list_areas))
+        .route("/api/areas", get(list_areas).post(create_area))
         .route("/api/cards", get(list_cards).post(create_card))
         .route("/api/cards/:node_id", patch(update_card))
         .route("/api/links", get(list_links).post(create_link))
@@ -224,6 +224,8 @@ struct UpdateWorkItem {
     sprint: Option<Option<String>>,
     #[serde(default, deserialize_with = "deser_nullable_i64")]
     area_id: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "deser_nullable_i64")]
+    parent: Option<Option<i64>>,
     #[serde(default)]
     archived: Option<bool>,
     #[serde(default)]
@@ -247,6 +249,7 @@ async fn update_work_item(
             wi_tshirt: b.wi_tshirt,
             sprint: b.sprint,
             area_id: b.area_id,
+            parent: b.parent,
             archived: b.archived,
             category: None,
             tags: b.tags,
@@ -263,6 +266,19 @@ struct AreasQuery {
 
 async fn list_areas(State(s): State<AppState>, Query(q): Query<AreasQuery>) -> ApiResult {
     Ok(Json(json!(repo::list_areas(&s.pool, &q.project).await?)))
+}
+
+#[derive(Deserialize)]
+struct CreateArea {
+    project: String,
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+async fn create_area(State(s): State<AppState>, Json(b): Json<CreateArea>) -> ApiResult {
+    let id = repo::create_area(&s.pool, &b.project, &b.name, b.description.as_deref()).await?;
+    Ok(Json(json!({ "id": id, "name": b.name })))
 }
 
 // --- cards ----------------------------------------------------------------

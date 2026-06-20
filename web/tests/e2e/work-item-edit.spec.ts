@@ -16,7 +16,8 @@ test("edit, archive, and relate a work item", async ({ page }) => {
   for (const t of [a, b]) {
     await page.getByRole("button", { name: "+ New Work Item" }).click();
     await page.getByPlaceholder("Title").fill(t);
-    await page.getByRole("button", { name: "Create" }).click();
+    await page.getByPlaceholder("Content (markdown)").fill("body");
+    await page.getByRole("button", { name: "Save" }).first().click();
     await expect(page.getByRole("row", { name: new RegExp(t) })).toBeVisible();
   }
 
@@ -30,7 +31,7 @@ test("edit, archive, and relate a work item", async ({ page }) => {
   // Edit: change status to resolved.
   await page.getByRole("button", { name: "Edit" }).click();
   await page.getByRole("combobox").nth(1).selectOption("resolved"); // Status select
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("button", { name: "Save" }).first().click();
   await expect(page.getByText("resolved", { exact: true }).first()).toBeVisible();
 
   // Add a relationship A -> B.
