@@ -72,8 +72,11 @@ KCARD_DOCKER_CONTAINER=kcard-pg \
 KCARD_ENV_FILE=../kcard/deploy/local/.env \
 just snapshot
 
-# 2. Import into a throwaway korg DB and verify fidelity invariants F1-F7.
+# 2a. Verify fidelity invariants F1-F7 (CI-style gate, throwaway DB).
 just verify-import
+
+# 2b. Or load the data into a real korg database (--reset clears it first).
+KORG_DATABASE_URL=postgres://korg:korg@host:5432/korg just import --reset
 ```
 
 `verify-import` proves the import is faithful to both sources: count parity,

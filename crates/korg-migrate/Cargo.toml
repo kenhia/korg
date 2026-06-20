@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "korg-migrate"
+path = "src/main.rs"
+
 [dependencies]
 korg-core = { path = "../korg-core" }
 sqlx = { workspace = true }

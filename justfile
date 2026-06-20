@@ -17,3 +17,10 @@ snapshot:
 # Prerequisite: `just snapshot` (produces snapshots/*.dump).
 verify-import:
     cargo test -p korg-migrate --test fidelity
+
+# Import kwi+kcard from snapshots into korg (set KORG_DATABASE_URL). Pass
+# --reset to clear existing korg work items/cards/projects/areas first.
+#   just snapshot        # refresh snapshots from the live sources (read-only)
+#   KORG_DATABASE_URL=... just import --reset
+import *ARGS:
+    cargo run -q -p korg-migrate -- {{ARGS}}
