@@ -12,6 +12,7 @@ test("drop a card onto a slot to schedule it", async ({ page }) => {
 
   const card = page.locator('[data-testid^="card-"]', { hasText: title });
   await expect(card).toBeVisible();
+  await card.scrollIntoViewIfNeeded();
   await expect(page.getByTestId("col-Backlog").getByText(title)).toBeVisible();
 
   const slot = page.locator('[data-testid^="slot-"]').first();

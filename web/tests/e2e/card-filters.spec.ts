@@ -11,14 +11,15 @@ test("card filter search + comments", async ({ page }) => {
   await page.getByPlaceholder("New card title…").press("Enter");
   await expect(page.getByTestId("col-Backlog").getByText(uniq)).toBeVisible();
 
-  // Search filter narrows to just this card.
+  // Filters live in List view. Switch, search, then reset.
+  await page.getByRole("button", { name: "List" }).click();
   await page.getByTestId("filter-search").fill(uniq);
-  await expect(page.getByTestId("col-Backlog").getByText(uniq)).toBeVisible();
+  await expect(page.getByRole("row", { name: new RegExp(uniq) })).toBeVisible();
   await page.getByRole("button", { name: "Reset filters" }).click();
   await expect(page.getByTestId("filter-search")).toHaveValue("");
 
-  // Open it, set project/category, add a comment.
-  await page.getByTestId("col-Backlog").getByText(uniq).click();
+  // Open it from the list, add a comment.
+  await page.getByRole("row", { name: new RegExp(uniq) }).click();
   await expect(page.getByTestId("card-modal")).toBeVisible();
   await page.getByTestId("comment-input").fill("a note");
   await page.getByTestId("comment-input").press("Enter");

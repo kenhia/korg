@@ -374,11 +374,7 @@
 
   {#if loading}
     <p class="text-[var(--color-muted)]">Loading…</p>
-  {:else}
-    <div class="grid gap-4 lg:grid-cols-[1fr_15rem]">
-      <!-- main: board or list -->
-      <div class="min-w-0">
-        {#if view === "board"}
+  {:else if view === "board"}
           <p class="mb-2 text-xs text-[var(--color-muted)]">Drag cards within or across columns — drop anywhere to set order.</p>
           <div class="flex flex-wrap gap-3">
             {#each NON_CUT as status (status)}
@@ -402,7 +398,9 @@
             </div>
           </div>
         {:else}
-          <div class="overflow-auto rounded border border-[var(--color-border)]">
+          <div class="grid gap-4 lg:grid-cols-[15rem_1fr]">
+            {@render filtersPanel()}
+            <div class="overflow-auto rounded border border-[var(--color-border)]">
             <table class="w-full text-sm">
               <thead class="sticky top-0 bg-[var(--color-surface)] text-left text-xs text-[var(--color-muted)]">
                 <tr><th class="px-3 py-2">Title</th><th class="px-3 py-2">Status</th><th class="px-3 py-2">Project</th><th class="px-3 py-2">Category</th><th class="px-3 py-2">Tags</th><th class="px-3 py-2">Updated</th></tr>
@@ -422,11 +420,11 @@
                 {/each}
               </tbody>
             </table>
+            </div>
           </div>
         {/if}
-      </div>
 
-      <!-- filter sidebar (right) -->
+  {#snippet filtersPanel()}
       <aside class="space-y-3 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm">
         <div>
           <label class="mb-1 block text-xs text-[var(--color-muted)]" for="card-search">Search</label>
@@ -458,8 +456,7 @@
         <label class="flex items-center gap-2 text-xs text-[var(--color-muted)]"><input type="checkbox" data-testid="toggle-archived" bind:checked={showArchived} onchange={rebuild} /> Show Archived</label>
         <button type="button" class="w-full rounded border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-muted)] hover:text-[var(--color-text)]" onclick={resetFilters}>Reset filters</button>
       </aside>
-    </div>
-  {/if}
+  {/snippet}
 
   {#if editing}
     <div class="fixed inset-0 z-50 flex items-start justify-center overflow-auto p-4">
