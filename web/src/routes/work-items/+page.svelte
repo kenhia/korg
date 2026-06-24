@@ -15,6 +15,24 @@
   const ALL = "\u0000all";
   const UNASSIGNED = "Unassigned";
 
+  // WI #83 — persist the chosen project so it survives navigating away and
+  // back (the page component remounts on client-side nav). SSR-safe.
+  const STICKY_KEY = "korg.workitems.project";
+  function loadStickyProject(): string | null {
+    try {
+      return typeof localStorage !== "undefined" ? localStorage.getItem(STICKY_KEY) : null;
+    } catch {
+      return null;
+    }
+  }
+  function saveStickyProject(name: string): void {
+    try {
+      if (typeof localStorage !== "undefined") localStorage.setItem(STICKY_KEY, name);
+    } catch {
+      /* storage unavailable — non-fatal */
+    }
+  }
+
   let projects = $state<Project[]>([]);
   let current = $state<string>(ALL);
   let items = $state<WorkItem[]>([]);
@@ -104,7 +122,14 @@
   async function loadProjects() {
     const [ps, recent] = await Promise.all([api.projects(), api.recentProject()]);
     projects = ps;
-    if (current === ALL && recent.project) current = recent.project;
+    if (current === ALL) {
+      const stored = loadStickyProject();
+      if (stored !== null && (stored === ALL || ps.some((p) => p.name === stored))) {
+        current = stored;
+      } else if (recent.project) {
+        current = recent.project;
+      }
+    }
   }
 
   async function loadItems() {
@@ -129,6 +154,7 @@
 
   async function pick(name: string) {
     current = name;
+    saveStickyProject(name);
     detail = null;
     creating = false;
     await loadItems();
@@ -269,12 +295,14 @@
           <button
             class="block w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-hi)]"
             class:bg-[var(--color-surface-hi)]={current === ALL}
+            aria-current={current === ALL ? "true" : "false"}
             onclick={() => pick(ALL)}>All projects</button>
           {#each projects as p (p.id)}
             <div class="flex items-center" class:bg-[var(--color-surface-hi)]={current === p.name}>
               <button
                 class="flex-1 px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-hi)]"
                 class:text-[var(--color-accent)]={current === p.name}
+                aria-current={current === p.name ? "true" : "false"}
                 onclick={() => pick(p.name)}>{p.name}</button>
               <button
                 class="px-2 py-2 text-[var(--color-muted)] hover:text-[var(--color-accent)]"
