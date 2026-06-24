@@ -148,3 +148,27 @@ async fn slots_weekly_template_generate_assign_and_edit() {
     let next = list_slots(&pool, next_monday, next_monday).await.expect("list next");
     assert_eq!(durations_on(&next, next_monday), vec![45], "edited Monday template");
 }
+
+/// Regenerating the same dates must be idempotent: no duplicate slots, and any
+/// goals already placed into existing slots are preserved. (WI #82)
+#[tokio::test]
+async fn slots_generate_is_idempotent_and_preserves_goals() {
+    let (_c, pool) = fresh_korg().await;
+
+    let monday = date!(2024 - 01 - 01);
+    let first = generate_slots(&pool, monday, 7).await.expect("generate");
+    assert_eq!(first, 16, "one week generates 16 slots");
+
+    // Put a goal into one slot, then regenerate the exact same span.
+    let week = list_slots(&pool, monday, date!(2024 - 01 - 07)).await.expect("list");
+    let target = week[0].node_id;
+    set_slot_goal(&pool, target, Some("keep me")).await.expect("goal");
+
+    let again = generate_slots(&pool, monday, 7).await.expect("regenerate");
+    assert_eq!(again, 0, "regenerating the same week creates no new slots");
+
+    let after = list_slots(&pool, monday, date!(2024 - 01 - 07)).await.expect("relist");
+    assert_eq!(after.len(), 16, "no duplicate slots after regeneration");
+    let kept = after.iter().find(|s| s.node_id == target).expect("slot still present");
+    assert_eq!(kept.goal.as_deref(), Some("keep me"), "existing goal preserved");
+}

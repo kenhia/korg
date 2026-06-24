@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use serde::Serialize;
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use time::Date;
 
 /// Serialize a `Date` as an ISO `YYYY-MM-DD` string (time's default emits an
@@ -98,25 +98,34 @@ pub async fn generate_slots(pool: &PgPool, start: Date, days: i64) -> Result<i64
         .await?;
 
         for t in &templates {
-            let node_id: i64 =
-                sqlx::query("INSERT INTO node (kind) VALUES ('slot') RETURNING id")
-                    .fetch_one(&mut *tx)
-                    .await?
-                    .get("id");
-            sqlx::query(
-                "INSERT INTO slot \
-                 (node_id, slot_date, duration_minutes, label, template_id, position) \
-                 VALUES ($1, $2, $3, $4, $5, $6)",
+            // Idempotent: only create the node + slot when no slot already
+            // exists for this (date, position). Existing slots — and any goals
+            // placed in them — are left untouched. The UNIQUE (slot_date,
+            // position) constraint is the hard backstop. (WI #82)
+            let inserted = sqlx::query(
+                "WITH ins_node AS ( \
+                     INSERT INTO node (kind) \
+                     SELECT 'slot' \
+                     WHERE NOT EXISTS ( \
+                         SELECT 1 FROM slot WHERE slot_date = $1 AND position = $5 \
+                     ) \
+                     RETURNING id \
+                 ) \
+                 INSERT INTO slot \
+                     (node_id, slot_date, duration_minutes, label, template_id, position) \
+                 SELECT id, $1, $2, $3, $4, $5 FROM ins_node \
+                 RETURNING node_id",
             )
-            .bind(node_id)
             .bind(date)
             .bind(t.duration_minutes)
             .bind(&t.label)
             .bind(t.id)
             .bind(t.position)
-            .execute(&mut *tx)
+            .fetch_optional(&mut *tx)
             .await?;
-            created += 1;
+            if inserted.is_some() {
+                created += 1;
+            }
         }
 
         date = date.next_day().expect("date overflow");
