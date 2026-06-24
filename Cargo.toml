@@ -44,7 +44,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 
 # MCP
-rmcp = { version = "0.1", features = ["server", "transport-io"] }
+rmcp = { version = "1.7", features = ["server", "transport-streamable-http-server"] }
 
 # HTTP server
 axum = "0.7"

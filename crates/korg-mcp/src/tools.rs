@@ -10,8 +10,8 @@ use korg_core::repo::{
 use korg_core::slots::{self, NewTemplateSlot};
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParam, CallToolResult, Content, ErrorData, Implementation, JsonObject,
-    ListToolsResult, PaginatedRequestParam, ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
+    CallToolRequestParams, CallToolResult, Content, ErrorData, Implementation, JsonObject,
+    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
 };
 use rmcp::service::{RequestContext, RoleServer};
 use rust_decimal::Decimal;
@@ -441,35 +441,28 @@ impl KorgServer {
 
 impl ServerHandler for KorgServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::default(),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation {
-                name: "korg-mcp".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
-            },
-            instructions: Some(
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new("korg-mcp", env!("CARGO_PKG_VERSION")))
+            .with_instructions(
                 "korg MCP server — unified work items, cards, reading-list links, \
-                 generalized relationships, and calendar timebox slots, over Postgres."
-                    .into(),
-            ),
-        }
+                 generalized relationships, and calendar timebox slots, over Postgres.",
+            )
     }
 
     async fn list_tools(
         &self,
-        _request: PaginatedRequestParam,
+        _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         Ok(ListToolsResult {
             tools: tools(),
-            next_cursor: None,
+            ..Default::default()
         })
     }
 
     async fn call_tool(
         &self,
-        request: CallToolRequestParam,
+        request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         self.call(&request.name, request.arguments).await

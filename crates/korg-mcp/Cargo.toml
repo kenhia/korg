@@ -5,10 +5,6 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
-[[bin]]
-name = "korg-mcp"
-path = "src/main.rs"
-
 [dependencies]
 korg-core = { path = "../korg-core" }
 rmcp = { workspace = true }

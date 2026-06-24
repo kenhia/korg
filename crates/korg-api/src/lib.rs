@@ -21,6 +21,9 @@ use korg_core::repo::{
     self, CardPatch, NewCard, NewLink, NewWorkItem,
 };
 use korg_core::slots::{self, NewTemplateSlot};
+use korg_mcp::tools::KorgServer;
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 
 pub mod error;
 use error::ApiError;
@@ -33,6 +36,7 @@ pub struct AppState {
 type ApiResult = Result<Json<Value>, ApiError>;
 
 pub fn build_router(state: AppState) -> Router {
+    let mcp = mcp_service(state.pool.clone());
     let api = Router::new()
         .route("/api/health", get(health))
         .route("/api/projects", get(list_projects).post(create_project))
@@ -55,6 +59,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/nodes/:id/neighbors", get(neighbors))
         .with_state(state);
 
+    let api = api.route_service("/mcp", mcp);
+
     let router = match web_dir() {
         Some(dir) => {
             let index = dir.join("index.html");
@@ -64,6 +70,27 @@ pub fn build_router(state: AppState) -> Router {
         None => api,
     };
     router.layer(TraceLayer::new_for_http()).layer(cors_layer())
+}
+
+/// Build the MCP server as a Streamable-HTTP Tower service mounted at `/mcp`.
+///
+/// Configured for stateless JSON responses (no SSE framing, no session header):
+/// each POST is an independent JSON-RPC request/response, which is the simplest
+/// transport for a single-user tool and trivially testable with `curl`. Host
+/// validation is disabled because korg is reached over several hostnames
+/// (e.g. `kai`, `kubsdb`) on a trusted network — same posture as the REST API.
+fn mcp_service(
+    pool: Arc<PgPool>,
+) -> StreamableHttpService<KorgServer, LocalSessionManager> {
+    let config = StreamableHttpServerConfig::default()
+        .with_stateful_mode(false)
+        .with_json_response(true)
+        .disable_allowed_hosts();
+    StreamableHttpService::new(
+        move || Ok(KorgServer::new((*pool).clone())),
+        Arc::new(LocalSessionManager::default()),
+        config,
+    )
 }
 
 fn web_dir() -> Option<PathBuf> {

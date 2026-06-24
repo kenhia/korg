@@ -27,16 +27,37 @@ project-scoped; tags/category are shared across kinds.
 - `korg-core` — schema (sqlx migrations), domain repos (work items, cards,
   reading-list links, generalized relationships) and calendar slots.
 - `korg-migrate` — one-shot, fidelity-verified import of kwi + kcard data.
-- `korg-mcp` — stdio MCP server exposing the korg domain to AI agents.
+- `korg-mcp` — MCP tool surface (rmcp) over the korg domain, served by `korg-api`.
 
 ## MCP server
 
-`korg-mcp` is a stdio MCP server (rmcp) backed directly by `korg-core`. It
-needs `DATABASE_URL` and exposes tools for work items, cards, reading-list
-links, generalized cross-kind relationships, and calendar timebox slots.
+The MCP server is mounted **inside `korg-api`** at `POST /mcp`, using rmcp's
+Streamable-HTTP transport. A single `korg-api` binary therefore serves the web
+UI, the REST API, and the MCP endpoint — dev/client machines need nothing
+installed; point an MCP client at the URL:
+
+```
+http://<host>:8090/mcp
+```
+
+It exposes 16 tools for work items, cards, reading-list links, generalized
+cross-kind relationships, and calendar timebox slots, backed directly by
+`korg-core`.
+
+Transport notes:
+- **Stateless mode** with JSON responses — each POST is an independent
+  request/response (no SSE session to manage), ideal for a single-user tool.
+- **Host check disabled** (`disable_allowed_hosts`) so korg is reachable via any
+  hostname on the trusted network — the same no-auth posture as the REST API.
+
+Quick smoke test against a running korg-api:
 
 ```bash
-DATABASE_URL=postgres://user:pass@host:5432/korg cargo run -p korg-mcp
+curl -s -X POST http://localhost:8090/mcp \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -H 'mcp-protocol-version: 2025-06-18' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
 ## Web UI
