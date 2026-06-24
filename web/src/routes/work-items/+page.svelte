@@ -406,7 +406,7 @@
 {/snippet}
 
 {#snippet detailView(item: WorkItem)}
-  <article class="space-y-4">
+  <article class="space-y-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
     <div class="flex items-center justify-between">
       <button class="rounded border border-[var(--color-border)] px-3 py-1 text-sm hover:bg-[var(--color-surface-hi)]" onclick={() => (detail = null)}>← Back</button>
       {#if !editing}
@@ -431,7 +431,7 @@
         {#if item.archived}<span class="ml-2 rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs uppercase text-[var(--color-muted)]">Archived</span>{/if}
       </h2>
 
-      <dl class="flex flex-wrap gap-x-6 gap-y-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm">
+      <dl class="flex flex-wrap gap-x-6 gap-y-2 rounded border border-[var(--color-border)] bg-[var(--color-surface-hi)] p-3 text-sm">
         <div class="flex gap-1"><dt class="text-[var(--color-muted)]">ID</dt><dd class="font-mono">{item.wi_number}</dd></div>
         <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Project</dt><dd>{item.project ?? "—"}</dd></div>
         <div class="flex gap-1"><dt class="text-[var(--color-muted)]">Area</dt><dd>{item.area ?? "—"}</dd></div>

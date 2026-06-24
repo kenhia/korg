@@ -29,3 +29,30 @@ body {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
+
+/* Prose tweaks for rendered markdown (work item / card detail). */
+.prose :where(code):not(:where([class~="not-prose"] *)) {
+  color: var(--color-text);
+  background: var(--color-surface-hi);
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+  font-weight: 500;
+}
+/* Tailwind Typography wraps inline code in literal backticks — drop them. */
+.prose :where(code):not(:where([class~="not-prose"] *))::before,
+.prose :where(code):not(:where([class~="not-prose"] *))::after {
+  content: "";
+}
+/* Distinct heading colors for scannable detail views. */
+.prose :where(h1):not(:where([class~="not-prose"] *)) {
+  color: var(--color-accent);
+}
+.prose :where(h2):not(:where([class~="not-prose"] *)) {
+  color: oklch(0.82 0.14 180);
+}
+.prose :where(h3):not(:where([class~="not-prose"] *)) {
+  color: oklch(0.78 0.13 300);
+}
+.prose :where(h4):not(:where([class~="not-prose"] *)) {
+  color: oklch(0.82 0.12 90);
+}
