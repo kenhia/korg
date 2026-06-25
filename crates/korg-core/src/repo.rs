@@ -208,12 +208,17 @@ pub struct Neighbor {
 }
 
 pub async fn relate(pool: &PgPool, left: i64, right: i64, label: &str) -> Result<i64> {
+    // Relationships are undirected: canonicalize to left < right so the unique
+    // constraint and dedup treat (a,b) and (b,a) as the same edge.
+    let (lo, hi) = if left <= right { (left, right) } else { (right, left) };
     let id: i64 = sqlx::query(
         "INSERT INTO relationship (left_id, right_id, relationship) \
-         VALUES ($1, $2, $3) RETURNING id",
+         VALUES ($1, $2, $3) \
+         ON CONFLICT (left_id, right_id, relationship) DO UPDATE SET left_id = relationship.left_id \
+         RETURNING id",
     )
-    .bind(left)
-    .bind(right)
+    .bind(lo)
+    .bind(hi)
     .bind(label)
     .fetch_one(pool)
     .await?

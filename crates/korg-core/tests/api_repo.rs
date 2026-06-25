@@ -3,8 +3,8 @@
 
 use korg_core::repo::{
     create_card, create_link, create_project, create_work_item, list_cards, list_links,
-    list_work_items_by_project, recent_project, set_link_disposition, set_node_tags, update_card,
-    CardPatch, NewCard, NewLink, NewWorkItem,
+    list_work_items_by_project, neighbors, recent_project, relate, set_link_disposition,
+    set_node_tags, update_card, CardPatch, NewCard, NewLink, NewWorkItem,
 };
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPoolOptions;
@@ -111,4 +111,30 @@ async fn api_repo_links_cards_projects() {
     assert_eq!(a_items.len(), 1);
     assert_eq!(a_items[0].title, "a1");
     assert_eq!(a_items[0].project.as_deref(), Some("alpha"));
+}
+
+/// WI #84 — `relate` must be idempotent and symmetric so the Link Up page can
+/// re-link freely without spawning duplicate edges. Dedup is scoped per label.
+#[tokio::test]
+async fn relate_idempotent() {
+    let (_c, pool) = fresh_korg().await;
+    let p = create_project(&pool, "proj").await.unwrap();
+    let a = create_work_item(&pool, wi("a", p)).await.unwrap().node_id;
+    let b = create_work_item(&pool, wi("b", p)).await.unwrap().node_id;
+
+    // Linking the same pair twice, and in reverse, yields ONE edge.
+    relate(&pool, a, b, "related-to").await.unwrap();
+    relate(&pool, a, b, "related-to").await.unwrap();
+    relate(&pool, b, a, "related-to").await.unwrap();
+
+    let na = neighbors(&pool, a).await.unwrap();
+    assert_eq!(na.len(), 1, "duplicate/reverse relate must not add edges");
+    assert_eq!(na[0].node_id, b);
+    // Symmetric: the edge is visible from the other end too.
+    assert_eq!(neighbors(&pool, b).await.unwrap().len(), 1);
+
+    // A different label between the same pair is a distinct edge.
+    relate(&pool, a, b, "scheduled").await.unwrap();
+    let na2 = neighbors(&pool, a).await.unwrap();
+    assert_eq!(na2.len(), 2, "dedup is scoped per relationship label");
 }
