@@ -90,3 +90,40 @@ test("linking two selected items relates them", async ({ page, request }) => {
   const nodes = (await neigh.json()).map((n: { node_id: number }) => n.node_id);
   expect(nodes).toContain(bNode);
 });
+
+// WI #87 — a page-level "Show All" checkbox (default off) hides Closed work
+// items and Cut cards; checking it reveals them.
+test("show all toggles closed work items and cut cards", async ({ page, request }) => {
+  const stamp = Date.now();
+  const pr = await request.post("/api/projects", { data: { name: `e2e-lu7-${stamp}` } });
+  const pid = (await pr.json()).id as number;
+
+  const openWi = `lu7-open-${stamp}`;
+  const closedWi = `lu7-closed-${stamp}`;
+  await request.post("/api/work-items", { data: { title: openWi, content: "x", project_id: pid } });
+  const rc = await request.post("/api/work-items", {
+    data: { title: closedWi, content: "x", project_id: pid },
+  });
+  const closedNum = (await rc.json()).wi_number as number;
+  await request.patch(`/api/work-items/${closedNum}`, { data: { wi_status: "closed" } });
+
+  const liveCard = `lu7-live-${stamp}`;
+  const cutCard = `lu7-cut-${stamp}`;
+  await request.post("/api/cards", { data: { title: liveCard, project_id: pid } });
+  await request.post("/api/cards", { data: { title: cutCard, status: "Cut", project_id: pid } });
+
+  await page.goto("/link-up");
+  const wiRegion = page.getByRole("region", { name: "Work Items" });
+  const cardRegion = page.getByRole("region", { name: "Cards" });
+
+  // Default (Show All off): active items visible, closed/cut hidden.
+  await expect(wiRegion.getByText(openWi, { exact: true })).toBeVisible();
+  await expect(cardRegion.getByText(liveCard, { exact: true })).toBeVisible();
+  await expect(wiRegion.getByText(closedWi, { exact: true })).toHaveCount(0);
+  await expect(cardRegion.getByText(cutCard, { exact: true })).toHaveCount(0);
+
+  // Turn Show All on: closed WI and cut card now appear.
+  await page.getByRole("checkbox", { name: "Show All" }).check();
+  await expect(wiRegion.getByText(closedWi, { exact: true })).toBeVisible();
+  await expect(cardRegion.getByText(cutCard, { exact: true })).toBeVisible();
+});

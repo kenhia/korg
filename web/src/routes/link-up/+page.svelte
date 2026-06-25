@@ -16,18 +16,28 @@
   let wiText = $state("");
   let linkText = $state("");
 
+  // WI #87 — by default hide finished items (Closed work items, Cut cards);
+  // Show All reveals them.
+  let showAll = $state(false);
+
   function matches(text: string, q: string): boolean {
     return q.trim() === "" || text.toLowerCase().includes(q.trim().toLowerCase());
   }
 
   const shownCards = $derived(
     cards.filter(
-      (c) => (cardProject === ALL || c.project === cardProject) && matches(c.title, cardText),
+      (c) =>
+        (cardProject === ALL || c.project === cardProject) &&
+        matches(c.title, cardText) &&
+        (showAll || c.status !== "Cut"),
     ),
   );
   const shownWorkItems = $derived(
     workItems.filter(
-      (w) => (wiProject === ALL || w.project === wiProject) && matches(w.title, wiText),
+      (w) =>
+        (wiProject === ALL || w.project === wiProject) &&
+        matches(w.title, wiText) &&
+        (showAll || w.wi_status !== "closed"),
     ),
   );
   const shownLinks = $derived(links.filter((l) => matches(l.title ?? l.url, linkText)));
@@ -82,11 +92,17 @@
   onMount(load);
 </script>
 
-<div class="mb-4">
-  <h1 class="text-xl font-semibold tracking-tight">Link Up</h1>
-  <p class="text-sm text-[var(--color-muted)]">
-    Select items across the lists and relate them to each other.
-  </p>
+<div class="mb-4 flex items-start justify-between gap-4">
+  <div>
+    <h1 class="text-xl font-semibold tracking-tight">Link Up</h1>
+    <p class="text-sm text-[var(--color-muted)]">
+      Select items across the lists and relate them to each other.
+    </p>
+  </div>
+  <label class="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-[var(--color-muted)]">
+    <input type="checkbox" bind:checked={showAll} />
+    <span>Show All</span>
+  </label>
 </div>
 
 <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
