@@ -119,3 +119,50 @@ async fn mcp_surface_end_to_end() {
     // Unknown tool is a clean error.
     assert!(server.call("nope", args(json!({}))).await.is_err());
 }
+
+/// WI #85 — `list_work_items` must accept an optional `project` filter so MCP
+/// clients can scope to one project instead of pulling every work item.
+#[tokio::test]
+async fn list_work_items_filters_by_project() {
+    let (_c, pool) = fresh_korg().await;
+    let alpha = korg_core::repo::create_project(&pool, "alpha").await.unwrap();
+    let beta = korg_core::repo::create_project(&pool, "beta").await.unwrap();
+    let server = KorgServer::new(pool);
+
+    for (title, pid) in [("A1", alpha), ("A2", alpha), ("B1", beta)] {
+        server
+            .call(
+                "create_work_item",
+                args(json!({"title":title,"content":"x","project_id":pid})),
+            )
+            .await
+            .unwrap();
+    }
+
+    // Unfiltered: every work item.
+    let all = body(&server.call("list_work_items", args(json!({}))).await.unwrap());
+    assert_eq!(all.as_array().unwrap().len(), 3, "unfiltered returns all");
+
+    // Filtered by project name: only alpha's two items.
+    let only_alpha = body(
+        &server
+            .call("list_work_items", args(json!({"project":"alpha"})))
+            .await
+            .unwrap(),
+    );
+    let arr = only_alpha.as_array().unwrap();
+    assert_eq!(arr.len(), 2, "project filter must scope results to that project");
+    assert!(
+        arr.iter().all(|w| w["project"] == "alpha"),
+        "every returned item must belong to alpha"
+    );
+
+    // Unknown project: empty, not an error.
+    let none = body(
+        &server
+            .call("list_work_items", args(json!({"project":"ghost"})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(none.as_array().unwrap().len(), 0, "unknown project yields none");
+}

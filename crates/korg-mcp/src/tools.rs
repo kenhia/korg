@@ -57,7 +57,10 @@ pub fn tools() -> Vec<Tool> {
                 "tags":tags
             }
         })),
-        tool("list_work_items", "List all work items.", empty()),
+        tool("list_work_items", "List work items. Pass `project` (name) to scope to a single project; omit it to list all.", json!({
+            "type":"object","additionalProperties":false,
+            "properties":{"project":{"type":["string","null"],"description":"Project name to filter by"}}
+        })),
         tool("get_work_item", "Fetch a single work item by its wi_number.", json!({
             "type":"object","additionalProperties":false,"required":["wi_number"],
             "properties":{"wi_number":id}
@@ -201,6 +204,12 @@ struct WiNumberArgs {
     wi_number: i64,
 }
 
+#[derive(Deserialize, Default)]
+struct ListWorkItemsArgs {
+    #[serde(default)]
+    project: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct CreateCardArgs {
     title: String,
@@ -311,10 +320,17 @@ impl KorgServer {
                     Err(e) => Ok(to_err(e)),
                 }
             }
-            "list_work_items" => match list_work_items(&self.pool).await {
-                Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                Err(e) => Ok(to_err(e)),
-            },
+            "list_work_items" => {
+                let a: ListWorkItemsArgs = parse_args(args)?;
+                let res = match a.project {
+                    Some(p) => repo::list_work_items_by_project(&self.pool, &p).await,
+                    None => list_work_items(&self.pool).await,
+                };
+                match res {
+                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
             "get_work_item" => {
                 let a: WiNumberArgs = parse_args(args)?;
                 match repo::get_work_item(&self.pool, a.wi_number).await {
