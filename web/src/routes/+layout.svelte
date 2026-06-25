@@ -9,14 +9,17 @@
     { href: "/cards", label: "Cards" },
     { href: "/work-items", label: "Work Items" },
     { href: "/reading-list", label: "Reading" },
+    { href: "/link-up", label: "Link Up" },
   ];
 
   function active(href: string, path: string): boolean {
     return href === "/" ? path === "/" : path.startsWith(href);
   }
 
-  // Cards uses the full width (kanban needs room); other pages stay narrow.
-  const wide = $derived($page.url.pathname.startsWith("/cards"));
+  // Cards (kanban) and Link Up (three columns) need the full width; other pages stay narrow.
+  const wide = $derived(
+    $page.url.pathname.startsWith("/cards") || $page.url.pathname.startsWith("/link-up"),
+  );
 </script>
 
 <div class="min-h-screen">
