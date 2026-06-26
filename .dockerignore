@@ -1,0 +1,9 @@
+target/
+**/target/
+web/node_modules/
+web/build/
+web/.svelte-kit/
+node_modules/
+.git/
+snapshots/
+.phoenix/

@@ -1,12 +1,18 @@
 # korg — Ken's organizer
 
-`korg` unifies [`kwi`](../kwi) (work items) and [`kcard`](../kcard) (kanban)
-into a single self-hosted app: one typed-node + generalized-edges data model,
-a headless Linux backend, and a web UI reachable from Windows browsers.
+`korg` unifies `kwi` (work items) and `kcard` (kanban) into a single self-hosted
+app: one typed-node + generalized-edges data model, a headless Linux backend,
+and a web UI reachable from Windows browsers.
 
 > Status: **Milestone 1 — faithful data foundation.** kwi and kcard remain the
 > live tools and are left **frozen / read-only** until korg can demonstrably
 > take over.
+
+## Documentation
+
+- [docs/setup.md](docs/setup.md) — install, configure, build, and run.
+- [docs/usage.md](docs/usage.md) — web UI, REST API, and MCP endpoint.
+- [docs/migration.md](docs/migration.md) — import legacy kwi + kcard data.
 
 ## Model
 
@@ -107,4 +113,4 @@ project-scoped areas.
 
 ## License
 
-MIT
+[MIT](LICENSE) © Ken Hiatt
