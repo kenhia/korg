@@ -44,7 +44,7 @@ async fn mcp_surface_end_to_end() {
     let server = KorgServer::new(pool);
 
     // Tool descriptors are stable.
-    assert_eq!(tools().len(), 16, "expected 16 tools");
+    assert_eq!(tools().len(), 17, "expected 17 tools");
 
     // Create a work item.
     let wi = body(
@@ -118,6 +118,60 @@ async fn mcp_surface_end_to_end() {
 
     // Unknown tool is a clean error.
     assert!(server.call("nope", args(json!({}))).await.is_err());
+}
+
+/// WI #92 — agents must be able to update a work item over MCP: set status
+/// (resolve), edit fields, clear a nullable field, and archive.
+#[tokio::test]
+async fn update_work_item_partial_and_nullable() {
+    let (_c, pool) = fresh_korg().await;
+    let server = KorgServer::new(pool);
+
+    // Create with a details value and an "open" status.
+    let wi = body(
+        &server
+            .call(
+                "create_work_item",
+                args(json!({"title":"Explore trt-llm","content":"investigate","details":"notes here","wi_status":"open","wi_tshirt":"S"})),
+            )
+            .await
+            .unwrap(),
+    );
+    let n = wi["wi_number"].as_i64().unwrap();
+
+    // Resolve it and edit the title in one partial update; omit everything else.
+    let res = body(
+        &server
+            .call(
+                "update_work_item",
+                args(json!({"wi_number":n,"wi_status":"resolved","title":"Explore trt-llm (done)"})),
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(res["ok"], json!(true));
+
+    let got = body(&server.call("get_work_item", args(json!({"wi_number":n}))).await.unwrap());
+    assert_eq!(got["wi_status"], "resolved", "status flipped");
+    assert_eq!(got["title"], "Explore trt-llm (done)", "title edited");
+    assert_eq!(got["content"], "investigate", "untouched field preserved");
+    assert_eq!(got["details"], "notes here", "omitted nullable left unchanged");
+
+    // Clear a nullable field by passing null.
+    server
+        .call("update_work_item", args(json!({"wi_number":n,"details":null})))
+        .await
+        .unwrap();
+    let cleared = body(&server.call("get_work_item", args(json!({"wi_number":n}))).await.unwrap());
+    assert!(cleared["details"].is_null(), "null clears the field");
+
+    // Archive it.
+    server
+        .call("update_work_item", args(json!({"wi_number":n,"archived":true})))
+        .await
+        .unwrap();
+    let archived = body(&server.call("get_work_item", args(json!({"wi_number":n}))).await.unwrap());
+    assert_eq!(archived["archived"], json!(true), "archived flag set");
 }
 
 /// WI #85 — `list_work_items` must accept an optional `project` filter so MCP

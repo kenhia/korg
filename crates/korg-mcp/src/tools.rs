@@ -5,7 +5,7 @@
 
 use korg_core::repo::{
     self, create_card, create_link, create_work_item, list_cards, list_links, list_projects,
-    list_work_items, NewCard, NewLink, NewWorkItem,
+    list_work_items, update_work_item, NewCard, NewLink, NewWorkItem, WorkItemPatch,
 };
 use korg_core::slots::{self, NewTemplateSlot};
 use rmcp::handler::server::ServerHandler;
@@ -64,6 +64,25 @@ pub fn tools() -> Vec<Tool> {
         tool("get_work_item", "Fetch a single work item by its wi_number.", json!({
             "type":"object","additionalProperties":false,"required":["wi_number"],
             "properties":{"wi_number":id}
+        })),
+        tool("update_work_item", "Partially update a work item by its wi_number. Only the fields you pass are changed. Use this to set status (e.g. resolve), edit fields, reparent, or archive. For nullable fields (details, sprint, area_id, parent, category) pass null to clear or omit to leave unchanged.", json!({
+            "type":"object","additionalProperties":false,
+            "required":["wi_number"],
+            "properties":{
+                "wi_number":id,
+                "title":{"type":"string","minLength":1},
+                "content":{"type":"string"},
+                "wi_type":{"type":"string"},
+                "wi_status":{"type":"string"},
+                "wi_tshirt":{"type":"string","enum":["XS","S","M","L","XL","Huge","Unknown"]},
+                "sprint":{"type":["string","null"]},
+                "details":{"type":["string","null"]},
+                "area_id":{"type":["integer","null"],"format":"int64"},
+                "parent":{"type":["integer","null"],"format":"int64","description":"Parent work item's wi_number; null clears the parent."},
+                "archived":{"type":"boolean"},
+                "category":{"type":["string","null"]},
+                "tags":tags
+            }
         })),
         tool("create_card", "Create a kanban card. Returns its node_id.", json!({
             "type":"object","additionalProperties":false,"required":["title"],
@@ -168,6 +187,18 @@ fn parse_date(s: &str) -> Result<Date, ErrorData> {
     Date::parse(s, &fmt).map_err(|e| ErrorData::invalid_params(format!("invalid date `{s}`: {e}"), None))
 }
 
+/// Deserialize a nullable, optional field into `Option<Option<T>>` so callers can
+/// distinguish "key absent" (leave unchanged) from "key present and null" (clear).
+/// Paired with `#[serde(default)]`: absent -> `None`, `null` -> `Some(None)`,
+/// value -> `Some(Some(v))`.
+fn double_option<'de, T, D>(de: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Deserialize::deserialize(de).map(Some)
+}
+
 // --- argument shapes ------------------------------------------------------
 
 fn default_task() -> String { "task".into() }
@@ -202,6 +233,35 @@ struct CreateWorkItemArgs {
 #[derive(Deserialize)]
 struct WiNumberArgs {
     wi_number: i64,
+}
+
+#[derive(Deserialize)]
+struct UpdateWorkItemArgs {
+    wi_number: i64,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    wi_type: Option<String>,
+    #[serde(default)]
+    wi_status: Option<String>,
+    #[serde(default)]
+    wi_tshirt: Option<String>,
+    #[serde(default, deserialize_with = "double_option")]
+    sprint: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    details: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    area_id: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "double_option")]
+    parent: Option<Option<i64>>,
+    #[serde(default)]
+    archived: Option<bool>,
+    #[serde(default, deserialize_with = "double_option")]
+    category: Option<Option<String>>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Default)]
@@ -335,6 +395,27 @@ impl KorgServer {
                 let a: WiNumberArgs = parse_args(args)?;
                 match repo::get_work_item(&self.pool, a.wi_number).await {
                     Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "update_work_item" => {
+                let a: UpdateWorkItemArgs = parse_args(args)?;
+                let patch = WorkItemPatch {
+                    title: a.title,
+                    content: a.content,
+                    details: a.details,
+                    wi_type: a.wi_type,
+                    wi_status: a.wi_status,
+                    wi_tshirt: a.wi_tshirt,
+                    sprint: a.sprint,
+                    area_id: a.area_id,
+                    parent: a.parent,
+                    archived: a.archived,
+                    category: a.category,
+                    tags: a.tags,
+                };
+                match update_work_item(&self.pool, a.wi_number, patch).await {
+                    Ok(()) => ok_json(json!({ "ok": true })),
                     Err(e) => Ok(to_err(e)),
                 }
             }
