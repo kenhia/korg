@@ -45,4 +45,15 @@ Existing run config (preserve on redeploy):
 
 ## Result
 
-_Filled in after deploy — see bottom of this file._
+Deployed 2026-06-28.
+
+- Built `korg:latest` locally, shipped via `docker save | ssh kubsdb docker load`.
+- Recreated the `korg` container (env reused from the running container; note
+  kubsdb's login shell is fish, so the script was piped through `bash -s`).
+- New image `sha256:6093a1fc…`; container healthy on first healthcheck.
+- `tools/list` over the deployed `/mcp` reports 17 tools including
+  `update_work_item`.
+- Live round-trip: `update_work_item {wi_number:92, wi_status:"resolved"}` ->
+  `{"ok":true}`; `get_work_item 92` reads back `wi_status: resolved`.
+
+WI #92 is fixed and resolved in production.
