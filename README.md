@@ -46,7 +46,7 @@ installed; point an MCP client at the URL:
 http://<host>:8090/mcp
 ```
 
-It exposes 17 tools for work items, cards, reading-list links, generalized
+It exposes 25 tools for work items, cards, reading-list links, generalized
 cross-kind relationships, and calendar timebox slots, backed directly by
 `korg-core`.
 
