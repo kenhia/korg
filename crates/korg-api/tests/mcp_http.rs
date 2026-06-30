@@ -91,11 +91,17 @@ async fn mcp_http_end_to_end() {
     .await;
     assert_eq!(st, StatusCode::OK);
     let tools = tl["result"]["tools"].as_array().expect("tools array");
-    assert_eq!(tools.len(), 17, "expected 17 tools, got {}", tools.len());
+    assert_eq!(tools.len(), 25, "expected 25 tools, got {}", tools.len());
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     assert!(names.contains(&"create_work_item"));
     assert!(names.contains(&"list_work_items"));
     assert!(names.contains(&"update_work_item"));
+    assert!(names.contains(&"create_project"));
+    assert!(names.contains(&"create_area"));
+    assert!(names.contains(&"list_areas"));
+    assert!(names.contains(&"update_card"));
+    assert!(names.contains(&"unrelate"));
+    assert!(names.contains(&"add_comment"));
 
     // 3. tools/call create_work_item — a mutating tool over the wire.
     let (st, created) = rpc(

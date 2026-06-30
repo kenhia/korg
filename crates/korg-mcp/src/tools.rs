@@ -5,7 +5,7 @@
 
 use korg_core::repo::{
     self, create_card, create_link, create_work_item, list_cards, list_links, list_projects,
-    list_work_items, update_work_item, NewCard, NewLink, NewWorkItem, WorkItemPatch,
+    list_work_items, update_work_item, CardPatch, NewCard, NewLink, NewWorkItem, WorkItemPatch,
 };
 use korg_core::slots::{self, NewTemplateSlot};
 use rmcp::handler::server::ServerHandler;
@@ -96,7 +96,33 @@ pub fn tools() -> Vec<Tool> {
                 "tags":tags
             }
         })),
+        tool("update_card", "Partially update a kanban card by its node_id. Only the fields you pass are changed (move status/rank, edit title/description, archive, reassign project). For nullable fields (project_id, category) pass null to clear or omit to leave unchanged.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id"],
+            "properties":{
+                "node_id":id,
+                "status":{"type":"string","enum":["Backlog","Research","OnDeck","Active","Done","Cut"]},
+                "rank":{"type":"number"},
+                "title":{"type":"string","minLength":1},
+                "description":{"type":"string"},
+                "archived":{"type":"boolean"},
+                "project_id":{"type":["integer","null"],"format":"int64"},
+                "category":{"type":["string","null"]},
+                "tags":tags
+            }
+        })),
         tool("list_cards", "List all cards ordered by status then rank.", empty()),
+        tool("list_comments", "List the comments on a card, oldest first.", json!({
+            "type":"object","additionalProperties":false,"required":["card_node_id"],
+            "properties":{"card_node_id":id}
+        })),
+        tool("add_comment", "Add a comment to a card. Returns the created comment.", json!({
+            "type":"object","additionalProperties":false,"required":["card_node_id","body"],
+            "properties":{"card_node_id":id,"body":{"type":"string","minLength":1}}
+        })),
+        tool("delete_comment", "Delete a comment by its id.", json!({
+            "type":"object","additionalProperties":false,"required":["id"],
+            "properties":{"id":id}
+        })),
         tool("create_link", "Capture a reading-list URL. Returns its node_id.", json!({
             "type":"object","additionalProperties":false,"required":["url"],
             "properties":{
@@ -116,9 +142,13 @@ pub fn tools() -> Vec<Tool> {
             "type":"object","additionalProperties":false,"required":["left","right","label"],
             "properties":{"left":id,"right":id,"label":{"type":"string","minLength":1}}
         })),
-        tool("neighbors", "List the nodes linked to a node (any kind), with labels.", json!({
+        tool("neighbors", "List the nodes linked to a node (any kind), with labels. Each entry includes `rel_id`, the edge id to pass to `unrelate`.", json!({
             "type":"object","additionalProperties":false,"required":["node_id"],
             "properties":{"node_id":id}
+        })),
+        tool("unrelate", "Remove a relationship edge by its id (the `rel_id` from `neighbors`, or the id returned by `relate`).", json!({
+            "type":"object","additionalProperties":false,"required":["id"],
+            "properties":{"id":id}
         })),
         tool("list_slots", "List calendar timebox slots between two dates (inclusive).", json!({
             "type":"object","additionalProperties":false,"required":["from","to"],
@@ -146,6 +176,22 @@ pub fn tools() -> Vec<Tool> {
                 }}}}
         })),
         tool("list_projects", "List projects.", empty()),
+        tool("create_project", "Create a project by name (idempotent — returns the existing id if it already exists). Returns its id.", json!({
+            "type":"object","additionalProperties":false,"required":["name"],
+            "properties":{"name":{"type":"string","minLength":1}}
+        })),
+        tool("list_areas", "List the areas under a project (by project name).", json!({
+            "type":"object","additionalProperties":false,"required":["project"],
+            "properties":{"project":{"type":"string","minLength":1}}
+        })),
+        tool("create_area", "Create an area under a project by name (idempotent — updates the description if it already exists). Returns its id.", json!({
+            "type":"object","additionalProperties":false,"required":["project","name"],
+            "properties":{
+                "project":{"type":"string","minLength":1},
+                "name":{"type":"string","minLength":1},
+                "description":{"type":["string","null"]}
+            }
+        })),
     ]
 }
 
@@ -262,6 +308,61 @@ struct UpdateWorkItemArgs {
     category: Option<Option<String>>,
     #[serde(default)]
     tags: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+struct UpdateCardArgs {
+    node_id: i64,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    rank: Option<f64>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    archived: Option<bool>,
+    #[serde(default, deserialize_with = "double_option")]
+    project_id: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "double_option")]
+    category: Option<Option<String>>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+struct IdArgs {
+    id: i64,
+}
+
+#[derive(Deserialize)]
+struct CreateProjectArgs {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct ProjectArgs {
+    project: String,
+}
+
+#[derive(Deserialize)]
+struct CreateAreaArgs {
+    project: String,
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CardNodeIdArgs {
+    card_node_id: i64,
+}
+
+#[derive(Deserialize)]
+struct AddCommentArgs {
+    card_node_id: i64,
+    body: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -437,10 +538,54 @@ impl KorgServer {
                     Err(e) => Ok(to_err(e)),
                 }
             }
+            "update_card" => {
+                let a: UpdateCardArgs = parse_args(args)?;
+                let rank = match a.rank {
+                    Some(r) => Some(Decimal::try_from(r).map_err(|e| {
+                        ErrorData::invalid_params(format!("invalid rank: {e}"), None)
+                    })?),
+                    None => None,
+                };
+                let patch = CardPatch {
+                    status: a.status,
+                    rank,
+                    title: a.title,
+                    description: a.description,
+                    archived: a.archived,
+                    project_id: a.project_id,
+                    category: a.category,
+                    tags: a.tags,
+                };
+                match repo::update_card(&self.pool, a.node_id, patch).await {
+                    Ok(()) => ok_json(json!({ "ok": true })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
             "list_cards" => match list_cards(&self.pool).await {
                 Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
                 Err(e) => Ok(to_err(e)),
             },
+            "list_comments" => {
+                let a: CardNodeIdArgs = parse_args(args)?;
+                match repo::list_comments(&self.pool, a.card_node_id).await {
+                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "add_comment" => {
+                let a: AddCommentArgs = parse_args(args)?;
+                match repo::add_comment(&self.pool, a.card_node_id, &a.body).await {
+                    Ok(c) => ok_json(serde_json::to_value(c).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "delete_comment" => {
+                let a: IdArgs = parse_args(args)?;
+                match repo::delete_comment(&self.pool, a.id).await {
+                    Ok(()) => ok_json(json!({ "ok": true })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
             "create_link" => {
                 let a: CreateLinkArgs = parse_args(args)?;
                 let new = NewLink {
@@ -477,6 +622,13 @@ impl KorgServer {
                 let a: NodeIdArgs = parse_args(args)?;
                 match repo::neighbors(&self.pool, a.node_id).await {
                     Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "unrelate" => {
+                let a: IdArgs = parse_args(args)?;
+                match repo::unrelate(&self.pool, a.id).await {
+                    Ok(()) => ok_json(json!({ "ok": true })),
                     Err(e) => Ok(to_err(e)),
                 }
             }
@@ -528,6 +680,29 @@ impl KorgServer {
                 Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
                 Err(e) => Ok(to_err(e)),
             },
+            "create_project" => {
+                let a: CreateProjectArgs = parse_args(args)?;
+                match repo::create_project(&self.pool, &a.name).await {
+                    Ok(id) => ok_json(json!({ "id": id })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "list_areas" => {
+                let a: ProjectArgs = parse_args(args)?;
+                match repo::list_areas(&self.pool, &a.project).await {
+                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "create_area" => {
+                let a: CreateAreaArgs = parse_args(args)?;
+                match repo::create_area(&self.pool, &a.project, &a.name, a.description.as_deref())
+                    .await
+                {
+                    Ok(id) => ok_json(json!({ "id": id })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
             other => Err(ErrorData::invalid_params(
                 format!("unknown tool: {other}"),
                 None,
