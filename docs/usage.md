@@ -11,7 +11,7 @@ Browse to the address `korg-api` is serving (e.g. `http://<host>:8090`). The UI
 covers:
 
 - **Work Items** — create, edit, archive, set parent/area, and manage
-  relationships. Project selection is sticky across navigation.
+  relationships and comments. Project selection is sticky across navigation.
 - **Cards** — kanban cards with status, rank, tags, comments, and clickable
   launch links for URL fields.
 - **Link Up** — relate any node to any other across kinds via the generalized
@@ -37,8 +37,8 @@ rooted at `/api`. Responses are JSON.
 | `GET    /api/cards`                    | List cards.                          |
 | `POST   /api/cards`                    | Create a card.                       |
 | `PATCH  /api/cards/:node_id`           | Update a card.                       |
-| `GET    /api/cards/:node_id/comments`  | List a card's comments.              |
-| `POST   /api/cards/:node_id/comments`  | Add a comment.                       |
+| `GET    /api/nodes/:node_id/comments`  | List a node's comments (work item or card). |
+| `POST   /api/nodes/:node_id/comments`  | Add a comment to a node.             |
 | `DELETE /api/comments/:id`             | Delete a comment.                    |
 | `GET    /api/links`                    | List reading-list links.             |
 | `POST   /api/links`                    | Create a link.                       |
