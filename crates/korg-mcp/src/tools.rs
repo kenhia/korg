@@ -111,13 +111,13 @@ pub fn tools() -> Vec<Tool> {
             }
         })),
         tool("list_cards", "List all cards ordered by status then rank.", empty()),
-        tool("list_comments", "List the comments on a card, oldest first.", json!({
-            "type":"object","additionalProperties":false,"required":["card_node_id"],
-            "properties":{"card_node_id":id}
+        tool("list_comments", "List the comments on a node (work item or card), oldest first.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id"],
+            "properties":{"node_id":id}
         })),
-        tool("add_comment", "Add a comment to a card. Returns the created comment.", json!({
-            "type":"object","additionalProperties":false,"required":["card_node_id","body"],
-            "properties":{"card_node_id":id,"body":{"type":"string","minLength":1}}
+        tool("add_comment", "Add a comment to a node (work item or card). Returns the created comment.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id","body"],
+            "properties":{"node_id":id,"body":{"type":"string","minLength":1}}
         })),
         tool("delete_comment", "Delete a comment by its id.", json!({
             "type":"object","additionalProperties":false,"required":["id"],
@@ -355,13 +355,8 @@ struct CreateAreaArgs {
 }
 
 #[derive(Deserialize)]
-struct CardNodeIdArgs {
-    card_node_id: i64,
-}
-
-#[derive(Deserialize)]
 struct AddCommentArgs {
-    card_node_id: i64,
+    node_id: i64,
     body: String,
 }
 
@@ -566,15 +561,15 @@ impl KorgServer {
                 Err(e) => Ok(to_err(e)),
             },
             "list_comments" => {
-                let a: CardNodeIdArgs = parse_args(args)?;
-                match repo::list_comments(&self.pool, a.card_node_id).await {
+                let a: NodeIdArgs = parse_args(args)?;
+                match repo::list_comments(&self.pool, a.node_id).await {
                     Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
                     Err(e) => Ok(to_err(e)),
                 }
             }
             "add_comment" => {
                 let a: AddCommentArgs = parse_args(args)?;
-                match repo::add_comment(&self.pool, a.card_node_id, &a.body).await {
+                match repo::add_comment(&self.pool, a.node_id, &a.body).await {
                     Ok(c) => ok_json(serde_json::to_value(c).unwrap()),
                     Err(e) => Ok(to_err(e)),
                 }

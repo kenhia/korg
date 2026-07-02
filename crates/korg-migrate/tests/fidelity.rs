@@ -64,7 +64,7 @@ struct KorgCard {
 
 #[derive(sqlx::FromRow)]
 struct KorgComment {
-    card_node_id: i64,
+    node_id: i64,
     body: String,
     created: OffsetDateTime,
     updated: OffsetDateTime,
@@ -241,7 +241,7 @@ async fn import_is_faithful_to_sources() {
 
     // ---- F3: comments (positional, with correct card linkage) ----------
     let comment_rows = sqlx::query_as::<_, KorgComment>(
-        "SELECT card_node_id, body, created, updated FROM comment ORDER BY id",
+        "SELECT node_id, body, created, updated FROM comment ORDER BY id",
     )
     .fetch_all(&korg)
     .await
@@ -252,7 +252,7 @@ async fn import_is_faithful_to_sources() {
         assert_eq!(k.created, src.created_at, "F3 comment created (src id {})", src.id);
         assert_eq!(k.updated, src.updated_at, "F3 comment updated (src id {})", src.id);
         assert_eq!(
-            k.card_node_id, card_id_to_node[&src.card_id],
+            k.node_id, card_id_to_node[&src.card_id],
             "F3 comment card linkage (src id {})",
             src.id
         );

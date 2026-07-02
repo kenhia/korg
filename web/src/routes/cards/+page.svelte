@@ -7,8 +7,9 @@
     type Card,
     type CardStatus,
     type Slot,
-    type CardComment,
+    type Comment,
   } from "$lib/api";
+  import Comments from "$lib/components/Comments.svelte";
   import {
     startOfWeek,
     addDays,
@@ -213,12 +214,11 @@
   let form = $state({ title: "", status: "Backlog" as CardStatus, project: "", category: "", description: "", tags: "" });
   let original = $state("");
   let showDiscard = $state(false);
-  let comments = $state<CardComment[]>([]);
-  let newComment = $state("");
+  let comments = $state<Comment[]>([]); // bound from <Comments>, read for launchUrls
   let launchUrls = $derived(extractUrls(form.description, ...comments.map((c) => c.body)));
   const dirty = $derived(editing !== null && JSON.stringify(form) !== original);
 
-  async function openEdit(card: Card) {
+  function openEdit(card: Card) {
     editing = card;
     form = {
       title: card.title,
@@ -231,8 +231,6 @@
     original = JSON.stringify(form);
     showDiscard = false;
     comments = [];
-    newComment = "";
-    comments = await api.cardComments(card.node_id).catch(() => []);
   }
   function requestClose() {
     if (dirty) showDiscard = true;
@@ -261,16 +259,6 @@
     await api.updateCard(editing.node_id, { archived: !editing.archived });
     editing.archived = !editing.archived;
     await load();
-  }
-  async function addComment() {
-    if (!editing || newComment.trim() === "") return;
-    const c = await api.addComment(editing.node_id, newComment.trim());
-    comments = [...comments, c];
-    newComment = "";
-  }
-  async function removeComment(id: number) {
-    await api.deleteComment(id);
-    comments = comments.filter((c) => c.id !== id);
   }
 
   function onKey(e: KeyboardEvent) {
@@ -496,21 +484,7 @@
         </div>
 
         <!-- comments -->
-        <div class="border-t border-[var(--color-border)] pt-2">
-          <p class="mb-1 text-xs font-semibold text-[var(--color-muted)]">Comments</p>
-          <ul class="space-y-1" data-testid="comment-list">
-            {#each comments as c (c.id)}
-              <li class="flex items-start gap-2 rounded bg-[var(--color-bg)] px-2 py-1 text-sm">
-                <span class="flex-1 whitespace-pre-wrap">{c.body}</span>
-                <button class="text-xs text-[var(--color-muted)] hover:text-red-400" aria-label="Delete comment" onclick={() => removeComment(c.id)}>✕</button>
-              </li>
-            {:else}<li class="text-xs text-[var(--color-muted)]">No comments.</li>{/each}
-          </ul>
-          <div class="mt-2 flex gap-2">
-            <textarea class="min-h-[3rem] flex-1 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" placeholder="Add a comment… (Ctrl/⌘-Enter to post)" data-testid="comment-input" bind:value={newComment} onkeydown={(e) => (e.key === "Enter" && (e.ctrlKey || e.metaKey)) && addComment()}></textarea>
-            <button class="self-start rounded bg-[var(--color-surface-hi)] px-3 py-1 text-sm hover:bg-[var(--color-accent-soft)]" onclick={addComment}>Add</button>
-          </div>
-        </div>
+        <Comments node_id={editing.node_id} bind:comments />
 
         {#if launchUrls.length}
           <div class="border-t border-[var(--color-border)] pt-2" data-testid="launch-links">

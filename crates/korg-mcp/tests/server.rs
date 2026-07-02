@@ -224,24 +224,43 @@ async fn mcp_coverage_gaps_end_to_end() {
     assert_eq!(c["status"], "Active", "card status moved");
     assert_eq!(c["title"], "shipped", "card title edited");
 
-    // comments: add two, list them, delete one.
+    // comments: add two, list them, delete one (node-scoped `node_id` arg).
     let cm = body(
         &server
-            .call("add_comment", args(json!({"card_node_id":card_node,"body":"first"})))
+            .call("add_comment", args(json!({"node_id":card_node,"body":"first"})))
             .await
             .unwrap(),
     );
     let cm_id = cm["id"].as_i64().unwrap();
     server
-        .call("add_comment", args(json!({"card_node_id":card_node,"body":"second"})))
+        .call("add_comment", args(json!({"node_id":card_node,"body":"second"})))
         .await
         .unwrap();
-    let comments = body(&server.call("list_comments", args(json!({"card_node_id":card_node}))).await.unwrap());
+    let comments = body(&server.call("list_comments", args(json!({"node_id":card_node}))).await.unwrap());
     assert_eq!(comments.as_array().unwrap().len(), 2);
     server.call("delete_comment", args(json!({"id":cm_id}))).await.unwrap();
-    let after = body(&server.call("list_comments", args(json!({"card_node_id":card_node}))).await.unwrap());
+    let after = body(&server.call("list_comments", args(json!({"node_id":card_node}))).await.unwrap());
     assert_eq!(after.as_array().unwrap().len(), 1, "one comment deleted");
     assert_eq!(after[0]["body"], "second");
+
+    // Sprint 003: comments are node-scoped — they also attach to a WORK ITEM node.
+    let wi = body(
+        &server
+            .call("create_work_item", args(json!({"title":"commented WI","content":"x"})))
+            .await
+            .unwrap(),
+    );
+    let wi_node = wi["node_id"].as_i64().unwrap();
+    let wi_cm = body(
+        &server
+            .call("add_comment", args(json!({"node_id":wi_node,"body":"note on a work item"})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(wi_cm["node_id"].as_i64(), Some(wi_node), "comment attached to the WI node");
+    let wi_comments = body(&server.call("list_comments", args(json!({"node_id":wi_node}))).await.unwrap());
+    assert_eq!(wi_comments.as_array().unwrap().len(), 1, "WI comment listed back");
+    assert_eq!(wi_comments[0]["body"], "note on a work item");
 
     // relate -> unrelate round-trip. Make a second card to link to.
     let card2 = body(&server.call("create_card", args(json!({"title":"other"}))).await.unwrap());

@@ -107,22 +107,45 @@ async fn api_end_to_end() {
     assert_eq!(cards[0]["project"], "boardproj");
     assert_eq!(cards[0]["category"], "chores");
 
+    // Comments are node-scoped: /api/nodes/:node_id/comments works for a card node…
     let (st, cm) = req(
         &router,
         "POST",
-        &format!("/api/cards/{card_node}/comments"),
+        &format!("/api/nodes/{card_node}/comments"),
         Some(json!({"body":"first note"})),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
     let cmid = cm["id"].as_i64().unwrap();
-    let (_st, comments) = req(&router, "GET", &format!("/api/cards/{card_node}/comments"), None).await;
+    let (_st, comments) = req(&router, "GET", &format!("/api/nodes/{card_node}/comments"), None).await;
     assert_eq!(comments.as_array().unwrap().len(), 1);
     assert_eq!(comments[0]["body"], "first note");
     let (st, _) = req(&router, "DELETE", &format!("/api/comments/{cmid}"), None).await;
     assert_eq!(st, StatusCode::OK);
-    let (_st, comments) = req(&router, "GET", &format!("/api/cards/{card_node}/comments"), None).await;
+    let (_st, comments) = req(&router, "GET", &format!("/api/nodes/{card_node}/comments"), None).await;
     assert_eq!(comments.as_array().unwrap().len(), 0);
+
+    // …and equally for a work-item node (proves the route isn't card-specific).
+    let (_st, wi) = req(
+        &router,
+        "POST",
+        "/api/work-items",
+        Some(json!({"title":"commented WI","content":"x"})),
+    )
+    .await;
+    let wi_node = wi["node_id"].as_i64().unwrap();
+    let (st, _) = req(
+        &router,
+        "POST",
+        &format!("/api/nodes/{wi_node}/comments"),
+        Some(json!({"body":"note on a work item"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (_st, wi_comments) = req(&router, "GET", &format!("/api/nodes/{wi_node}/comments"), None).await;
+    assert_eq!(wi_comments.as_array().unwrap().len(), 1);
+    assert_eq!(wi_comments[0]["body"], "note on a work item");
+    assert_eq!(wi_comments[0]["node_id"].as_i64(), Some(wi_node));
 
     // Reading list: create, disposition, tags.
     let (_st, link) = req(
