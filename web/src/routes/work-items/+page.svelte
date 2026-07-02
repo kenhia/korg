@@ -11,6 +11,7 @@
   import { renderMarkdown } from "$lib/markdown";
   import MultiSelectFilter from "$lib/components/MultiSelectFilter.svelte";
   import WorkItemForm from "$lib/components/WorkItemForm.svelte";
+  import Comments from "$lib/components/Comments.svelte";
 
   const ALL = "\u0000all";
   const UNASSIGNED = "Unassigned";
@@ -522,5 +523,7 @@
         <p class="text-xs text-[var(--color-muted)]">No relationships.</p>
       {/if}
     </section>
+
+    <Comments node_id={item.node_id} />
   </article>
 {/snippet}

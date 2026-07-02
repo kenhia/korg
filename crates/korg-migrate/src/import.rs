@@ -207,7 +207,7 @@ pub async fn import(kwi: &KwiData, kcard: &KcardData, korg: &PgPool) -> Result<I
             .get(&cm.card_id)
             .context("comment references unknown card")?;
         sqlx::query(
-            "INSERT INTO comment (card_node_id, body, created, updated) \
+            "INSERT INTO comment (node_id, body, created, updated) \
              VALUES ($1, $2, $3, $4)",
         )
         .bind(card_node_id)

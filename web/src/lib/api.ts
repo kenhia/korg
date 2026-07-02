@@ -102,9 +102,9 @@ export const WI_TYPES = [
 export const WI_STATUSES = ["open", "active", "resolved", "closed", "draft"] as const;
 export const TSHIRTS = ["XS", "S", "M", "L", "XL", "Huge", "Unknown"] as const;
 
-export interface CardComment {
+export interface Comment {
   id: number;
-  card_node_id: number;
+  node_id: number;
   body: string;
   created: string;
   updated: string;
@@ -192,10 +192,10 @@ export const api = {
       tags: string[];
     }>,
   ) => http<{ ok: true }>("PATCH", `/api/cards/${node_id}`, patch),
-  cardComments: (node_id: number) =>
-    http<CardComment[]>("GET", `/api/cards/${node_id}/comments`),
+  nodeComments: (node_id: number) =>
+    http<Comment[]>("GET", `/api/nodes/${node_id}/comments`),
   addComment: (node_id: number, body: string) =>
-    http<CardComment>("POST", `/api/cards/${node_id}/comments`, { body }),
+    http<Comment>("POST", `/api/nodes/${node_id}/comments`, { body }),
   deleteComment: (id: number) => http<{ ok: true }>("DELETE", `/api/comments/${id}`),
 
   // reading-list links

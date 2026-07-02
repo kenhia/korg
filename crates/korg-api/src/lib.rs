@@ -46,7 +46,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/areas", get(list_areas).post(create_area))
         .route("/api/cards", get(list_cards).post(create_card))
         .route("/api/cards/:node_id", patch(update_card))
-        .route("/api/cards/:node_id/comments", get(list_comments).post(add_comment))
+        .route("/api/nodes/:node_id/comments", get(list_comments).post(add_comment))
         .route("/api/comments/:id", delete(delete_comment))
         .route("/api/links", get(list_links).post(create_link))
         .route("/api/links/:node_id", patch(update_link))

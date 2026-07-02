@@ -465,7 +465,7 @@ pub async fn update_card(pool: &PgPool, node_id: i64, patch: CardPatch) -> Resul
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
 pub struct Comment {
     pub id: i64,
-    pub card_node_id: i64,
+    pub node_id: i64,
     pub body: String,
     #[serde(with = "time::serde::rfc3339")]
     pub created: OffsetDateTime,
@@ -473,23 +473,24 @@ pub struct Comment {
     pub updated: OffsetDateTime,
 }
 
-pub async fn list_comments(pool: &PgPool, card_node_id: i64) -> Result<Vec<Comment>> {
+/// Comments are node-scoped: any node (work item, card, …) can carry comments.
+pub async fn list_comments(pool: &PgPool, node_id: i64) -> Result<Vec<Comment>> {
     let rows = sqlx::query_as::<_, Comment>(
-        "SELECT id, card_node_id, body, created, updated FROM comment \
-         WHERE card_node_id = $1 ORDER BY created",
+        "SELECT id, node_id, body, created, updated FROM comment \
+         WHERE node_id = $1 ORDER BY created",
     )
-    .bind(card_node_id)
+    .bind(node_id)
     .fetch_all(pool)
     .await?;
     Ok(rows)
 }
 
-pub async fn add_comment(pool: &PgPool, card_node_id: i64, body: &str) -> Result<Comment> {
+pub async fn add_comment(pool: &PgPool, node_id: i64, body: &str) -> Result<Comment> {
     let c = sqlx::query_as::<_, Comment>(
-        "INSERT INTO comment (card_node_id, body) VALUES ($1, $2) \
-         RETURNING id, card_node_id, body, created, updated",
+        "INSERT INTO comment (node_id, body) VALUES ($1, $2) \
+         RETURNING id, node_id, body, created, updated",
     )
-    .bind(card_node_id)
+    .bind(node_id)
     .bind(body)
     .fetch_one(pool)
     .await?;
