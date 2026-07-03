@@ -224,6 +224,13 @@
   {#if loading}
     <p class="text-[var(--color-muted)]">Loading…</p>
   {:else}
+    {#if active.length > 0}
+      <div>
+        <h2 class="mb-2 text-sm font-semibold text-[var(--color-muted)]">Active</h2>
+        <div class="space-y-2">{#each active as p (p.node_id)}{@render card(p)}{/each}</div>
+      </div>
+    {/if}
+
     <div>
       <h2 class="mb-2 text-sm font-semibold text-[var(--color-muted)]">📌 Pinned</h2>
       <div
@@ -249,13 +256,6 @@
         {#each queueBuf as item (item.id)}{@render card(item.proposal)}{:else}<p class="p-2 text-xs text-[var(--color-muted)]">No proposals waiting. Ask your agent to propose some.</p>{/each}
       </div>
     </div>
-
-    {#if active.length > 0}
-      <div>
-        <h2 class="mb-2 text-sm font-semibold text-[var(--color-muted)]">Active</h2>
-        <div class="space-y-2">{#each active as p (p.node_id)}{@render card(p)}{/each}</div>
-      </div>
-    {/if}
 
     <div>
       <button class="text-xs text-[var(--color-muted)] hover:text-[var(--color-text)]" onclick={() => (showDone = !showDone)}>{showDone ? "▾" : "▸"} Done ({done.length})</button>

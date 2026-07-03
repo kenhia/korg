@@ -3,6 +3,7 @@
   import {
     api,
     WI_TYPES,
+    WI_STATUSES,
     TSHIRTS,
     type Project,
     type WorkItem,
@@ -69,6 +70,36 @@
   let fAreas = $state<Set<string>>(new Set());
   let fSprints = $state<Set<string>>(new Set());
 
+  // WI #103 — Quick Edit: inline type/status/size/area dropdowns in the list
+  // view. Items closed while quick-editing stay visible (despite the default
+  // "don't show closed" filter) until Quick Edit is turned off, so the user
+  // can keep tweaking (or undo) without the row vanishing mid-edit.
+  let quickEdit = $state(false);
+  let quickEditKeep = $state<Set<number>>(new Set());
+
+  function toggleQuickEdit() {
+    quickEdit = !quickEdit;
+    if (!quickEdit) quickEditKeep = new Set();
+  }
+
+  async function quickUpdate(item: WorkItem, patch: Partial<{ wi_type: string; wi_status: string; wi_tshirt: string }>) {
+    await api.updateWorkItem(item.wi_number, patch);
+    Object.assign(item, patch);
+    if (patch.wi_status === "closed") {
+      quickEditKeep = new Set(quickEditKeep).add(item.wi_number);
+    }
+  }
+
+  // Area is stored as area_id; only editable inline when one project is
+  // selected (currentAreas is that project's areas). Viewing "All projects"
+  // keeps area read-only in Quick Edit rather than fetching every row's
+  // own project's areas just for this.
+  async function quickUpdateArea(item: WorkItem, areaName: string) {
+    const area = currentAreas.find((a) => a.name === areaName);
+    await api.updateWorkItem(item.wi_number, { area_id: area ? area.id : null });
+    item.area = area ? area.name : null;
+  }
+
   const currentProject = $derived(projects.find((p) => p.name === current) ?? null);
 
   function distinct(vals: (string | null)[]): string[] {
@@ -107,7 +138,7 @@
     items.filter((it) => {
       if (!showArchived && it.archived) return false;
       if (!fTypes.has(it.wi_type)) return false;
-      if (!fStatuses.has(it.wi_status)) return false;
+      if (!fStatuses.has(it.wi_status) && !(quickEdit && quickEditKeep.has(it.wi_number))) return false;
       if (!fSizes.has(it.wi_tshirt)) return false;
       if (it.area ? !fAreas.has(it.area) : false) return false;
       if (it.sprint ? !fSprints.has(it.sprint) : !fSprints.has(UNASSIGNED)) return false;
@@ -373,6 +404,14 @@
       <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]"><input type="checkbox" bind:checked={showArchived} /> archived</label>
       <button class="rounded border border-[var(--color-border)] px-2 py-1 text-xs hover:bg-[var(--color-surface-hi)]" onclick={resetFilters}>Clear</button>
       <button class="rounded border border-[var(--color-border)] px-2 py-1 text-xs hover:bg-[var(--color-surface-hi)]" title="Refresh" aria-label="Refresh" onclick={loadItems}>↻</button>
+      <button
+        class="rounded border px-2 py-1 text-xs"
+        class:border-[var(--color-accent)]={quickEdit}
+        class:bg-[var(--color-accent-soft)]={quickEdit}
+        class:border-[var(--color-border)]={!quickEdit}
+        class:hover:bg-[var(--color-surface-hi)]={!quickEdit}
+        onclick={toggleQuickEdit}
+      >{quickEdit ? "✓ Quick Edit" : "Quick Edit"}</button>
       <div class="ml-auto">
         <button
           class="rounded bg-[var(--color-accent-soft)] px-3 py-1.5 text-sm hover:bg-[var(--color-accent)] disabled:opacity-40"
@@ -418,10 +457,63 @@
               onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), open(item))}
             >
               <td class="px-3 py-1.5 font-mono text-xs text-[var(--color-muted)]">{item.wi_number}</td>
-              <td class="px-3 py-1.5">{item.area ?? "—"}</td>
-              <td class="px-3 py-1.5">{@render badge(item.wi_type)}</td>
-              <td class="px-3 py-1.5">{@render badge(item.wi_status)}</td>
-              <td class="px-3 py-1.5">{item.wi_tshirt}</td>
+              <td class="px-3 py-1.5">
+                {#if quickEdit && current !== ALL}
+                  <select
+                    class="rounded bg-[var(--color-surface-hi)] px-1 py-0.5 text-xs outline-none"
+                    value={item.area ?? ""}
+                    onclick={(e) => e.stopPropagation()}
+                    onchange={(e) => quickUpdateArea(item, e.currentTarget.value)}
+                  >
+                    <option value="">—</option>
+                    {#each currentAreas as a (a.id)}<option value={a.name}>{a.name}</option>{/each}
+                  </select>
+                {:else}
+                  {item.area ?? "—"}
+                {/if}
+              </td>
+              <td class="px-3 py-1.5">
+                {#if quickEdit}
+                  <select
+                    class="rounded bg-[var(--color-surface-hi)] px-1 py-0.5 text-xs outline-none"
+                    value={item.wi_type}
+                    onclick={(e) => e.stopPropagation()}
+                    onchange={(e) => quickUpdate(item, { wi_type: e.currentTarget.value })}
+                  >
+                    {#each WI_TYPES as t (t)}<option value={t}>{t}</option>{/each}
+                  </select>
+                {:else}
+                  {@render badge(item.wi_type)}
+                {/if}
+              </td>
+              <td class="px-3 py-1.5">
+                {#if quickEdit}
+                  <select
+                    class="rounded bg-[var(--color-surface-hi)] px-1 py-0.5 text-xs outline-none"
+                    value={item.wi_status}
+                    onclick={(e) => e.stopPropagation()}
+                    onchange={(e) => quickUpdate(item, { wi_status: e.currentTarget.value })}
+                  >
+                    {#each WI_STATUSES as s (s)}<option value={s}>{s}</option>{/each}
+                  </select>
+                {:else}
+                  {@render badge(item.wi_status)}
+                {/if}
+              </td>
+              <td class="px-3 py-1.5">
+                {#if quickEdit}
+                  <select
+                    class="rounded bg-[var(--color-surface-hi)] px-1 py-0.5 text-xs outline-none"
+                    value={item.wi_tshirt}
+                    onclick={(e) => e.stopPropagation()}
+                    onchange={(e) => quickUpdate(item, { wi_tshirt: e.currentTarget.value })}
+                  >
+                    {#each TSHIRTS as t (t)}<option value={t}>{t}</option>{/each}
+                  </select>
+                {:else}
+                  {item.wi_tshirt}
+                {/if}
+              </td>
               <td class="px-3 py-1.5">{item.sprint ?? "—"}</td>
               <td class="px-3 py-1.5 font-medium">{item.title}</td>
             </tr>

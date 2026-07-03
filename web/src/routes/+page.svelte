@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type Slot, type Link } from "$lib/api";
+  import { api, type Slot, type Link, type Card, type WorkItem } from "$lib/api";
   import {
     startOfWeek,
     addDays,
@@ -10,9 +10,14 @@
     prettyDuration,
   } from "$lib/dates";
 
+  type ScheduledItem = { node_id: number; kind: string; title: string };
+
   let weekStart = $state(startOfWeek(new Date()));
   let slots = $state<Slot[]>([]);
   let links = $state<Link[]>([]);
+  let cards = $state<Card[]>([]);
+  let workItems = $state<WorkItem[]>([]);
+  let scheduled = $state<Record<number, ScheduledItem[]>>({});
   let loading = $state(true);
   let error = $state<string | null>(null);
 
@@ -25,13 +30,45 @@
       .sort((a, b) => a.position - b.position);
   }
 
+  function titleFor(kind: string, node_id: number): string {
+    if (kind === "card") return cards.find((c) => c.node_id === node_id)?.title ?? `#${node_id}`;
+    if (kind === "workitem") {
+      const wi = workItems.find((w) => w.node_id === node_id);
+      return wi ? `#${wi.wi_number} ${wi.title}` : `#${node_id}`;
+    }
+    if (kind === "link") {
+      const l = links.find((l) => l.node_id === node_id);
+      return l?.title ?? l?.url ?? `#${node_id}`;
+    }
+    return `#${node_id}`;
+  }
+
+  async function loadScheduled() {
+    const sched: Record<number, ScheduledItem[]> = {};
+    await Promise.all(
+      slots.map(async (s) => {
+        const ns = await api.neighbors(s.node_id).catch(() => []);
+        sched[s.node_id] = ns
+          .filter((n) => n.label === "scheduled")
+          .map((n) => ({ node_id: n.node_id, kind: n.kind, title: titleFor(n.kind, n.node_id) }));
+      }),
+    );
+    scheduled = sched;
+  }
+
   async function load() {
     loading = true;
     error = null;
     try {
       const from = isoDate(weekStart);
       const to = isoDate(addDays(weekStart, 6));
-      [slots, links] = await Promise.all([api.slots(from, to), api.links()]);
+      [slots, links, cards, workItems] = await Promise.all([
+        api.slots(from, to),
+        api.links(),
+        api.cards(),
+        api.workItems(),
+      ]);
+      await loadScheduled();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -104,6 +141,11 @@
                   value={slot.goal ?? ""}
                   onblur={(e) => saveGoal(slot, e.currentTarget.value)}
                 />
+                {#each scheduled[slot.node_id] ?? [] as item (item.node_id)}
+                  <div class="mt-1 truncate rounded bg-[var(--color-accent-soft)] px-1.5 py-0.5 text-[10px]" title={item.title}>
+                    {item.title}
+                  </div>
+                {/each}
               </div>
             {/each}
           </div>
