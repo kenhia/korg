@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { dndzone, type DndEvent } from "svelte-dnd-action";
   import { api, type Proposal, type WorkItem } from "$lib/api";
+  import { renderMarkdown } from "$lib/markdown";
 
   type DndItem = { id: number; proposal: Proposal };
   type Covered = { wi_number: number; title: string };
@@ -12,6 +13,8 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
   let copiedId = $state<number | null>(null);
+  let previewWi = $state<WorkItem | null>(null);
+  let previewLoading = $state(false);
   const flip = 150;
 
   let pinnedBuf = $state<DndItem[]>([]);
@@ -122,9 +125,44 @@
   }
 
   async function copyStart(p: Proposal) {
-    await navigator.clipboard.writeText(`/start-sprint korg:${p.node_id}`);
-    copiedId = p.node_id;
-    setTimeout(() => (copiedId = null), 1500);
+    const text = `/start-sprint korg:${p.node_id}`;
+    try {
+      // navigator.clipboard requires a secure context (HTTPS or localhost);
+      // korg is served over plain HTTP on the LAN, so it's often undefined.
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        legacyCopy(text);
+      }
+      copiedId = p.node_id;
+      setTimeout(() => (copiedId = null), 1500);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  function legacyCopy(text: string) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    if (!ok) throw new Error("Copy failed — clipboard access is unavailable in this context.");
+  }
+
+  async function openPreview(wi_number: number) {
+    previewWi = null;
+    previewLoading = true;
+    try {
+      previewWi = await api.workItem(wi_number);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    } finally {
+      previewLoading = false;
+    }
   }
 
   onMount(load);
@@ -152,7 +190,11 @@
     {#if covers[p.node_id]?.length}
       <div class="mt-2 flex flex-wrap gap-1">
         {#each covers[p.node_id] as c (c.wi_number)}
-          <span class="rounded bg-black px-1.5 py-0.5 text-[10px] text-white" title={c.title}>#{c.wi_number} {c.title}</span>
+          <button
+            class="rounded bg-black px-1.5 py-0.5 text-[10px] text-white hover:bg-[var(--color-accent)]"
+            title={`Preview #${c.wi_number} — ${c.title}`}
+            onclick={() => openPreview(c.wi_number)}
+          >#{c.wi_number} {c.title}</button>
         {/each}
       </div>
     {/if}
@@ -166,6 +208,7 @@
       {:else}
         <button class="rounded border border-[var(--color-border)] px-2 py-1 text-xs hover:bg-[var(--color-surface)]" onclick={() => setStatus(p, "proposed")}>Reopen</button>
       {/if}
+      <span class="ml-auto text-xs font-bold text-blue-400">Sprint Plan ID: {p.node_id}</span>
     </div>
   </div>
 {/snippet}
@@ -224,3 +267,39 @@
     </div>
   {/if}
 </section>
+
+{#if previewWi || previewLoading}
+  <div class="fixed inset-0 z-50 flex justify-end">
+    <button class="absolute inset-0 bg-black/60" aria-label="Close preview" onclick={() => (previewWi = null)}></button>
+    <div class="relative z-10 h-full w-full max-w-md overflow-auto border-l border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-xl" data-testid="wi-preview-panel">
+      <div class="mb-3 flex items-center justify-between">
+        <h2 class="text-lg font-semibold">Work item preview</h2>
+        <button class="rounded px-2 py-1 text-[var(--color-muted)] hover:bg-[var(--color-surface-hi)]" aria-label="Close" onclick={() => (previewWi = null)}>✕</button>
+      </div>
+      {#if previewLoading}
+        <p class="text-[var(--color-muted)]">Loading…</p>
+      {:else if previewWi}
+        <h3 class="text-base font-medium">#{previewWi.wi_number} {previewWi.title}</h3>
+        <div class="mt-2 flex flex-wrap gap-1 text-xs">
+          <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5">{previewWi.wi_type}</span>
+          <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5">{previewWi.wi_status}</span>
+          <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5">{previewWi.wi_tshirt}</span>
+          {#if previewWi.project}<span class="rounded bg-teal-900/60 px-1.5 py-0.5 text-teal-300">{previewWi.project}</span>{/if}
+          {#if previewWi.area}<span class="rounded bg-purple-800/80 px-1.5 py-0.5 text-white">{previewWi.area}</span>{/if}
+        </div>
+        <section class="mt-4">
+          <h4 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Content</h4>
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
+          <div class="prose prose-invert max-w-none text-sm">{@html renderMarkdown(previewWi.content)}</div>
+        </section>
+        {#if previewWi.details}
+          <section class="mt-4">
+            <h4 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Details</h4>
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
+            <div class="prose prose-invert max-w-none rounded p-2 text-sm" style="background: color-mix(in oklch, var(--color-surface) 75%, var(--color-accent) 25%)">{@html renderMarkdown(previewWi.details)}</div>
+          </section>
+        {/if}
+      {/if}
+    </div>
+  </div>
+{/if}
