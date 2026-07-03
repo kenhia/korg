@@ -3,3 +3,4 @@
 *.dump
 .env
 /.phoenix
+.korg-sprint-proposal
