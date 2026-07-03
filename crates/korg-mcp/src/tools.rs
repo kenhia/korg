@@ -62,6 +62,16 @@ pub fn tools() -> Vec<Tool> {
             "type":"object","additionalProperties":false,
             "properties":{"project":{"type":["string","null"],"description":"Project name to filter by"}}
         })),
+        tool("survey_work_items", "Slim, paginated work-item listing (wi_number, node_id, project, title, wi_type, wi_status, wi_tshirt only -- no content/details). Use this instead of list_work_items for cross-project surveys, which can exceed tool-output limits at instance scale. Returns {items, total, limit, offset}.", json!({
+            "type":"object","additionalProperties":false,
+            "properties":{
+                "project":{"type":["string","null"],"description":"Project name to filter by"},
+                "wi_status":{"type":["string","null"],"description":"Status to filter by, e.g. \"open\""},
+                "archived":{"type":["boolean","null"],"default":false,"description":"Filter by archived flag; omit/null for both"},
+                "limit":{"type":"integer","minimum":1,"maximum":500,"default":50},
+                "offset":{"type":"integer","minimum":0,"default":0}
+            }
+        })),
         tool("get_work_item", "Fetch a single work item by its wi_number.", json!({
             "type":"object","additionalProperties":false,"required":["wi_number"],
             "properties":{"wi_number":id}
@@ -398,6 +408,24 @@ struct ListWorkItemsArgs {
     project: Option<String>,
 }
 
+fn default_survey_limit() -> i64 {
+    50
+}
+
+#[derive(Deserialize)]
+struct SurveyWorkItemsArgs {
+    #[serde(default)]
+    project: Option<String>,
+    #[serde(default)]
+    wi_status: Option<String>,
+    #[serde(default)]
+    archived: Option<bool>,
+    #[serde(default = "default_survey_limit")]
+    limit: i64,
+    #[serde(default)]
+    offset: i64,
+}
+
 #[derive(Deserialize)]
 struct CreateCardArgs {
     title: String,
@@ -558,6 +586,24 @@ impl KorgServer {
                     None => list_work_items(&self.pool).await,
                 };
                 match res {
+                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "survey_work_items" => {
+                let a: SurveyWorkItemsArgs = parse_args(args)?;
+                let limit = a.limit.clamp(1, 500);
+                let offset = a.offset.max(0);
+                match repo::survey_work_items(
+                    &self.pool,
+                    a.project.as_deref(),
+                    a.wi_status.as_deref(),
+                    a.archived,
+                    limit,
+                    offset,
+                )
+                .await
+                {
                     Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
                     Err(e) => Ok(to_err(e)),
                 }

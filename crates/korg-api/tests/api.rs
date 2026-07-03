@@ -308,3 +308,30 @@ async fn proposals_end_to_end() {
     let (_st, proposed) = req(&router, "GET", "/api/proposals?status=proposed", None).await;
     assert_eq!(proposed.as_array().unwrap().len(), 0);
 }
+
+/// Sprint 006 — /api/work-items/survey: slim, paginated, total reflects the
+/// full filtered count rather than just the returned page.
+#[tokio::test]
+async fn survey_work_items_end_to_end() {
+    let (_c, router) = app().await;
+
+    for i in 0..3 {
+        let (st, _) = req(
+            &router,
+            "POST",
+            "/api/work-items",
+            Some(json!({"title": format!("item {i}"), "content": "x"})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK);
+    }
+
+    let (st, page) = req(&router, "GET", "/api/work-items/survey?limit=2&offset=0", None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page["total"].as_i64(), Some(3));
+    assert_eq!(page["items"].as_array().unwrap().len(), 2);
+    assert!(page["items"][0].get("content").is_none(), "slim projection has no content field");
+
+    let (_st, rest) = req(&router, "GET", "/api/work-items/survey?limit=2&offset=2", None).await;
+    assert_eq!(rest["items"].as_array().unwrap().len(), 1);
+}
