@@ -18,7 +18,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
 use korg_core::repo::{
-    self, CardPatch, NewCard, NewLink, NewWorkItem,
+    self, CardPatch, NewCard, NewLink, NewProposal, NewWorkItem, ProposalPatch,
 };
 use korg_core::slots::{self, NewTemplateSlot};
 use korg_mcp::tools::KorgServer;
@@ -57,6 +57,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/relationships", post(create_relationship))
         .route("/api/relationships/:id", delete(delete_relationship))
         .route("/api/nodes/:id/neighbors", get(neighbors))
+        .route("/api/proposals", get(list_proposals).post(create_proposal))
+        .route("/api/proposals/:node_id", patch(update_proposal))
         .with_state(state);
 
     let api = api.route_service("/mcp", mcp);
@@ -586,4 +588,98 @@ async fn delete_relationship(State(s): State<AppState>, Path(id): Path<i64>) -> 
 
 async fn neighbors(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
     Ok(Json(json!(repo::neighbors(&s.pool, id).await?)))
+}
+
+// --- sprint proposals (agent planning) -------------------------------------
+
+#[derive(Deserialize)]
+struct ProposalsQuery {
+    status: Option<String>,
+}
+
+async fn list_proposals(State(s): State<AppState>, Query(q): Query<ProposalsQuery>) -> ApiResult {
+    Ok(Json(json!(
+        repo::list_proposals(&s.pool, q.status.as_deref()).await?
+    )))
+}
+
+#[derive(Deserialize)]
+struct CreateProposal {
+    title: String,
+    summary: String,
+    #[serde(default)]
+    work_item_numbers: Vec<i64>,
+    #[serde(default)]
+    project_id: Option<i64>,
+    #[serde(default)]
+    rank: f64,
+    #[serde(default)]
+    pinned: bool,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+async fn create_proposal(State(s): State<AppState>, Json(b): Json<CreateProposal>) -> ApiResult {
+    let rank = Decimal::try_from(b.rank).map_err(|e| ApiError(anyhow::anyhow!("rank: {e}")))?;
+    let r = repo::create_proposal(
+        &s.pool,
+        NewProposal {
+            project_id: b.project_id,
+            category: b.category,
+            tags: b.tags,
+            title: b.title,
+            summary: b.summary,
+            rank,
+            pinned: b.pinned,
+            covers: b.work_item_numbers,
+        },
+    )
+    .await?;
+    Ok(Json(json!({ "node_id": r.node_id, "covered": r.covered })))
+}
+
+#[derive(Deserialize)]
+struct UpdateProposal {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    summary: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    rank: Option<f64>,
+    #[serde(default)]
+    pinned: Option<bool>,
+    #[serde(default)]
+    archived: Option<bool>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+}
+
+async fn update_proposal(
+    State(s): State<AppState>,
+    Path(node_id): Path<i64>,
+    Json(b): Json<UpdateProposal>,
+) -> ApiResult {
+    let rank = match b.rank {
+        Some(r) => Some(Decimal::try_from(r).map_err(|e| ApiError(anyhow::anyhow!("rank: {e}")))?),
+        None => None,
+    };
+    repo::update_proposal(
+        &s.pool,
+        node_id,
+        ProposalPatch {
+            title: b.title,
+            summary: b.summary,
+            status: b.status,
+            rank,
+            pinned: b.pinned,
+            archived: b.archived,
+            tags: b.tags,
+        },
+    )
+    .await?;
+    Ok(Json(json!({ "ok": true })))
 }

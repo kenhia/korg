@@ -255,3 +255,56 @@ async fn api_end_to_end() {
     let (_st, ns2) = req(&router, "GET", &format!("/api/nodes/{slot_node}/neighbors"), None).await;
     assert_eq!(ns2.as_array().unwrap().len(), 0);
 }
+
+/// Sprint 004 — /api/proposals: bundled create, pinned/rank ordering,
+/// status-filtered listing, and PATCH-driven lifecycle.
+#[tokio::test]
+async fn proposals_end_to_end() {
+    let (_c, router) = app().await;
+
+    let (_st, wi) = req(
+        &router,
+        "POST",
+        "/api/work-items",
+        Some(json!({"title":"fix the thing","content":"x"})),
+    )
+    .await;
+    let wi_number = wi["wi_number"].as_i64().unwrap();
+
+    let (st, created) = req(
+        &router,
+        "POST",
+        "/api/proposals",
+        Some(json!({
+            "title":"Sprint: fix things",
+            "summary":"bundle of small fixes",
+            "work_item_numbers":[wi_number, 9999],
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let node_id = created["node_id"].as_i64().unwrap();
+    assert_eq!(created["covered"].as_array().unwrap().len(), 1);
+
+    let (_st, list) = req(&router, "GET", "/api/proposals", None).await;
+    let list = list.as_array().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0]["status"], "proposed");
+
+    let (st, _) = req(
+        &router,
+        "PATCH",
+        &format!("/api/proposals/{node_id}"),
+        Some(json!({"pinned":true,"status":"active"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (_st, active) = req(&router, "GET", "/api/proposals?status=active", None).await;
+    let active = active.as_array().unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0]["pinned"], true);
+
+    let (_st, proposed) = req(&router, "GET", "/api/proposals?status=proposed", None).await;
+    assert_eq!(proposed.as_array().unwrap().len(), 0);
+}

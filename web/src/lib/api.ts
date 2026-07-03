@@ -88,6 +88,24 @@ export interface Neighbor {
   label: string;
 }
 
+export const PROPOSAL_STATUSES = ["proposed", "active", "done", "declined"] as const;
+export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
+
+export interface Proposal {
+  node_id: number;
+  title: string;
+  summary: string;
+  status: ProposalStatus;
+  rank: string; // Decimal serialized as string
+  pinned: boolean;
+  project: string | null;
+  category: string | null;
+  tags: string[];
+  archived: boolean;
+  created: string;
+  updated: string;
+}
+
 export const WI_TYPES = [
   "task",
   "bug",
@@ -220,4 +238,29 @@ export const api = {
     http<{ id: number }>("POST", "/api/relationships", { left, right, label }),
   unrelate: (id: number) => http<{ ok: true }>("DELETE", `/api/relationships/${id}`),
   neighbors: (id: number) => http<Neighbor[]>("GET", `/api/nodes/${id}/neighbors`),
+
+  // sprint proposals (agent planning)
+  proposals: (status?: ProposalStatus) =>
+    http<Proposal[]>("GET", status ? `/api/proposals?status=${status}` : "/api/proposals"),
+  createProposal: (b: {
+    title: string;
+    summary: string;
+    work_item_numbers?: number[];
+    project_id?: number;
+    rank?: number;
+    pinned?: boolean;
+    tags?: string[];
+  }) => http<{ node_id: number; covered: number[] }>("POST", "/api/proposals", b),
+  updateProposal: (
+    node_id: number,
+    patch: Partial<{
+      title: string;
+      summary: string;
+      status: ProposalStatus;
+      rank: number;
+      pinned: boolean;
+      archived: boolean;
+      tags: string[];
+    }>,
+  ) => http<{ ok: true }>("PATCH", `/api/proposals/${node_id}`, patch),
 };

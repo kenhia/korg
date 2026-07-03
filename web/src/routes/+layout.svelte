@@ -8,6 +8,7 @@
     { href: "/", label: "Today" },
     { href: "/cards", label: "Cards" },
     { href: "/work-items", label: "Work Items" },
+    { href: "/planning", label: "Planning" },
     { href: "/reading-list", label: "Reading" },
     { href: "/link-up", label: "Link Up" },
   ];

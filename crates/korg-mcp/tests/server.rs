@@ -44,7 +44,7 @@ async fn mcp_surface_end_to_end() {
     let server = KorgServer::new(pool);
 
     // Tool descriptors are stable.
-    assert_eq!(tools().len(), 25, "expected 25 tools");
+    assert_eq!(tools().len(), 28, "expected 28 tools");
 
     // Create a work item.
     let wi = body(
@@ -327,4 +327,65 @@ async fn list_work_items_filters_by_project() {
             .unwrap(),
     );
     assert_eq!(none.as_array().unwrap().len(), 0, "unknown project yields none");
+}
+
+/// Sprint 004 — agent planning: `propose_sprint` bundles a proposal + its
+/// `covers` edges in one call, `list_proposals` orders pinned-first-then-rank
+/// and filters by status, `update_proposal` drives the status lifecycle.
+#[tokio::test]
+async fn propose_sprint_and_lifecycle() {
+    let (_c, pool) = fresh_korg().await;
+    let server = KorgServer::new(pool);
+
+    let wi = body(
+        &server
+            .call("create_work_item", args(json!({"title":"fix the thing","content":"x"})))
+            .await
+            .unwrap(),
+    );
+    let wi_number = wi["wi_number"].as_i64().unwrap();
+
+    let proposed = body(
+        &server
+            .call(
+                "propose_sprint",
+                args(json!({
+                    "title":"Sprint: fix things",
+                    "summary":"bundle of small fixes",
+                    "work_item_numbers":[wi_number, 9999],
+                })),
+            )
+            .await
+            .unwrap(),
+    );
+    let node_id = proposed["node_id"].as_i64().unwrap();
+    assert_eq!(
+        proposed["covered"].as_array().unwrap().len(),
+        1,
+        "only the real wi_number resolves; 9999 is dropped"
+    );
+
+    let list = body(&server.call("list_proposals", args(json!({}))).await.unwrap());
+    let list = list.as_array().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0]["status"], "proposed", "default status");
+    assert_eq!(list[0]["pinned"], json!(false));
+
+    // Pin it, then start it.
+    server
+        .call("update_proposal", args(json!({"node_id":node_id,"pinned":true})))
+        .await
+        .unwrap();
+    server
+        .call("update_proposal", args(json!({"node_id":node_id,"status":"active"})))
+        .await
+        .unwrap();
+
+    let active = body(&server.call("list_proposals", args(json!({"status":"active"}))).await.unwrap());
+    let active = active.as_array().unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0]["pinned"], json!(true), "pin survived the status change");
+
+    let none_proposed = body(&server.call("list_proposals", args(json!({"status":"proposed"}))).await.unwrap());
+    assert_eq!(none_proposed.as_array().unwrap().len(), 0, "no longer in the proposed bucket");
 }
