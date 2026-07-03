@@ -44,7 +44,7 @@ async fn mcp_surface_end_to_end() {
     let server = KorgServer::new(pool);
 
     // Tool descriptors are stable.
-    assert_eq!(tools().len(), 28, "expected 28 tools");
+    assert_eq!(tools().len(), 29, "expected 29 tools");
 
     // Create a work item.
     let wi = body(
@@ -388,4 +388,63 @@ async fn propose_sprint_and_lifecycle() {
 
     let none_proposed = body(&server.call("list_proposals", args(json!({"status":"proposed"}))).await.unwrap());
     assert_eq!(none_proposed.as_array().unwrap().len(), 0, "no longer in the proposed bucket");
+}
+
+/// Sprint 006 — `survey_work_items`: a slim, paginated projection for
+/// cross-project surveys (the `refill-queue` skill's use case) that can't
+/// afford `list_work_items`'s full content/details payload at scale.
+#[tokio::test]
+async fn survey_work_items_paginates_and_filters() {
+    let (_c, pool) = fresh_korg().await;
+    let server = KorgServer::new(pool);
+
+    for i in 0..5 {
+        server
+            .call(
+                "create_work_item",
+                args(json!({"title": format!("item {i}"), "content": "x", "wi_status": "open"})),
+            )
+            .await
+            .unwrap();
+    }
+    server
+        .call(
+            "create_work_item",
+            args(json!({"title": "closed one", "content": "x", "wi_status": "closed"})),
+        )
+        .await
+        .unwrap();
+
+    // Page 1 of 2, page size 2, status filter excludes the closed item.
+    let page1 = body(
+        &server
+            .call("survey_work_items", args(json!({"wi_status": "open", "limit": 2, "offset": 0})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(page1["total"].as_i64(), Some(5), "total reflects the full filtered count, not just the page");
+    assert_eq!(page1["items"].as_array().unwrap().len(), 2);
+    let item = &page1["items"][0];
+    assert!(item.get("content").is_none(), "survey is slim -- no content field");
+    assert!(item.get("details").is_none(), "survey is slim -- no details field");
+    assert!(item.get("wi_number").is_some());
+    assert!(item.get("node_id").is_some());
+    assert!(item.get("title").is_some());
+
+    let page2 = body(
+        &server
+            .call("survey_work_items", args(json!({"wi_status": "open", "limit": 2, "offset": 2})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(page2["items"].as_array().unwrap().len(), 2);
+    assert_ne!(page1["items"][0]["wi_number"], page2["items"][0]["wi_number"], "pages don't overlap");
+
+    let all_open = body(
+        &server
+            .call("survey_work_items", args(json!({"wi_status": "open", "limit": 50})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(all_open["items"].as_array().unwrap().len(), 5, "closed item excluded by the status filter");
 }

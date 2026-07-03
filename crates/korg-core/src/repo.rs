@@ -299,6 +299,87 @@ pub async fn get_work_item(pool: &PgPool, wi_number: i64) -> Result<Option<WorkI
         .await?)
 }
 
+// --- work item survey (slim, paginated) -------------------------------------
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct WorkItemSummary {
+    pub wi_number: i64,
+    pub node_id: i64,
+    pub project: Option<String>,
+    pub title: String,
+    pub wi_type: String,
+    pub wi_status: String,
+    pub wi_tshirt: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkItemSurvey {
+    pub items: Vec<WorkItemSummary>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+/// A slim, paginated projection of work items (no content/details) for
+/// cross-project surveys — e.g. the `refill-queue` skill — which can't
+/// afford `list_work_items`'s full payload at instance scale. `total` is
+/// the full filtered count (before LIMIT/OFFSET), so callers can page.
+pub async fn survey_work_items(
+    pool: &PgPool,
+    project: Option<&str>,
+    wi_status: Option<&str>,
+    archived: Option<bool>,
+    limit: i64,
+    offset: i64,
+) -> Result<WorkItemSurvey> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        wi_number: i64,
+        node_id: i64,
+        project: Option<String>,
+        title: String,
+        wi_type: String,
+        wi_status: String,
+        wi_tshirt: String,
+        total: i64,
+    }
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT w.wi_number, w.node_id, pj.name AS project, w.title, \
+                w.wi_type, w.wi_status, w.wi_tshirt, \
+                count(*) OVER() AS total \
+         FROM workitem w \
+         JOIN node n ON n.id = w.node_id \
+         LEFT JOIN project pj ON pj.id = n.project_id \
+         WHERE ($1::text IS NULL OR pj.name = $1) \
+           AND ($2::text IS NULL OR w.wi_status = $2) \
+           AND ($3::bool IS NULL OR n.archived = $3) \
+         ORDER BY w.wi_number \
+         LIMIT $4 OFFSET $5",
+    )
+    .bind(project)
+    .bind(wi_status)
+    .bind(archived)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    let total = rows.first().map(|r| r.total).unwrap_or(0);
+    let items = rows
+        .into_iter()
+        .map(|r| WorkItemSummary {
+            wi_number: r.wi_number,
+            node_id: r.node_id,
+            project: r.project,
+            title: r.title,
+            wi_type: r.wi_type,
+            wi_status: r.wi_status,
+            wi_tshirt: r.wi_tshirt,
+        })
+        .collect();
+    Ok(WorkItemSurvey { items, total, limit, offset })
+}
+
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
 pub struct CardRow {
     pub node_id: i64,

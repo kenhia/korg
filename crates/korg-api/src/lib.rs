@@ -42,6 +42,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/projects", get(list_projects).post(create_project))
         .route("/api/projects/recent", get(recent_project))
         .route("/api/work-items", get(list_work_items).post(create_work_item))
+        .route("/api/work-items/survey", get(survey_work_items))
         .route("/api/work-items/:wi_number", get(get_work_item).patch(update_work_item))
         .route("/api/areas", get(list_areas).post(create_area))
         .route("/api/cards", get(list_cards).post(create_card))
@@ -168,6 +169,30 @@ async fn list_work_items(State(s): State<AppState>, Query(q): Query<WorkItemsQue
         None => repo::list_work_items(&s.pool).await?,
     };
     Ok(Json(json!(items)))
+}
+
+#[derive(Deserialize)]
+struct SurveyQuery {
+    project: Option<String>,
+    wi_status: Option<String>,
+    archived: Option<bool>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+async fn survey_work_items(State(s): State<AppState>, Query(q): Query<SurveyQuery>) -> ApiResult {
+    let limit = q.limit.unwrap_or(50).clamp(1, 500);
+    let offset = q.offset.unwrap_or(0).max(0);
+    let survey = repo::survey_work_items(
+        &s.pool,
+        q.project.as_deref(),
+        q.wi_status.as_deref(),
+        q.archived,
+        limit,
+        offset,
+    )
+    .await?;
+    Ok(Json(json!(survey)))
 }
 
 async fn get_work_item(State(s): State<AppState>, Path(wi): Path<i64>) -> ApiResult {

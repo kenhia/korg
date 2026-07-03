@@ -34,6 +34,7 @@ rooted at `/api`. Responses are JSON.
 | `GET    /api/projects/recent`          | Most recently used project.          |
 | `GET    /api/work-items`               | List work items (optional filters).  |
 | `POST   /api/work-items`               | Create a work item.                  |
+| `GET    /api/work-items/survey`        | Slim, paginated work-item projection (no content/details) for cross-project surveys. |
 | `GET    /api/work-items/:wi_number`    | Fetch a work item by serial number.  |
 | `PATCH  /api/work-items/:wi_number`    | Update a work item.                  |
 | `GET    /api/areas`                    | List areas.                          |
