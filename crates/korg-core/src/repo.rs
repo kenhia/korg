@@ -525,6 +525,157 @@ pub async fn list_areas(pool: &PgPool, project: &str) -> Result<Vec<AreaRow>> {
     Ok(rows)
 }
 
+// --- sprint proposals (agent planning) -------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct NewProposal {
+    pub project_id: Option<i64>,
+    pub category: Option<String>,
+    pub tags: Vec<String>,
+    pub title: String,
+    pub summary: String,
+    pub rank: Decimal,
+    pub pinned: bool,
+    /// wi_numbers this proposal covers; numbers that don't resolve are dropped.
+    pub covers: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProposalRef {
+    pub node_id: i64,
+    pub covered: Vec<i64>,
+}
+
+/// Create a sprint proposal and its `covers` edges to the given work items in
+/// one transaction. Mirrors `create_work_item`'s node+detail insert; the
+/// wi_number -> node_id resolution happens before the transaction, matching
+/// `update_work_item`'s handling of `parent`.
+pub async fn create_proposal(pool: &PgPool, new: NewProposal) -> Result<ProposalRef> {
+    let mut covered = Vec::with_capacity(new.covers.len());
+    for wi in &new.covers {
+        if let Some(n) = node_id_for_wi(pool, *wi).await? {
+            covered.push(n);
+        }
+    }
+
+    let mut tx = pool.begin().await?;
+    let node_id: i64 = sqlx::query(
+        "INSERT INTO node (kind, project_id, category, tags) \
+         VALUES ('sprint_proposal', $1, $2, $3) RETURNING id",
+    )
+    .bind(new.project_id)
+    .bind(&new.category)
+    .bind(&new.tags)
+    .fetch_one(&mut *tx)
+    .await?
+    .get("id");
+
+    sqlx::query(
+        "INSERT INTO sprint_proposal (node_id, title, summary, rank, pinned) \
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(node_id)
+    .bind(&new.title)
+    .bind(&new.summary)
+    .bind(new.rank)
+    .bind(new.pinned)
+    .execute(&mut *tx)
+    .await?;
+
+    for &target in &covered {
+        let (lo, hi) = if node_id <= target { (node_id, target) } else { (target, node_id) };
+        sqlx::query(
+            "INSERT INTO relationship (left_id, right_id, relationship) \
+             VALUES ($1, $2, 'covers') \
+             ON CONFLICT (left_id, right_id, relationship) DO UPDATE SET left_id = relationship.left_id",
+        )
+        .bind(lo)
+        .bind(hi)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(ProposalRef { node_id, covered })
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct ProposalRow {
+    pub node_id: i64,
+    pub title: String,
+    pub summary: String,
+    pub status: String,
+    pub rank: Decimal,
+    pub pinned: bool,
+    pub project: Option<String>,
+    pub category: Option<String>,
+    pub tags: Vec<String>,
+    pub archived: bool,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated: OffsetDateTime,
+}
+
+/// List proposals ordered pinned-first, then by rank — the drag-order a user
+/// or agent leaves them in. `status` optionally filters (e.g. "proposed").
+pub async fn list_proposals(pool: &PgPool, status: Option<&str>) -> Result<Vec<ProposalRow>> {
+    let rows = sqlx::query_as::<_, ProposalRow>(
+        "SELECT p.node_id, p.title, p.summary, p.status::text AS status, p.rank, p.pinned, \
+                pj.name AS project, n.category, n.tags, n.archived, n.created, n.updated \
+         FROM sprint_proposal p \
+         JOIN node n ON n.id = p.node_id \
+         LEFT JOIN project pj ON pj.id = n.project_id \
+         WHERE ($1::text IS NULL OR p.status::text = $1) \
+         ORDER BY p.pinned DESC, p.rank ASC",
+    )
+    .bind(status)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ProposalPatch {
+    pub title: Option<String>,
+    pub summary: Option<String>,
+    pub status: Option<String>,
+    pub rank: Option<Decimal>,
+    pub pinned: Option<bool>,
+    pub archived: Option<bool>,
+    pub tags: Option<Vec<String>>,
+}
+
+/// Partially update a proposal: status transitions (propose -> active ->
+/// done/declined), reorder (rank), pin, archive. Same "only bind what's
+/// present" shape as `update_card`.
+pub async fn update_proposal(pool: &PgPool, node_id: i64, patch: ProposalPatch) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    if let Some(v) = &patch.title {
+        sqlx::query("UPDATE sprint_proposal SET title = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = &patch.summary {
+        sqlx::query("UPDATE sprint_proposal SET summary = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = &patch.status {
+        sqlx::query("UPDATE sprint_proposal SET status = $2::sprint_proposal_status WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = patch.rank {
+        sqlx::query("UPDATE sprint_proposal SET rank = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = patch.pinned {
+        sqlx::query("UPDATE sprint_proposal SET pinned = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = patch.archived {
+        sqlx::query("UPDATE node SET archived = $2 WHERE id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    if let Some(v) = &patch.tags {
+        sqlx::query("UPDATE node SET tags = $2 WHERE id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Create (or return existing) an area under a project by name.
 pub async fn create_area(
     pool: &PgPool,

@@ -4,8 +4,9 @@
 //! and calendar slots to AI agents over the MCP protocol.
 
 use korg_core::repo::{
-    self, create_card, create_link, create_work_item, list_cards, list_links, list_projects,
-    list_work_items, update_work_item, CardPatch, NewCard, NewLink, NewWorkItem, WorkItemPatch,
+    self, create_card, create_link, create_proposal, create_work_item, list_cards, list_links,
+    list_projects, list_work_items, update_work_item, CardPatch, NewCard, NewLink, NewProposal,
+    NewWorkItem, ProposalPatch, WorkItemPatch,
 };
 use korg_core::slots::{self, NewTemplateSlot};
 use rmcp::handler::server::ServerHandler;
@@ -174,6 +175,37 @@ pub fn tools() -> Vec<Tool> {
                     "duration_minutes":{"type":"integer","minimum":1},
                     "label":{"type":["string","null"]}
                 }}}}
+        })),
+        tool("propose_sprint", "Propose a sprint: bundle a title + summary with the work items it covers, in one call. Returns the proposal's node_id and which of the given wi_numbers actually resolved to covered items.", json!({
+            "type":"object","additionalProperties":false,
+            "required":["title","summary"],
+            "properties":{
+                "title":{"type":"string","minLength":1},
+                "summary":{"type":"string"},
+                "work_item_numbers":{"type":"array","items":{"type":"integer","format":"int64"},"default":[]},
+                "project_id":id,
+                "rank":{"type":"number","default":0,"description":"Drag-order position; lower sorts first among unpinned proposals."},
+                "pinned":{"type":"boolean","default":false},
+                "category":{"type":["string","null"]},
+                "tags":tags
+            }
+        })),
+        tool("list_proposals", "List sprint proposals, pinned first then by rank (the drag order a user or agent left them in). Pass `status` to filter.", json!({
+            "type":"object","additionalProperties":false,
+            "properties":{"status":{"type":["string","null"],"enum":["proposed","active","done","declined",null]}}
+        })),
+        tool("update_proposal", "Partially update a sprint proposal by its node_id. Only the fields you pass are changed. Use this for status transitions (proposed -> active -> done/declined), reordering (rank), pinning, or archiving.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id"],
+            "properties":{
+                "node_id":id,
+                "title":{"type":"string","minLength":1},
+                "summary":{"type":"string"},
+                "status":{"type":"string","enum":["proposed","active","done","declined"]},
+                "rank":{"type":"number"},
+                "pinned":{"type":"boolean"},
+                "archived":{"type":"boolean"},
+                "tags":tags
+            }
         })),
         tool("list_projects", "List projects.", empty()),
         tool("create_project", "Create a project by name (idempotent — returns the existing id if it already exists). Returns its id.", json!({
@@ -447,6 +479,49 @@ struct SetSlotTemplateArgs {
     slots: Vec<TemplateSlotArg>,
 }
 
+#[derive(Deserialize)]
+struct ProposeSprintArgs {
+    title: String,
+    summary: String,
+    #[serde(default)]
+    work_item_numbers: Vec<i64>,
+    #[serde(default)]
+    project_id: Option<i64>,
+    #[serde(default)]
+    rank: f64,
+    #[serde(default)]
+    pinned: bool,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct ListProposalsArgs {
+    #[serde(default)]
+    status: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct UpdateProposalArgs {
+    node_id: i64,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    summary: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    rank: Option<f64>,
+    #[serde(default)]
+    pinned: Option<bool>,
+    #[serde(default)]
+    archived: Option<bool>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+}
+
 // --- dispatch -------------------------------------------------------------
 
 impl KorgServer {
@@ -667,6 +742,54 @@ impl KorgServer {
                     })
                     .collect();
                 match slots::set_weekly_template(&self.pool, &rows).await {
+                    Ok(()) => ok_json(json!({ "ok": true })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "propose_sprint" => {
+                let a: ProposeSprintArgs = parse_args(args)?;
+                let rank = Decimal::try_from(a.rank)
+                    .map_err(|e| ErrorData::invalid_params(format!("invalid rank: {e}"), None))?;
+                let new = NewProposal {
+                    project_id: a.project_id,
+                    category: a.category,
+                    tags: a.tags,
+                    title: a.title,
+                    summary: a.summary,
+                    rank,
+                    pinned: a.pinned,
+                    covers: a.work_item_numbers,
+                };
+                match create_proposal(&self.pool, new).await {
+                    Ok(r) => ok_json(json!({ "node_id": r.node_id, "covered": r.covered })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "list_proposals" => {
+                let a: ListProposalsArgs = parse_args(args)?;
+                match repo::list_proposals(&self.pool, a.status.as_deref()).await {
+                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "update_proposal" => {
+                let a: UpdateProposalArgs = parse_args(args)?;
+                let rank = match a.rank {
+                    Some(r) => Some(Decimal::try_from(r).map_err(|e| {
+                        ErrorData::invalid_params(format!("invalid rank: {e}"), None)
+                    })?),
+                    None => None,
+                };
+                let patch = ProposalPatch {
+                    title: a.title,
+                    summary: a.summary,
+                    status: a.status,
+                    rank,
+                    pinned: a.pinned,
+                    archived: a.archived,
+                    tags: a.tags,
+                };
+                match repo::update_proposal(&self.pool, a.node_id, patch).await {
                     Ok(()) => ok_json(json!({ "ok": true })),
                     Err(e) => Ok(to_err(e)),
                 }

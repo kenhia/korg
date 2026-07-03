@@ -16,6 +16,10 @@ covers:
   launch links for URL fields.
 - **Link Up** — relate any node to any other across kinds via the generalized
   `relationship` edge.
+- **Planning** — the agent-planning queue: `sprint_proposal` nodes (a title +
+  summary bundled with the work items they cover), drag-orderable by rank,
+  with pin-to-top. Start/Decline/Done buttons drive the status lifecycle; a
+  copy icon copies a `/start-sprint korg:<node_id>` prompt.
 
 ## REST API
 
@@ -51,6 +55,9 @@ rooted at `/api`. Responses are JSON.
 | `POST   /api/relationships`            | Create a generalized relationship.   |
 | `DELETE /api/relationships/:id`        | Delete a relationship.               |
 | `GET    /api/nodes/:id/neighbors`      | List a node's related neighbors.     |
+| `GET    /api/proposals`                | List sprint proposals (optional `status` filter). |
+| `POST   /api/proposals`                | Propose a sprint: title + summary + covered `work_item_numbers` in one call. |
+| `PATCH  /api/proposals/:node_id`       | Update a proposal (status, rank, pinned, archive). |
 
 Example:
 
@@ -73,8 +80,8 @@ http://<host>:8090/mcp
 ```
 
 It exposes tools for work items, cards, reading-list links, generalized
-cross-kind relationships, and calendar timebox slots, backed directly by
-`korg-core`.
+cross-kind relationships, calendar timebox slots, and agent-planning sprint
+proposals, backed directly by `korg-core`.
 
 List the available tools with a raw request:
 
@@ -96,6 +103,10 @@ any other through a single generalized `relationship` edge:
 - **card** — kanban card (status, rank, tags).
 - **link** — reading-list URL.
 - **slot** — calendar timebox slot.
+- **sprint_proposal** — an agent-planning proposal (title, summary, status,
+  drag-orderable `rank`, `pinned`); covers work items via the same
+  `relationship` mechanism, label `covers`, rather than a dedicated join
+  table.
 
 Cross-cutting attributes (project, category, tags, archived, timestamps) live on
 `node`. Projects are a unified taxonomy; areas stay project-scoped; tags and
