@@ -9,7 +9,7 @@ use anyhow::Result;
 use rust_decimal::Decimal;
 use serde::Serialize;
 use sqlx::{PgPool, Row};
-use time::OffsetDateTime;
+use time::{Date, OffsetDateTime};
 
 // --- work items -----------------------------------------------------------
 
@@ -47,10 +47,11 @@ pub async fn create_work_item(pool: &PgPool, new: NewWorkItem) -> Result<WorkIte
     .await?
     .get("id");
 
+    // Since 0009_identity, wi_number IS the node id — one number everywhere.
     let wi_number: i64 = sqlx::query(
         "INSERT INTO workitem \
-         (node_id, area_id, wi_type, wi_status, wi_tshirt, sprint, title, content, details) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING wi_number",
+         (node_id, wi_number, area_id, wi_type, wi_status, wi_tshirt, sprint, title, content, details) \
+         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING wi_number",
     )
     .bind(node_id)
     .bind(new.area_id)
@@ -862,4 +863,205 @@ pub async fn update_work_item(pool: &PgPool, wi_number: i64, patch: WorkItemPatc
 
     tx.commit().await?;
     Ok(())
+}
+
+// --- daily reports (kmon et al.) --------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct NewReport {
+    pub source: String,
+    pub report_date: time::Date,
+    pub status: String,
+    pub summary: String,
+    pub body: String,
+    pub model: Option<String>,
+    pub escalated: bool,
+    /// wi_numbers of finding work items; numbers that don't resolve are dropped.
+    pub findings: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReportRef {
+    pub node_id: i64,
+    pub replaced: bool,
+    pub findings_linked: Vec<i64>,
+}
+
+/// Create or replace the report for (source, report_date). A same-day re-run
+/// updates content in place and KEEPS the node_id, so relationships and
+/// comments survive. Finding edges (label 'finding') are added idempotently.
+pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
+    let mut resolved = Vec::with_capacity(new.findings.len());
+    for wi in &new.findings {
+        if let Some(n) = node_id_for_wi(pool, *wi).await? {
+            resolved.push(n);
+        }
+    }
+
+    let mut tx = pool.begin().await?;
+    let existing: Option<i64> = sqlx::query(
+        "SELECT node_id FROM report WHERE source = $1 AND report_date = $2",
+    )
+    .bind(&new.source)
+    .bind(new.report_date)
+    .fetch_optional(&mut *tx)
+    .await?
+    .map(|r| r.get("node_id"));
+
+    let (node_id, replaced) = match existing {
+        Some(id) => {
+            sqlx::query(
+                "UPDATE report SET status = $2, summary = $3, body = $4, model = $5, \
+                 escalated = $6 WHERE node_id = $1",
+            )
+            .bind(id)
+            .bind(&new.status)
+            .bind(&new.summary)
+            .bind(&new.body)
+            .bind(&new.model)
+            .bind(new.escalated)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("UPDATE node SET updated = now() WHERE id = $1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            (id, true)
+        }
+        None => {
+            let id: i64 =
+                sqlx::query("INSERT INTO node (kind) VALUES ('report') RETURNING id")
+                    .fetch_one(&mut *tx)
+                    .await?
+                    .get("id");
+            sqlx::query(
+                "INSERT INTO report \
+                 (node_id, source, report_date, status, summary, body, model, escalated) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            )
+            .bind(id)
+            .bind(&new.source)
+            .bind(new.report_date)
+            .bind(&new.status)
+            .bind(&new.summary)
+            .bind(&new.body)
+            .bind(&new.model)
+            .bind(new.escalated)
+            .execute(&mut *tx)
+            .await?;
+            (id, false)
+        }
+    };
+
+    for &target in &resolved {
+        let (lo, hi) = if node_id <= target { (node_id, target) } else { (target, node_id) };
+        sqlx::query(
+            "INSERT INTO relationship (left_id, right_id, relationship) \
+             VALUES ($1, $2, 'finding') \
+             ON CONFLICT (left_id, right_id, relationship) DO UPDATE SET left_id = relationship.left_id",
+        )
+        .bind(lo)
+        .bind(hi)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(ReportRef { node_id, replaced, findings_linked: resolved })
+}
+
+time::serde::format_description!(report_date_fmt, Date, "[year]-[month]-[day]");
+
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct ReportRow {
+    pub node_id: i64,
+    pub source: String,
+    #[serde(with = "report_date_fmt")]
+    pub report_date: time::Date,
+    pub status: String,
+    pub summary: String,
+    pub model: Option<String>,
+    pub escalated: bool,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated: OffsetDateTime,
+}
+
+/// Newest first; summary fields only (the list view).
+pub async fn list_reports(
+    pool: &PgPool,
+    source: Option<&str>,
+    limit: i64,
+) -> Result<Vec<ReportRow>> {
+    let rows = sqlx::query_as::<_, ReportRow>(
+        "SELECT r.node_id, r.source, r.report_date, r.status, r.summary, r.model, \
+                r.escalated, n.updated \
+         FROM report r JOIN node n ON n.id = r.node_id \
+         WHERE ($1::text IS NULL OR r.source = $1) \
+         ORDER BY r.report_date DESC, r.source ASC LIMIT $2",
+    )
+    .bind(source)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReportFinding {
+    pub wi_number: i64,
+    pub title: String,
+    pub wi_status: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReportFull {
+    #[serde(flatten)]
+    pub row: ReportRow,
+    pub body: String,
+    pub findings: Vec<ReportFinding>,
+}
+
+/// One report with body + linked findings ('finding' edges to work items).
+pub async fn get_report(
+    pool: &PgPool,
+    node_id: i64,
+) -> Result<Option<ReportFull>> {
+    let Some(r) = sqlx::query(
+        "SELECT r.node_id, r.source, r.report_date, r.status, r.summary, r.model, \
+                r.escalated, r.body, n.updated \
+         FROM report r JOIN node n ON n.id = r.node_id WHERE r.node_id = $1",
+    )
+    .bind(node_id)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(None);
+    };
+    let findings = sqlx::query_as::<_, (i64, String, String)>(
+        "SELECT w.wi_number, w.title, w.wi_status \
+         FROM relationship rel \
+         JOIN workitem w ON w.node_id = CASE WHEN rel.left_id = $1 THEN rel.right_id ELSE rel.left_id END \
+         WHERE (rel.left_id = $1 OR rel.right_id = $1) AND rel.relationship = 'finding' \
+         ORDER BY w.wi_number",
+    )
+    .bind(node_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|(wi_number, title, wi_status)| ReportFinding { wi_number, title, wi_status })
+    .collect();
+    Ok(Some(ReportFull {
+        row: ReportRow {
+            node_id: r.get("node_id"),
+            source: r.get("source"),
+            report_date: r.get("report_date"),
+            status: r.get("status"),
+            summary: r.get("summary"),
+            model: r.get("model"),
+            escalated: r.get("escalated"),
+            updated: r.get("updated"),
+        },
+        body: r.get("body"),
+        findings,
+    }))
 }

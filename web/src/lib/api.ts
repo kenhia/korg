@@ -148,7 +148,31 @@ async function http<T>(method: string, path: string, body?: unknown): Promise<T>
   return (await res.json()) as T;
 }
 
+export interface ReportRow {
+  node_id: number;
+  source: string;
+  report_date: string;
+  status: "ok" | "attention" | "problem";
+  summary: string;
+  model: string | null;
+  escalated: boolean;
+  updated: string;
+}
+
+export interface ReportFull extends ReportRow {
+  body: string;
+  findings: { wi_number: number; title: string; wi_status: string }[];
+}
+
 export const api = {
+  // daily reports
+  reports: (source?: string) =>
+    http<ReportRow[]>(
+      "GET",
+      source ? `/api/reports?source=${encodeURIComponent(source)}` : "/api/reports",
+    ),
+  report: (node_id: number) => http<ReportFull>("GET", `/api/reports/${node_id}`),
+
   // projects
   projects: () => http<Project[]>("GET", "/api/projects"),
   recentProject: () => http<{ project: string | null }>("GET", "/api/projects/recent"),
