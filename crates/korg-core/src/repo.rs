@@ -9,7 +9,7 @@ use anyhow::Result;
 use rust_decimal::Decimal;
 use serde::Serialize;
 use sqlx::{PgPool, Row};
-use time::OffsetDateTime;
+use time::{Date, OffsetDateTime};
 
 // --- work items -----------------------------------------------------------
 
@@ -970,10 +970,13 @@ pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
     Ok(ReportRef { node_id, replaced, findings_linked: resolved })
 }
 
+time::serde::format_description!(report_date_fmt, Date, "[year]-[month]-[day]");
+
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
 pub struct ReportRow {
     pub node_id: i64,
     pub source: String,
+    #[serde(with = "report_date_fmt")]
     pub report_date: time::Date,
     pub status: String,
     pub summary: String,
