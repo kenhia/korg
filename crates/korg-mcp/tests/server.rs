@@ -44,7 +44,7 @@ async fn mcp_surface_end_to_end() {
     let server = KorgServer::new(pool);
 
     // Tool descriptors are stable.
-    assert_eq!(tools().len(), 29, "expected 29 tools");
+    assert_eq!(tools().len(), 32, "expected 32 tools");
 
     // Create a work item.
     let wi = body(

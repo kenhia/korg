@@ -59,6 +59,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/relationships/:id", delete(delete_relationship))
         .route("/api/nodes/:id/neighbors", get(neighbors))
         .route("/api/proposals", get(list_proposals).post(create_proposal))
+        .route("/api/reports", get(list_reports))
+        .route("/api/reports/:node_id", get(get_report))
         .route("/api/proposals/:node_id", patch(update_proposal))
         .with_state(state);
 
@@ -613,6 +615,27 @@ async fn delete_relationship(State(s): State<AppState>, Path(id): Path<i64>) -> 
 
 async fn neighbors(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
     Ok(Json(json!(repo::neighbors(&s.pool, id).await?)))
+}
+
+// --- daily reports ----------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ReportsQuery {
+    source: Option<String>,
+    limit: Option<i64>,
+}
+
+async fn list_reports(State(s): State<AppState>, Query(q): Query<ReportsQuery>) -> ApiResult {
+    Ok(Json(json!(
+        repo::list_reports(&s.pool, q.source.as_deref(), q.limit.unwrap_or(30)).await?
+    )))
+}
+
+async fn get_report(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
+    match repo::get_report(&s.pool, node_id).await? {
+        Some(r) => Ok(Json(json!(r))),
+        None => Err(ApiError(anyhow::anyhow!("no report with node_id {node_id}"))),
+    }
 }
 
 // --- sprint proposals (agent planning) -------------------------------------

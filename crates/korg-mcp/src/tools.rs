@@ -5,8 +5,8 @@
 
 use korg_core::repo::{
     self, create_card, create_link, create_proposal, create_work_item, list_cards, list_links,
-    list_projects, list_work_items, update_work_item, CardPatch, NewCard, NewLink, NewProposal,
-    NewWorkItem, ProposalPatch, WorkItemPatch,
+    list_projects, list_work_items, update_work_item, upsert_report, CardPatch, NewCard, NewLink,
+    NewProposal, NewReport, NewWorkItem, ProposalPatch, WorkItemPatch,
 };
 use korg_core::slots::{self, NewTemplateSlot};
 use rmcp::handler::server::ServerHandler;
@@ -199,6 +199,28 @@ pub fn tools() -> Vec<Tool> {
                 "category":{"type":["string","null"]},
                 "tags":tags
             }
+        })),
+        tool("create_report", "Create or replace the daily report for (source, report_date). Same-day re-runs REPLACE content but keep the node_id (links/comments survive). Optionally link finding work items (label 'finding').", json!({
+            "type":"object","additionalProperties":false,
+            "required":["source","report_date","status","summary","body"],
+            "properties":{
+                "source":{"type":"string","minLength":1,"description":"reporter id, e.g. 'kmon'"},
+                "report_date":{"type":"string","format":"date","description":"YYYY-MM-DD"},
+                "status":{"type":"string","enum":["ok","attention","problem"]},
+                "summary":{"type":"string","minLength":1,"description":"one-liner for the list view"},
+                "body":{"type":"string","description":"full markdown report"},
+                "model":{"type":["string","null"]},
+                "escalated":{"type":"boolean","default":false},
+                "finding_work_items":{"type":"array","items":{"type":"integer","format":"int64"},"default":[]}
+            }
+        })),
+        tool("list_reports", "List daily reports, newest first (summary fields only). Pass `source` to filter.", json!({
+            "type":"object","additionalProperties":false,
+            "properties":{"source":{"type":["string","null"]},"limit":{"type":"integer","default":30}}
+        })),
+        tool("get_report", "Fetch one report by node_id: full body plus linked finding work items.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id"],
+            "properties":{"node_id":id}
         })),
         tool("list_proposals", "List sprint proposals, pinned first then by rank (the drag order a user or agent left them in). Pass `status` to filter.", json!({
             "type":"object","additionalProperties":false,
@@ -508,6 +530,38 @@ struct SetSlotTemplateArgs {
 }
 
 #[derive(Deserialize)]
+struct CreateReportArgs {
+    source: String,
+    report_date: String,
+    status: String,
+    summary: String,
+    body: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    escalated: bool,
+    #[serde(default)]
+    finding_work_items: Vec<i64>,
+}
+
+#[derive(serde::Deserialize)]
+struct ListReportsArgs {
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default = "default_report_limit")]
+    limit: i64,
+}
+
+fn default_report_limit() -> i64 {
+    30
+}
+
+#[derive(serde::Deserialize)]
+struct GetReportArgs {
+    node_id: i64,
+}
+
+#[derive(serde::Deserialize)]
 struct ProposeSprintArgs {
     title: String,
     summary: String,
@@ -789,6 +843,45 @@ impl KorgServer {
                     .collect();
                 match slots::set_weekly_template(&self.pool, &rows).await {
                     Ok(()) => ok_json(json!({ "ok": true })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "create_report" => {
+                let a: CreateReportArgs = parse_args(args)?;
+                let fmt = time::macros::format_description!("[year]-[month]-[day]");
+                let report_date = time::Date::parse(&a.report_date, &fmt).map_err(|e| {
+                    ErrorData::invalid_params(format!("invalid report_date: {e}"), None)
+                })?;
+                let new = NewReport {
+                    source: a.source,
+                    report_date,
+                    status: a.status,
+                    summary: a.summary,
+                    body: a.body,
+                    model: a.model,
+                    escalated: a.escalated,
+                    findings: a.finding_work_items,
+                };
+                match upsert_report(&self.pool, new).await {
+                    Ok(r) => ok_json(json!({
+                        "node_id": r.node_id, "replaced": r.replaced,
+                        "findings_linked": r.findings_linked
+                    })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "list_reports" => {
+                let a: ListReportsArgs = parse_args(args)?;
+                match repo::list_reports(&self.pool, a.source.as_deref(), a.limit).await {
+                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "get_report" => {
+                let a: GetReportArgs = parse_args(args)?;
+                match repo::get_report(&self.pool, a.node_id).await {
+                    Ok(Some(v)) => ok_json(serde_json::to_value(v).unwrap()),
+                    Ok(None) => Ok(to_err(anyhow::anyhow!("no report with node_id {}", a.node_id))),
                     Err(e) => Ok(to_err(e)),
                 }
             }
