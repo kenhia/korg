@@ -57,7 +57,8 @@ async fn mcp_surface_end_to_end() {
             .expect("create_work_item"),
     );
     let wi_node = wi["node_id"].as_i64().unwrap();
-    assert_eq!(wi["wi_number"].as_i64(), Some(1));
+    // Since 0009_identity, wi_number IS the node id.
+    assert_eq!(wi["wi_number"].as_i64(), Some(wi_node));
 
     // List shows it.
     let items = body(&server.call("list_work_items", args(json!({}))).await.unwrap());

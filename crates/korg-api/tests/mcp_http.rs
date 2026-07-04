@@ -117,7 +117,9 @@ async fn mcp_http_end_to_end() {
     .await;
     assert_eq!(st, StatusCode::OK);
     let made = tool_payload(&created);
-    assert_eq!(made["wi_number"], 1, "first work item is serial #1: {made}");
+    // Since 0009_identity, wi_number IS the node id — one number everywhere.
+    assert_eq!(made["wi_number"], made["node_id"], "wi_number == node_id: {made}");
+    let _wi_number = made["wi_number"].as_i64().unwrap();
 
     // 4. tools/call list_work_items reflects the new item.
     let (st, listed) = rpc(

@@ -47,10 +47,11 @@ pub async fn create_work_item(pool: &PgPool, new: NewWorkItem) -> Result<WorkIte
     .await?
     .get("id");
 
+    // Since 0009_identity, wi_number IS the node id — one number everywhere.
     let wi_number: i64 = sqlx::query(
         "INSERT INTO workitem \
-         (node_id, area_id, wi_type, wi_status, wi_tshirt, sprint, title, content, details) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING wi_number",
+         (node_id, wi_number, area_id, wi_type, wi_status, wi_tshirt, sprint, title, content, details) \
+         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING wi_number",
     )
     .bind(node_id)
     .bind(new.area_id)

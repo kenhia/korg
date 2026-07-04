@@ -62,11 +62,12 @@ async fn import_smoke_counts_match_sources() {
     }
     assert_eq!(count(&korg, "project").await, names.len() as i64, "merged project count");
 
-    // wi_number sequence advanced to max+1 (next work item continues serial).
-    let next: i64 = sqlx::query("SELECT nextval('workitem_wi_number_seq')")
+    // 0009_identity: the single node sequence continues past the imported max
+    // (node ids ARE wi_numbers now).
+    let next: i64 = sqlx::query("SELECT nextval(pg_get_serial_sequence('node','id'))")
         .fetch_one(&korg)
         .await
         .expect("nextval")
         .get(0);
-    assert_eq!(next, report.max_wi_number + 1, "sequence should be max+1");
+    assert!(next > report.max_wi_number, "node sequence past imported max");
 }

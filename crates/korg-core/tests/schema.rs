@@ -67,7 +67,8 @@ async fn schema_applies_cleanly() {
             .get(0);
     assert!(enum_exists, "card_status enum should exist");
 
-    // The wi_number sequence exists (so future work items stay serial).
+    // Since 0009_identity the wi_number sequence is GONE — wi_number is assigned
+    // from node.id at insert, so the two can never diverge.
     let seq_exists: bool = sqlx::query(
         "SELECT EXISTS (SELECT 1 FROM information_schema.sequences \
          WHERE sequence_schema = 'public' AND sequence_name = 'workitem_wi_number_seq')",
@@ -76,7 +77,7 @@ async fn schema_applies_cleanly() {
     .await
     .expect("query sequence existence")
     .get(0);
-    assert!(seq_exists, "workitem_wi_number_seq should exist");
+    assert!(!seq_exists, "workitem_wi_number_seq should be dropped by 0009_identity");
 
     // The `link` node kind is accepted (and others still are).
     for kind in ["workitem", "card", "link", "slot"] {

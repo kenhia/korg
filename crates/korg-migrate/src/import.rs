@@ -100,14 +100,17 @@ pub async fn import(kwi: &KwiData, kcard: &KcardData, korg: &PgPool) -> Result<I
             .context("workitem references unknown kwi project")?;
         let korg_project_id = project_by_name[project_name];
 
+        // Since 0009_identity a workitem's node id IS its wi_number — import at
+        // the source number (docs reference #N); the node sequence is advanced below.
         let node_id: i64 = sqlx::query(
-            "INSERT INTO node (kind, project_id, archived, created, updated) \
-             VALUES ('workitem', $1, $2, $3, $4) RETURNING id",
+            "INSERT INTO node (id, kind, project_id, archived, created, updated) \
+             VALUES ($5, 'workitem', $1, $2, $3, $4) RETURNING id",
         )
         .bind(korg_project_id)
         .bind(w.archived)
         .bind(w.created)
         .bind(w.updated)
+        .bind(w.id as i64)
         .fetch_one(&mut *tx)
         .await
         .context("insert workitem node")?
@@ -152,15 +155,16 @@ pub async fn import(kwi: &KwiData, kcard: &KcardData, korg: &PgPool) -> Result<I
         }
     }
 
-    // Keep wi_number serial going forward: next value = max + 1.
     let max_wi_number: i64 = kwi.workitems.iter().map(|w| w.id as i64).max().unwrap_or(0);
-    if max_wi_number > 0 {
-        sqlx::query("SELECT setval('workitem_wi_number_seq', $1, true)")
-            .bind(max_wi_number)
-            .execute(&mut *tx)
-            .await
-            .context("advance wi_number sequence")?;
-    }
+    // One sequence since 0009_identity: keep node ids serial past the imported
+    // wi_numbers (and anything else already inserted).
+    sqlx::query(
+        "SELECT setval(pg_get_serial_sequence('node','id'), \
+                GREATEST((SELECT COALESCE(MAX(id),1) FROM node), 1))",
+    )
+    .execute(&mut *tx)
+    .await
+    .context("advance node id sequence")?;
 
     // --- 4. Cards (node + card) ------------------------------------------
     let mut card_node: HashMap<i64, i64> = HashMap::new();

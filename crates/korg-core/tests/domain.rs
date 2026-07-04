@@ -3,7 +3,7 @@
 //! In a fresh korg DB: create a work item, a card, and a reading-list link;
 //! link work item <-> card and card <-> link; then prove the card's neighbors
 //! span both kinds with the right labels, the link round-trips, and the first
-//! work item is wi_number 1.
+//! work item's wi_number equals its node id (0009_identity).
 
 use korg_core::repo::{
     create_card, create_link, create_work_item, list_links, neighbors, NewCard, NewLink,
@@ -55,7 +55,8 @@ async fn domain_cross_kind_relationships_and_reading_list() {
     )
     .await
     .expect("create work item");
-    assert_eq!(wi.wi_number, 1, "first work item should be wi_number 1");
+    // Since 0009_identity, wi_number IS the node id — one number everywhere.
+    assert_eq!(wi.wi_number, wi.node_id, "wi_number == node_id");
 
     let card = create_card(
         &pool,

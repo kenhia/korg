@@ -72,12 +72,14 @@ async fn api_end_to_end() {
     )
     .await;
     assert_eq!(st, StatusCode::OK);
-    assert_eq!(wi["wi_number"].as_i64(), Some(1));
+    // Since 0009_identity, wi_number IS the node id — assert the invariant, not a literal.
+    let wi_number = wi["wi_number"].as_i64().unwrap();
+    assert_eq!(wi["node_id"].as_i64(), Some(wi_number));
 
     let (_st, items) = req(&router, "GET", "/api/work-items", None).await;
     assert_eq!(items.as_array().unwrap().len(), 1);
 
-    let (_st, one) = req(&router, "GET", "/api/work-items/1", None).await;
+    let (_st, one) = req(&router, "GET", &format!("/api/work-items/{wi_number}"), None).await;
     assert_eq!(one["title"], "API done");
 
     // Cards list + move/rank in one PATCH.
@@ -237,12 +239,12 @@ async fn api_end_to_end() {
     let (st, _) = req(
         &router,
         "PATCH",
-        "/api/work-items/1",
+        &format!("/api/work-items/{wi_number}"),
         Some(json!({"wi_status":"resolved","archived":true,"tags":["edited"]})),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
-    let (_st, one) = req(&router, "GET", "/api/work-items/1", None).await;
+    let (_st, one) = req(&router, "GET", &format!("/api/work-items/{wi_number}"), None).await;
     assert_eq!(one["wi_status"], "resolved");
     assert_eq!(one["archived"], true);
     assert_eq!(one["tags"][0], "edited");

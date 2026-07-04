@@ -93,9 +93,6 @@ async fn main() -> Result<()> {
         sqlx::query("TRUNCATE node, project, area RESTART IDENTITY CASCADE")
             .execute(&korg)
             .await?;
-        sqlx::query("ALTER SEQUENCE workitem_wi_number_seq RESTART WITH 1")
-            .execute(&korg)
-            .await?;
     }
 
     let report = import(&kwi, &kcard, &korg).await.context("import")?;

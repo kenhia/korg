@@ -202,13 +202,21 @@ async fn import_is_faithful_to_sources() {
         assert_eq!(k.parent_wi, w.parent_id.map(|p| p as i64), "F7 parent wi {}", w.id);
     }
 
-    // F2: sequence advanced to max+1.
-    let next: i64 = sqlx::query("SELECT nextval('workitem_wi_number_seq')")
+    // F2 (0009_identity): node ids ARE wi_numbers — every imported workitem is
+    // aligned, and the single node sequence continues past the imported max.
+    let misaligned: i64 =
+        sqlx::query("SELECT COUNT(*) FROM workitem WHERE node_id <> wi_number")
+            .fetch_one(&korg)
+            .await
+            .expect("alignment count")
+            .get(0);
+    assert_eq!(misaligned, 0, "F2 every imported workitem has node_id == wi_number");
+    let next: i64 = sqlx::query("SELECT nextval(pg_get_serial_sequence('node','id'))")
         .fetch_one(&korg)
         .await
         .expect("nextval")
         .get(0);
-    assert_eq!(next, report.max_wi_number + 1, "F2 sequence max+1");
+    assert!(next > report.max_wi_number, "F2 node sequence past imported max");
 
     // ---- F3: cards (positional match) ----------------------------------
     let card_rows = sqlx::query_as::<_, KorgCard>(
