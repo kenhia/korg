@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { api, WI_TYPES, WI_STATUSES, TSHIRTS, type WorkItem } from "$lib/api";
 
   let {
@@ -15,7 +16,10 @@
     onCancel: () => void;
   } = $props();
 
-  const seed = editItem; // snapshot for one-time field init (form remounts per item)
+  // Snapshot for one-time field init (the form remounts per item, so it never
+  // needs to react to editItem changing in place). untrack signals that the
+  // single read is intentional.
+  const seed = untrack(() => editItem);
   const isEdit = seed !== null;
 
   let title = $state(seed?.title ?? "");

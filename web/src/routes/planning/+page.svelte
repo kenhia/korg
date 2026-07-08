@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { dndzone, type DndEvent } from "svelte-dnd-action";
   import { api, type Proposal, type WorkItem } from "$lib/api";
-  import { renderMarkdown } from "$lib/markdown";
+  import NodePreview from "$lib/components/NodePreview.svelte";
 
   type DndItem = { id: number; proposal: Proposal };
   type Covered = { wi_number: number; title: string };
@@ -13,8 +13,9 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
   let copiedId = $state<number | null>(null);
-  let previewWi = $state<WorkItem | null>(null);
-  let previewLoading = $state(false);
+  // Covered items are work items, whose node id equals their wi_number — pass
+  // it straight to the shared preview panel.
+  let previewNode = $state<number | null>(null);
   const flip = 150;
 
   let pinnedBuf = $state<DndItem[]>([]);
@@ -153,16 +154,8 @@
     if (!ok) throw new Error("Copy failed — clipboard access is unavailable in this context.");
   }
 
-  async function openPreview(wi_number: number) {
-    previewWi = null;
-    previewLoading = true;
-    try {
-      previewWi = await api.workItem(wi_number);
-    } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
-    } finally {
-      previewLoading = false;
-    }
+  function openPreview(wi_number: number) {
+    previewNode = wi_number;
   }
 
   onMount(load);
@@ -268,38 +261,6 @@
   {/if}
 </section>
 
-{#if previewWi || previewLoading}
-  <div class="fixed inset-0 z-50 flex justify-end">
-    <button class="absolute inset-0 bg-black/60" aria-label="Close preview" onclick={() => (previewWi = null)}></button>
-    <div class="relative z-10 h-full w-full max-w-md overflow-auto border-l border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-xl" data-testid="wi-preview-panel">
-      <div class="mb-3 flex items-center justify-between">
-        <h2 class="text-lg font-semibold">Work item preview</h2>
-        <button class="rounded px-2 py-1 text-[var(--color-muted)] hover:bg-[var(--color-surface-hi)]" aria-label="Close" onclick={() => (previewWi = null)}>✕</button>
-      </div>
-      {#if previewLoading}
-        <p class="text-[var(--color-muted)]">Loading…</p>
-      {:else if previewWi}
-        <h3 class="text-base font-medium">#{previewWi.wi_number} {previewWi.title}</h3>
-        <div class="mt-2 flex flex-wrap gap-1 text-xs">
-          <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5">{previewWi.wi_type}</span>
-          <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5">{previewWi.wi_status}</span>
-          <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5">{previewWi.wi_tshirt}</span>
-          {#if previewWi.project}<span class="rounded bg-teal-900/60 px-1.5 py-0.5 text-teal-300">{previewWi.project}</span>{/if}
-          {#if previewWi.area}<span class="rounded bg-purple-800/80 px-1.5 py-0.5 text-white">{previewWi.area}</span>{/if}
-        </div>
-        <section class="mt-4">
-          <h4 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Content</h4>
-          <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
-          <div class="prose prose-invert max-w-none text-sm">{@html renderMarkdown(previewWi.content)}</div>
-        </section>
-        {#if previewWi.details}
-          <section class="mt-4">
-            <h4 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Details</h4>
-            <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
-            <div class="prose prose-invert max-w-none rounded p-2 text-sm" style="background: color-mix(in oklch, var(--color-surface) 75%, var(--color-accent) 25%)">{@html renderMarkdown(previewWi.details)}</div>
-          </section>
-        {/if}
-      {/if}
-    </div>
-  </div>
+{#if previewNode != null}
+  <NodePreview nodeId={previewNode} onClose={() => (previewNode = null)} />
 {/if}

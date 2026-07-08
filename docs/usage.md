@@ -55,6 +55,7 @@ rooted at `/api`. Responses are JSON.
 | `PUT    /api/slot-templates`           | Replace slot templates.              |
 | `POST   /api/relationships`            | Create a generalized relationship.   |
 | `DELETE /api/relationships/:id`        | Delete a relationship.               |
+| `GET    /api/nodes/:id`                | Kind-agnostic preview of any node by id (powers find-by-ID + the preview panel); `null` if none. |
 | `GET    /api/nodes/:id/neighbors`      | List a node's related neighbors.     |
 | `GET    /api/proposals`                | List sprint proposals (optional `status` filter). |
 | `POST   /api/proposals`                | Propose a sprint: title + summary + covered `work_item_numbers` in one call. |

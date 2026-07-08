@@ -26,7 +26,7 @@
 </script>
 
 <div class="min-h-screen">
-  <header class="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+  <header class="sticky top-0 z-40 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
     <nav class="mx-auto flex max-w-5xl items-center gap-1 px-4 py-2">
       <a href="/" class="mr-4 text-lg font-semibold tracking-tight text-[var(--color-accent)]">korg</a>
       {#each nav as item (item.href)}

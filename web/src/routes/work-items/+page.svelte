@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import {
     api,
     WI_TYPES,
@@ -12,6 +12,7 @@
   import { renderMarkdown } from "$lib/markdown";
   import MultiSelectFilter from "$lib/components/MultiSelectFilter.svelte";
   import WorkItemForm from "$lib/components/WorkItemForm.svelte";
+  import NodePreview from "$lib/components/NodePreview.svelte";
   import Comments from "$lib/components/Comments.svelte";
 
   const ALL = "\u0000all";
@@ -60,6 +61,15 @@
   let relAdding = $state(false);
   let relTarget = $state("");
   let relLabel = $state("related-to");
+
+  // WI #260 — find any node by id. A work item resolves to a navigate +
+  // highlight (jump to its project, flash the row); any other kind opens the
+  // shared preview panel. forceShow keeps the jumped-to row visible even when
+  // the current filters (e.g. "hide closed") would otherwise drop it.
+  let findId = $state("");
+  let previewNode = $state<number | null>(null);
+  let flashWi = $state<number | null>(null);
+  let forceShow = $state<Set<number>>(new Set());
 
   // filters
   let search = $state("");
@@ -136,6 +146,7 @@
 
   const filtered = $derived(
     items.filter((it) => {
+      if (forceShow.has(it.wi_number)) return true; // a find-by-ID jump always shows its target
       if (!showArchived && it.archived) return false;
       if (!fTypes.has(it.wi_type)) return false;
       if (!fStatuses.has(it.wi_status) && !(quickEdit && quickEditKeep.has(it.wi_number))) return false;
@@ -167,8 +178,49 @@
   async function loadItems() {
     items = await api.workItems(current === ALL ? undefined : current);
     currentAreas = current === ALL ? [] : await api.areas(current).catch(() => []);
+    forceShow = new Set();
     resetFilters();
     cursor = filtered[0]?.wi_number ?? null;
+  }
+
+  // WI #260 — resolve the entered id and either jump to the work item or open
+  // the preview panel for any other node kind.
+  async function findById() {
+    const id = parseInt(findId.trim(), 10);
+    if (!Number.isFinite(id)) return;
+    let node;
+    try {
+      node = await api.node(id);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      return;
+    }
+    if (!node) {
+      error = `No node with id ${id}.`;
+      return;
+    }
+    error = null;
+    if (node.kind === "workitem" && node.wi_number != null) {
+      findId = "";
+      await gotoWorkItem(node.wi_number, node.project);
+    } else {
+      previewNode = id;
+    }
+  }
+
+  async function gotoWorkItem(wi: number, project: string | null) {
+    const target = project ?? ALL;
+    detail = null;
+    creating = false;
+    if (target !== current) await pick(target);
+    forceShow = new Set([wi]);
+    cursor = wi;
+    flashWi = wi;
+    await tick();
+    document.getElementById(`wi-row-${wi}`)?.scrollIntoView({ block: "center" });
+    setTimeout(() => {
+      if (flashWi === wi) flashWi = null;
+    }, 2200);
   }
 
   async function load() {
@@ -311,7 +363,21 @@
 <svelte:window onkeydown={onKey} />
 
 <section class="space-y-4">
-  <h1 class="text-xl font-semibold">Work items</h1>
+  <div class="flex flex-wrap items-center justify-between gap-2">
+    <h1 class="text-xl font-semibold">Work items</h1>
+    <div class="flex items-center gap-1" title="Jump to a work item, or preview any node, by its id">
+      <input
+        class="w-32 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none"
+        placeholder="find by ID…"
+        inputmode="numeric"
+        bind:value={findId}
+        onkeydown={(e) => e.key === "Enter" && findById()}
+      />
+      <button
+        class="rounded bg-[var(--color-accent-soft)] px-2 py-1 text-sm hover:bg-[var(--color-accent)]"
+        onclick={findById}>Go</button>
+    </div>
+  </div>
 
   {#if error}
     <p class="rounded bg-red-950 px-3 py-2 text-sm text-red-300">{error}</p>
@@ -374,6 +440,10 @@
     </div>
   {/if}
 </section>
+
+{#if previewNode != null}
+  <NodePreview nodeId={previewNode} onClose={() => (previewNode = null)} />
+{/if}
 
 {#snippet badge(text: string)}
   <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs">{text}</span>
@@ -448,8 +518,12 @@
         <tbody>
           {#each filtered as item (item.wi_number)}
             <tr
+              id={`wi-row-${item.wi_number}`}
               class="cursor-pointer border-t border-[var(--color-border)] hover:bg-[var(--color-surface-hi)]"
               class:bg-[var(--color-surface-hi)]={item.wi_number === cursor}
+              class:ring-2={item.wi_number === flashWi}
+              class:ring-inset={item.wi_number === flashWi}
+              class:ring-[var(--color-accent)]={item.wi_number === flashWi}
               class:opacity-55={item.archived}
               class:italic={item.archived}
               tabindex="0"

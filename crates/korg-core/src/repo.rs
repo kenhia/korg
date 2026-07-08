@@ -283,6 +283,205 @@ pub async fn unrelate(pool: &PgPool, id: i64) -> Result<()> {
     Ok(())
 }
 
+// --- cross-kind node preview (WI #260) -------------------------------------
+
+/// A label/value metadata row in a node preview (e.g. "Area" → "ui").
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct NodeField {
+    pub label: String,
+    pub value: String,
+}
+
+/// A uniform, kind-agnostic preview of any node, used by the "find by ID"
+/// search + preview panel: enough to identify and read an item without knowing
+/// its kind up front. `wi_number` is `Some` only for work items (where it
+/// equals the node id) — the UI navigates to those rather than previewing.
+/// `body`/`details` are markdown; `badges` are short status chips; `fields`
+/// are label/value metadata rows.
+#[derive(Debug, Clone, Serialize)]
+pub struct NodePreview {
+    pub node_id: i64,
+    pub kind: String,
+    pub wi_number: Option<i64>,
+    pub title: String,
+    pub project: Option<String>,
+    pub tags: Vec<String>,
+    pub archived: bool,
+    pub badges: Vec<String>,
+    pub fields: Vec<NodeField>,
+    pub body: Option<String>,
+    pub body_label: Option<String>,
+    pub details: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated: OffsetDateTime,
+}
+
+fn field(label: &str, value: impl Into<String>) -> NodeField {
+    NodeField { label: label.into(), value: value.into() }
+}
+
+/// Resolve any node id to a uniform preview, dispatching on its kind. Returns
+/// `None` if no node has that id. Dates are read as `YYYY-MM-DD` text so the
+/// payload needs no client-side date parsing.
+pub async fn get_node_preview(pool: &PgPool, id: i64) -> Result<Option<NodePreview>> {
+    let base = sqlx::query(
+        "SELECT n.kind, pj.name AS project, n.tags, n.archived, n.created, n.updated \
+         FROM node n LEFT JOIN project pj ON pj.id = n.project_id \
+         WHERE n.id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    let Some(base) = base else { return Ok(None) };
+
+    let kind: String = base.get("kind");
+    let mut p = NodePreview {
+        node_id: id,
+        kind: kind.clone(),
+        wi_number: None,
+        title: format!("{kind} #{id}"),
+        project: base.get("project"),
+        tags: base.get("tags"),
+        archived: base.get("archived"),
+        badges: Vec::new(),
+        fields: Vec::new(),
+        body: None,
+        body_label: None,
+        details: None,
+        created: base.get("created"),
+        updated: base.get("updated"),
+    };
+
+    match kind.as_str() {
+        "workitem" => {
+            if let Some(r) = sqlx::query(
+                "SELECT w.wi_number, w.wi_type, w.wi_status, w.wi_tshirt, w.sprint, \
+                        a.name AS area, w.title, w.content, w.details \
+                 FROM workitem w LEFT JOIN area a ON a.id = w.area_id \
+                 WHERE w.node_id = $1",
+            )
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            {
+                p.wi_number = Some(r.get("wi_number"));
+                p.title = r.get("title");
+                p.badges = vec![r.get("wi_type"), r.get("wi_status"), r.get("wi_tshirt")];
+                if let Some(area) = r.get::<Option<String>, _>("area") {
+                    p.fields.push(field("Area", area));
+                }
+                if let Some(sprint) = r.get::<Option<String>, _>("sprint") {
+                    p.fields.push(field("Sprint", sprint));
+                }
+                p.body = Some(r.get("content"));
+                p.body_label = Some("Content".into());
+                p.details = r.get("details");
+            }
+        }
+        "card" => {
+            if let Some(r) = sqlx::query(
+                "SELECT status::text AS status, title, description FROM card WHERE node_id = $1",
+            )
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            {
+                p.title = r.get("title");
+                p.badges = vec![r.get("status")];
+                let desc: String = r.get("description");
+                if !desc.trim().is_empty() {
+                    p.body = Some(desc);
+                    p.body_label = Some("Description".into());
+                }
+            }
+        }
+        "link" => {
+            if let Some(r) = sqlx::query(
+                "SELECT url, title, read, disposition::text AS disposition FROM link WHERE node_id = $1",
+            )
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            {
+                let url: String = r.get("url");
+                p.title = r.get::<Option<String>, _>("title").unwrap_or_else(|| url.clone());
+                p.badges = vec![
+                    r.get("disposition"),
+                    if r.get::<bool, _>("read") { "read".into() } else { "unread".into() },
+                ];
+                p.fields.push(field("URL", url));
+            }
+        }
+        "report" => {
+            if let Some(r) = sqlx::query(
+                "SELECT source, to_char(report_date, 'YYYY-MM-DD') AS report_date, status, \
+                        summary, body, model, escalated \
+                 FROM report WHERE node_id = $1",
+            )
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            {
+                let source: String = r.get("source");
+                let date: String = r.get("report_date");
+                p.title = format!("{source} — {date}");
+                p.badges = vec![r.get("status")];
+                if r.get::<bool, _>("escalated") {
+                    p.badges.push("escalated".into());
+                }
+                if let Some(model) = r.get::<Option<String>, _>("model") {
+                    p.fields.push(field("Model", model));
+                }
+                p.fields.push(field("Summary", r.get::<String, _>("summary")));
+                p.body = Some(r.get("body"));
+                p.body_label = Some("Report".into());
+            }
+        }
+        "sprint_proposal" => {
+            if let Some(r) = sqlx::query(
+                "SELECT title, summary, status::text AS status, pinned \
+                 FROM sprint_proposal WHERE node_id = $1",
+            )
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            {
+                p.title = r.get("title");
+                p.badges = vec![r.get("status")];
+                if r.get::<bool, _>("pinned") {
+                    p.badges.push("pinned".into());
+                }
+                p.body = Some(r.get("summary"));
+                p.body_label = Some("Summary".into());
+            }
+        }
+        "slot" => {
+            if let Some(r) = sqlx::query(
+                "SELECT to_char(slot_date, 'YYYY-MM-DD') AS slot_date, duration_minutes, \
+                        label, goal FROM slot WHERE node_id = $1",
+            )
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            {
+                let date: String = r.get("slot_date");
+                p.title = r.get::<Option<String>, _>("label").unwrap_or_else(|| format!("Slot {date}"));
+                p.fields.push(field("Date", date));
+                p.fields.push(field("Duration", format!("{} min", r.get::<i32, _>("duration_minutes"))));
+                if let Some(goal) = r.get::<Option<String>, _>("goal") {
+                    p.body = Some(goal);
+                    p.body_label = Some("Goal".into());
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(Some(p))
+}
+
 // --- read views -----------------------------------------------------------
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
