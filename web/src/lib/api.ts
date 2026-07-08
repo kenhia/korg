@@ -96,6 +96,34 @@ export interface PlanResponse {
   edges: [number, number][];
 }
 
+/** One label/value metadata row in a node preview. */
+export interface NodeField {
+  label: string;
+  value: string;
+}
+
+/**
+ * Kind-agnostic preview of any node (WI #260). `wi_number` is set only for
+ * work items (it equals node_id) — the UI navigates to those instead of
+ * previewing. `body`/`details` are markdown.
+ */
+export interface NodePreview {
+  node_id: number;
+  kind: string;
+  wi_number: number | null;
+  title: string;
+  project: string | null;
+  tags: string[];
+  archived: boolean;
+  badges: string[];
+  fields: NodeField[];
+  body: string | null;
+  body_label: string | null;
+  details: string | null;
+  created: string;
+  updated: string;
+}
+
 export const PROPOSAL_STATUSES = ["proposed", "active", "done", "declined"] as const;
 export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 
@@ -270,6 +298,7 @@ export const api = {
     http<{ id: number }>("POST", "/api/relationships", { left, right, label }),
   unrelate: (id: number) => http<{ ok: true }>("DELETE", `/api/relationships/${id}`),
   neighbors: (id: number) => http<Neighbor[]>("GET", `/api/nodes/${id}/neighbors`),
+  node: (id: number) => http<NodePreview | null>("GET", `/api/nodes/${id}`),
   plan: (project: string) => http<PlanResponse>("GET", `/api/projects/${encodeURIComponent(project)}/plan`),
 
   // sprint proposals (agent planning)

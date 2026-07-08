@@ -6,7 +6,6 @@
   let workItems = $state<WorkItem[]>([]);
   let links = $state<Link[]>([]);
   let projects = $state<Project[]>([]);
-  let loading = $state(true);
 
   // Filters
   const ALL = "\u0000all";
@@ -79,14 +78,12 @@
   }
 
   async function load() {
-    loading = true;
     [cards, workItems, links, projects] = await Promise.all([
       api.cards().catch(() => []),
       api.workItems().catch(() => []),
       api.links().catch(() => []),
       api.projects().catch(() => []),
     ]);
-    loading = false;
   }
 
   onMount(load);

@@ -1,6 +1,6 @@
 // Extract unique http(s) URLs from free text (markdown or plain), preserving
 // first-seen order. Used to surface clickable launch links in edit panels.
-const URL_RE = /https?:\/\/[^\s<>()\[\]"'`]+/gi;
+const URL_RE = /https?:\/\/[^\s<>()[\]"'`]+/gi;
 
 // Trailing punctuation that is almost never part of the URL itself.
 const TRAILING = /[.,;:!?)>\]}'"]+$/;

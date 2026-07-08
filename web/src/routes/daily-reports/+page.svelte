@@ -1,12 +1,16 @@
 <script lang="ts">
   import { api, type ReportFull, type ReportRow } from "$lib/api";
   import Comments from "$lib/components/Comments.svelte";
+  import NodePreview from "$lib/components/NodePreview.svelte";
   import { renderMarkdown } from "$lib/markdown";
 
   let rows = $state<ReportRow[]>([]);
   let expanded = $state<Set<number>>(new Set());
   let full = $state<Record<number, ReportFull>>({});
   let error = $state<string | null>(null);
+  // Findings open the shared preview panel (WI #231) rather than navigating
+  // away. A finding is a work item, so its node id equals its wi_number.
+  let previewNode = $state<number | null>(null);
 
   const statusStyle: Record<string, string> = {
     ok: "bg-emerald-900/40 text-emerald-300 border-emerald-700",
@@ -103,9 +107,13 @@
                 <ul class="space-y-1">
                   {#each f.findings as w (w.wi_number)}
                     <li class="text-sm">
-                      <a class="text-[var(--color-accent)] hover:underline" href="/work-items?wi={w.wi_number}">
+                      <button
+                        class="text-[var(--color-accent)] hover:underline"
+                        title={`Preview #${w.wi_number}`}
+                        onclick={() => (previewNode = w.wi_number)}
+                      >
                         #{w.wi_number}
-                      </a>
+                      </button>
                       {w.title}
                       <span class="text-xs text-[var(--color-muted)]">({w.wi_status})</span>
                     </li>
@@ -125,3 +133,7 @@
     </li>
   {/each}
 </ul>
+
+{#if previewNode != null}
+  <NodePreview nodeId={previewNode} onClose={() => (previewNode = null)} />
+{/if}

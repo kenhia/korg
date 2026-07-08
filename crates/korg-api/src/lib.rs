@@ -47,6 +47,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/areas", get(list_areas).post(create_area))
         .route("/api/cards", get(list_cards).post(create_card))
         .route("/api/cards/:node_id", patch(update_card))
+        .route("/api/nodes/:id", get(get_node))
         .route("/api/nodes/:node_id/comments", get(list_comments).post(add_comment))
         .route("/api/comments/:id", delete(delete_comment))
         .route("/api/links", get(list_links).post(create_link))
@@ -68,14 +69,22 @@ pub fn build_router(state: AppState) -> Router {
     let api = api.route_service("/mcp", mcp);
 
     let router = match web_dir() {
-        Some(dir) => {
-            let index = dir.join("index.html");
-            let serve = ServeDir::new(&dir).not_found_service(ServeFile::new(index));
-            api.fallback_service(serve)
-        }
+        Some(dir) => spa_fallback(api, &dir),
         None => api,
     };
     router.layer(TraceLayer::new_for_http()).layer(cors_layer())
+}
+
+/// Serve the SPA bundle from `dir`: real files (assets, favicon, index) come
+/// straight off disk; anything else falls back to `index.html` so the client
+/// router can take over. WI #284 — the fallback MUST use `ServeDir::fallback`,
+/// not `not_found_service`: the latter serves the shell body but stamps the
+/// upstream 404 onto it, so deep links / bookmarks (e.g. /plan) load the page
+/// with a 404 status. `fallback` preserves the shell's 200.
+fn spa_fallback(api: Router, dir: &std::path::Path) -> Router {
+    let index = dir.join("index.html");
+    let serve = ServeDir::new(dir).fallback(ServeFile::new(index));
+    api.fallback_service(serve)
 }
 
 /// Build the MCP server as a Streamable-HTTP Tower service mounted at `/mcp`.
@@ -618,6 +627,12 @@ async fn neighbors(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult 
     Ok(Json(json!(repo::neighbors(&s.pool, id).await?)))
 }
 
+/// Kind-agnostic preview of any node by its id (WI #260). Returns `null` when
+/// no node has that id, so the find-by-ID box can say "not found" cleanly.
+async fn get_node(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
+    Ok(Json(json!(repo::get_node_preview(&s.pool, id).await?)))
+}
+
 /// Plan view payload: a project's work items plus its `depends_on` edges
 /// ([left, right] = left depends on right). Frontier/blocked computation
 /// happens client-side — the full item set is already in the payload.
@@ -740,4 +755,59 @@ async fn update_proposal(
     )
     .await?;
     Ok(Json(json!({ "ok": true })))
+}
+
+#[cfg(test)]
+mod spa_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use axum::routing::get;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    // WI #284 regression: deep links must serve the SPA shell with a 200, not a
+    // 404. Exercises spa_fallback directly so it needs neither a DB nor env vars.
+    #[tokio::test]
+    async fn deep_links_serve_shell_with_200() {
+        let dir = std::env::temp_dir().join(format!("korg-spa-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("index.html"), "<!doctype html><title>KORG-SHELL</title>").unwrap();
+        std::fs::write(dir.join("favicon.png"), b"realbytes").unwrap();
+
+        let api = Router::new().route("/api/health", get(|| async { "ok" }));
+        let router = spa_fallback(api, &dir);
+
+        let hit = |path: &'static str| {
+            let router = router.clone();
+            async move {
+                let resp = router
+                    .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+                let status = resp.status();
+                let body = resp.into_body().collect().await.unwrap().to_bytes();
+                (status, String::from_utf8_lossy(&body).into_owned())
+            }
+        };
+
+        // Client-side routes fall back to the shell — with a 200, the whole point.
+        for path in ["/plan", "/planning", "/work-items"] {
+            let (status, body) = hit(path).await;
+            assert_eq!(status, StatusCode::OK, "{path} should be 200");
+            assert!(body.contains("KORG-SHELL"), "{path} should serve the shell");
+        }
+
+        // Real files are served from disk, not the shell.
+        let (status, body) = hit("/favicon.png").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "realbytes");
+
+        // API routes still win over the fallback.
+        let (status, body) = hit("/api/health").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(!body.contains("KORG-SHELL"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

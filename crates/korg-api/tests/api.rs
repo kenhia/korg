@@ -337,3 +337,48 @@ async fn survey_work_items_end_to_end() {
     let (_st, rest) = req(&router, "GET", "/api/work-items/survey?limit=2&offset=2", None).await;
     assert_eq!(rest["items"].as_array().unwrap().len(), 1);
 }
+
+// WI #260 — GET /api/nodes/:id resolves any node kind to a uniform preview.
+#[tokio::test]
+async fn node_preview_end_to_end() {
+    let (_c, router) = app().await;
+
+    // Work item: preview carries wi_number (== node id), title, badges, content.
+    let (_st, wi) = req(
+        &router,
+        "POST",
+        "/api/work-items",
+        Some(json!({"title":"Find me","content":"body text","wi_type":"bug"})),
+    )
+    .await;
+    let id = wi["node_id"].as_i64().unwrap();
+    let (st, node) = req(&router, "GET", &format!("/api/nodes/{id}"), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(node["kind"], "workitem");
+    assert_eq!(node["wi_number"].as_i64(), Some(id));
+    assert_eq!(node["title"], "Find me");
+    assert_eq!(node["body"], "body text");
+    let badges = node["badges"].as_array().unwrap();
+    assert!(badges.iter().any(|b| b == "bug"), "type shows as a badge");
+
+    // Card: different kind, no wi_number, description as the body.
+    let (_st, card) = req(
+        &router,
+        "POST",
+        "/api/cards",
+        Some(json!({"title":"A card","description":"desc","status":"Backlog"})),
+    )
+    .await;
+    let cid = card["node_id"].as_i64().unwrap();
+    let (st, cnode) = req(&router, "GET", &format!("/api/nodes/{cid}"), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(cnode["kind"], "card");
+    assert!(cnode["wi_number"].is_null());
+    assert_eq!(cnode["title"], "A card");
+    assert_eq!(cnode["body"], "desc");
+
+    // Unknown id resolves to null (200), so the UI can say "not found".
+    let (st, none) = req(&router, "GET", "/api/nodes/999999", None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(none.is_null());
+}
