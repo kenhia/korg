@@ -17,9 +17,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
-use korg_core::repo::{
-    self, CardPatch, NewCard, NewLink, NewProposal, NewWorkItem, ProposalPatch,
-};
+use korg_core::repo::{self, CardPatch, NewCard, NewLink, NewProposal, NewWorkItem, ProposalPatch};
 use korg_core::slots::{self, NewTemplateSlot};
 use korg_mcp::tools::KorgServer;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -41,25 +39,38 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/api/projects", get(list_projects).post(create_project))
         .route("/api/projects/recent", get(recent_project))
-        .route("/api/work-items", get(list_work_items).post(create_work_item))
+        .route(
+            "/api/work-items",
+            get(list_work_items).post(create_work_item),
+        )
         .route("/api/work-items/survey", get(survey_work_items))
-        .route("/api/work-items/:wi_number", get(get_work_item).patch(update_work_item))
+        .route(
+            "/api/work-items/:wi_number",
+            get(get_work_item).patch(update_work_item),
+        )
         .route("/api/areas", get(list_areas).post(create_area))
         .route("/api/cards", get(list_cards).post(create_card))
         .route("/api/cards/:node_id", patch(update_card))
         .route("/api/nodes/:id", get(get_node))
-        .route("/api/nodes/:node_id/comments", get(list_comments).post(add_comment))
-        .route("/api/comments/:id", delete(delete_comment))
+        .route(
+            "/api/nodes/:node_id/comments",
+            get(list_comments).post(add_comment),
+        )
+        .route("/api/comments/:id", delete(delete_comment).patch(update_comment))
         .route("/api/links", get(list_links).post(create_link))
         .route("/api/links/:node_id", patch(update_link))
         .route("/api/slots", get(list_slots))
         .route("/api/slots/generate", post(generate_slots))
         .route("/api/slots/:node_id", patch(update_slot))
-        .route("/api/slot-templates", get(list_slot_templates).put(set_slot_templates))
+        .route(
+            "/api/slot-templates",
+            get(list_slot_templates).put(set_slot_templates),
+        )
         .route("/api/relationships", post(create_relationship))
         .route("/api/relationships/:id", delete(delete_relationship))
         .route("/api/nodes/:id/neighbors", get(neighbors))
         .route("/api/projects/:name/plan", get(project_plan))
+        .route("/api/projects/:name", patch(update_project))
         .route("/api/proposals", get(list_proposals).post(create_proposal))
         .route("/api/reports", get(list_reports))
         .route("/api/reports/:node_id", get(get_report))
@@ -94,9 +105,7 @@ fn spa_fallback(api: Router, dir: &std::path::Path) -> Router {
 /// transport for a single-user tool and trivially testable with `curl`. Host
 /// validation is disabled because korg is reached over several hostnames
 /// (e.g. `kai`, `kubsdb`) on a trusted network — same posture as the REST API.
-fn mcp_service(
-    pool: Arc<PgPool>,
-) -> StreamableHttpService<KorgServer, LocalSessionManager> {
+fn mcp_service(pool: Arc<PgPool>) -> StreamableHttpService<KorgServer, LocalSessionManager> {
     let config = StreamableHttpServerConfig::default()
         .with_stateful_mode(false)
         .with_json_response(true)
@@ -165,7 +174,9 @@ async fn create_project(State(s): State<AppState>, Json(b): Json<CreateProject>)
 }
 
 async fn recent_project(State(s): State<AppState>) -> ApiResult {
-    Ok(Json(json!({ "project": repo::recent_project(&s.pool).await? })))
+    Ok(Json(
+        json!({ "project": repo::recent_project(&s.pool).await? }),
+    ))
 }
 
 // --- work items -----------------------------------------------------------
@@ -234,10 +245,18 @@ struct CreateWorkItem {
     #[serde(default)]
     tags: Vec<String>,
 }
-fn d_task() -> String { "task".into() }
-fn d_open() -> String { "open".into() }
-fn d_unknown() -> String { "Unknown".into() }
-fn d_backlog() -> String { "Backlog".into() }
+fn d_task() -> String {
+    "task".into()
+}
+fn d_open() -> String {
+    "open".into()
+}
+fn d_unknown() -> String {
+    "Unknown".into()
+}
+fn d_backlog() -> String {
+    "Backlog".into()
+}
 
 async fn create_work_item(State(s): State<AppState>, Json(b): Json<CreateWorkItem>) -> ApiResult {
     let r = repo::create_work_item(
@@ -257,7 +276,9 @@ async fn create_work_item(State(s): State<AppState>, Json(b): Json<CreateWorkIte
         },
     )
     .await?;
-    Ok(Json(json!({ "node_id": r.node_id, "wi_number": r.wi_number })))
+    Ok(Json(
+        json!({ "node_id": r.node_id, "wi_number": r.wi_number }),
+    ))
 }
 
 fn deser_nullable_str<'de, D>(d: D) -> Result<Option<Option<String>>, D::Error>
@@ -459,7 +480,62 @@ async fn add_comment(
     Path(node_id): Path<i64>,
     Json(b): Json<NewComment>,
 ) -> ApiResult {
-    Ok(Json(json!(repo::add_comment(&s.pool, node_id, &b.body).await?)))
+    Ok(Json(json!(
+        repo::add_comment(&s.pool, node_id, &b.body).await?
+    )))
+}
+
+#[derive(serde::Deserialize)]
+struct UpdateCommentBody {
+    body: String,
+}
+
+async fn update_comment(
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+    Json(b): Json<UpdateCommentBody>,
+) -> ApiResult {
+    Ok(Json(json!(repo::update_comment(&s.pool, id, &b.body).await?)))
+}
+
+#[derive(serde::Deserialize)]
+struct UpdateProjectBody {
+    #[serde(default)]
+    gh_repo: Option<Option<String>>,
+    #[serde(default)]
+    cn_path: Option<Option<String>>,
+    #[serde(default)]
+    description: Option<Option<String>>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    machines: Option<Vec<String>>,
+    #[serde(default)]
+    deploy_to: Option<Vec<String>>,
+    #[serde(default)]
+    category: Option<Option<String>>,
+}
+
+async fn update_project(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+    Json(b): Json<UpdateProjectBody>,
+) -> ApiResult {
+    repo::update_project_by_name(
+        &s.pool,
+        &name,
+        &repo::ProjectPatch {
+            gh_repo: b.gh_repo,
+            cn_path: b.cn_path,
+            description: b.description,
+            status: b.status,
+            machines: b.machines,
+            deploy_to: b.deploy_to,
+            category: b.category,
+        },
+    )
+    .await?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn delete_comment(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
@@ -659,7 +735,9 @@ async fn list_reports(State(s): State<AppState>, Query(q): Query<ReportsQuery>) 
 async fn get_report(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
     match repo::get_report(&s.pool, node_id).await? {
         Some(r) => Ok(Json(json!(r))),
-        None => Err(ApiError(anyhow::anyhow!("no report with node_id {node_id}"))),
+        None => Err(ApiError(anyhow::anyhow!(
+            "no report with node_id {node_id}"
+        ))),
     }
 }
 
@@ -772,7 +850,11 @@ mod spa_tests {
     async fn deep_links_serve_shell_with_200() {
         let dir = std::env::temp_dir().join(format!("korg-spa-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("index.html"), "<!doctype html><title>KORG-SHELL</title>").unwrap();
+        std::fs::write(
+            dir.join("index.html"),
+            "<!doctype html><title>KORG-SHELL</title>",
+        )
+        .unwrap();
         std::fs::write(dir.join("favicon.png"), b"realbytes").unwrap();
 
         let api = Router::new().route("/api/health", get(|| async { "ok" }));

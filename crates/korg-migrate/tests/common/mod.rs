@@ -20,7 +20,10 @@ pub struct Pg {
 
 impl Pg {
     pub fn url(&self, db: &str) -> String {
-        format!("postgres://postgres:postgres@127.0.0.1:{}/{}", self.port, db)
+        format!(
+            "postgres://postgres:postgres@127.0.0.1:{}/{}",
+            self.port, db
+        )
     }
 }
 

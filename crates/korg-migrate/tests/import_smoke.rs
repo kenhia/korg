@@ -34,7 +34,11 @@ async fn import_smoke_counts_match_sources() {
         kwi.workitems.len() as i64,
         "work item count"
     );
-    assert_eq!(count(&korg, "card").await, kcard.cards.len() as i64, "card count");
+    assert_eq!(
+        count(&korg, "card").await,
+        kcard.cards.len() as i64,
+        "card count"
+    );
     assert_eq!(
         count(&korg, "comment").await,
         kcard.comments.len() as i64,
@@ -50,7 +54,11 @@ async fn import_smoke_counts_match_sources() {
         (kwi.workitems.len() + kcard.cards.len()) as i64,
         "node count = work items + cards"
     );
-    assert_eq!(count(&korg, "area").await, kwi.areas.len() as i64, "area count");
+    assert_eq!(
+        count(&korg, "area").await,
+        kwi.areas.len() as i64,
+        "area count"
+    );
 
     // Projects merged by name: union of kwi projects and kcard card projects.
     let mut names: std::collections::HashSet<String> =
@@ -60,7 +68,11 @@ async fn import_smoke_counts_match_sources() {
             names.insert(p.clone());
         }
     }
-    assert_eq!(count(&korg, "project").await, names.len() as i64, "merged project count");
+    assert_eq!(
+        count(&korg, "project").await,
+        names.len() as i64,
+        "merged project count"
+    );
 
     // 0009_identity: the single node sequence continues past the imported max
     // (node ids ARE wi_numbers now).
@@ -69,5 +81,8 @@ async fn import_smoke_counts_match_sources() {
         .await
         .expect("nextval")
         .get(0);
-    assert!(next > report.max_wi_number, "node sequence past imported max");
+    assert!(
+        next > report.max_wi_number,
+        "node sequence past imported max"
+    );
 }

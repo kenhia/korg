@@ -64,7 +64,9 @@ pub async fn list_templates(pool: &PgPool) -> Result<Vec<TemplateSlot>> {
 /// free time changes.
 pub async fn set_weekly_template(pool: &PgPool, slots: &[NewTemplateSlot]) -> Result<()> {
     let mut tx = pool.begin().await?;
-    sqlx::query("DELETE FROM slot_template").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM slot_template")
+        .execute(&mut *tx)
+        .await?;
     for s in slots {
         sqlx::query(
             "INSERT INTO slot_template (dow, position, duration_minutes, label) \

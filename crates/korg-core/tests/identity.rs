@@ -14,11 +14,23 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("0001", include_str!("../migrations/0001_init.sql")),
     ("0002", include_str!("../migrations/0002_link.sql")),
     ("0003", include_str!("../migrations/0003_slot.sql")),
-    ("0004", include_str!("../migrations/0004_link_disposition.sql")),
+    (
+        "0004",
+        include_str!("../migrations/0004_link_disposition.sql"),
+    ),
     ("0005", include_str!("../migrations/0005_slot_unique.sql")),
-    ("0006", include_str!("../migrations/0006_relationship_unique.sql")),
-    ("0007", include_str!("../migrations/0007_comment_node_rename.sql")),
-    ("0008", include_str!("../migrations/0008_sprint_proposal.sql")),
+    (
+        "0006",
+        include_str!("../migrations/0006_relationship_unique.sql"),
+    ),
+    (
+        "0007",
+        include_str!("../migrations/0007_comment_node_rename.sql"),
+    ),
+    (
+        "0008",
+        include_str!("../migrations/0008_sprint_proposal.sql"),
+    ),
 ];
 const IDENTITY: &str = include_str!("../migrations/0009_identity.sql");
 
@@ -84,7 +96,10 @@ async fn identity_remap_preserves_edges() {
         .await
         .expect("card")
         .get("node_id");
-    assert!(card_id > 3, "squatter renumbered above the workitems, got {card_id}");
+    assert!(
+        card_id > 3,
+        "squatter renumbered above the workitems, got {card_id}"
+    );
 
     // edges followed: relationship now card_id <-> 1, comment on node 1, parent of wi#2 is 1
     let rel: (i64, i64) = sqlx::query("SELECT left_id, right_id FROM relationship")

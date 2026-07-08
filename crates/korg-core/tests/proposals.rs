@@ -84,15 +84,22 @@ async fn create_proposal_bundles_covers_edges() {
 #[tokio::test]
 async fn list_proposals_pinned_first_then_rank_and_status_filter() {
     let (_c, pool) = fresh_korg().await;
-    let low = create_proposal(&pool, proposal("low rank", 1, vec![])).await.unwrap();
-    let high = create_proposal(&pool, proposal("high rank", 5, vec![])).await.unwrap();
+    let low = create_proposal(&pool, proposal("low rank", 1, vec![]))
+        .await
+        .unwrap();
+    let high = create_proposal(&pool, proposal("high rank", 5, vec![]))
+        .await
+        .unwrap();
     let pinned = create_proposal(&pool, proposal("pinned but high rank", 9, vec![]))
         .await
         .unwrap();
     update_proposal(
         &pool,
         pinned.node_id,
-        ProposalPatch { pinned: Some(true), ..Default::default() },
+        ProposalPatch {
+            pinned: Some(true),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -104,12 +111,18 @@ async fn list_proposals_pinned_first_then_rank_and_status_filter() {
         vec![pinned.node_id, low.node_id, high.node_id],
         "pinned sorts first regardless of rank, then ascending rank"
     );
-    assert!(all.iter().all(|p| p.status == "proposed"), "default status is proposed");
+    assert!(
+        all.iter().all(|p| p.status == "proposed"),
+        "default status is proposed"
+    );
 
     update_proposal(
         &pool,
         low.node_id,
-        ProposalPatch { status: Some("active".into()), ..Default::default() },
+        ProposalPatch {
+            status: Some("active".into()),
+            ..Default::default()
+        },
     )
     .await
     .unwrap();
@@ -117,13 +130,19 @@ async fn list_proposals_pinned_first_then_rank_and_status_filter() {
     assert_eq!(active.len(), 1);
     assert_eq!(active[0].node_id, low.node_id);
     let still_proposed = list_proposals(&pool, Some("proposed")).await.unwrap();
-    assert_eq!(still_proposed.len(), 2, "status filter excludes the now-active one");
+    assert_eq!(
+        still_proposed.len(),
+        2,
+        "status filter excludes the now-active one"
+    );
 }
 
 #[tokio::test]
 async fn update_proposal_patches_only_given_fields() {
     let (_c, pool) = fresh_korg().await;
-    let p = create_proposal(&pool, proposal("draft", 0, vec![])).await.unwrap();
+    let p = create_proposal(&pool, proposal("draft", 0, vec![]))
+        .await
+        .unwrap();
 
     update_proposal(
         &pool,

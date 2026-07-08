@@ -25,7 +25,10 @@ async fn read_sources_matches_row_counts() {
     let kwi = read_kwi(&kwi_pool).await.expect("read kwi");
     assert_eq!(kwi.projects.len() as i64, count(&kwi_pool, "project").await);
     assert_eq!(kwi.areas.len() as i64, count(&kwi_pool, "area").await);
-    assert_eq!(kwi.workitems.len() as i64, count(&kwi_pool, "workitem").await);
+    assert_eq!(
+        kwi.workitems.len() as i64,
+        count(&kwi_pool, "workitem").await
+    );
     assert_eq!(kwi.related.len() as i64, count(&kwi_pool, "related").await);
 
     let kcard = read_kcard(&kcard_pool).await.expect("read kcard");
@@ -36,6 +39,9 @@ async fn read_sources_matches_row_counts() {
     );
 
     // Sanity: every source actually has data (guards against an empty restore).
-    assert!(!kwi.workitems.is_empty(), "kwi work items should be non-empty");
+    assert!(
+        !kwi.workitems.is_empty(),
+        "kwi work items should be non-empty"
+    );
     assert!(!kcard.cards.is_empty(), "kcard cards should be non-empty");
 }

@@ -70,7 +70,8 @@ async fn main() -> Result<()> {
     let korg_url = std::env::var("KORG_DATABASE_URL").context("KORG_DATABASE_URL is required")?;
     let admin_url =
         std::env::var("KORG_ADMIN_URL").unwrap_or_else(|_| swap_db(&korg_url, "postgres"));
-    let snap_dir = PathBuf::from(std::env::var("KORG_SNAPSHOTS").unwrap_or_else(|_| "snapshots".into()));
+    let snap_dir =
+        PathBuf::from(std::env::var("KORG_SNAPSHOTS").unwrap_or_else(|_| "snapshots".into()));
     let reset = std::env::args().any(|a| a == "--reset");
 
     eprintln!(">> restoring snapshots from {}", snap_dir.display());
@@ -83,11 +84,17 @@ async fn main() -> Result<()> {
     restore(&kcard_src, &snap_dir.join("kcard.dump"))?;
 
     eprintln!(">> reading sources");
-    let kwi = read_kwi(&connect(&kwi_src).await?).await.context("read kwi")?;
-    let kcard = read_kcard(&connect(&kcard_src).await?).await.context("read kcard")?;
+    let kwi = read_kwi(&connect(&kwi_src).await?)
+        .await
+        .context("read kwi")?;
+    let kcard = read_kcard(&connect(&kcard_src).await?)
+        .await
+        .context("read kcard")?;
 
     eprintln!(">> migrating + importing into korg");
-    let korg = korg_core::connect(&korg_url).await.context("connect korg")?;
+    let korg = korg_core::connect(&korg_url)
+        .await
+        .context("connect korg")?;
     if reset {
         eprintln!(">> --reset: clearing existing korg work items / cards / projects / areas");
         sqlx::query("TRUNCATE node, project, area RESTART IDENTITY CASCADE")

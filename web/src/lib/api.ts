@@ -1,12 +1,30 @@
 // Typed client for korg-api. In dev, Vite proxies /api -> korg-api; in prod
 // korg-api serves this bundle, so same-origin /api works directly.
 
+export const PROJECT_STATUSES = ["active", "maintenance", "inactive", "archived"] as const;
+export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
+
 export interface Project {
   id: number;
   name: string;
   gh_repo: string | null;
   cn_path: string | null;
   description: string | null;
+  status: ProjectStatus;
+  machines: string[];
+  deploy_to: string[];
+  category: string | null;
+}
+
+/** PATCH /api/projects/:name — everything but the name (WI #246). */
+export interface ProjectPatch {
+  gh_repo?: string | null;
+  cn_path?: string | null;
+  description?: string | null;
+  status?: ProjectStatus;
+  machines?: string[];
+  deploy_to?: string[];
+  category?: string | null;
 }
 
 export interface WorkItem {
@@ -153,7 +171,10 @@ export const WI_TYPES = [
   "epic",
   "story",
 ] as const;
-export const WI_STATUSES = ["open", "active", "resolved", "closed", "draft"] as const;
+// Canonical lifecycle (WI #285): open → resolved (implemented, may need a
+// user test / PR) → done (agent satisfied; terminal but listed by default)
+// → closed (Ken only; hidden by default). The server rejects other values.
+export const WI_STATUSES = ["open", "resolved", "done", "closed"] as const;
 export const TSHIRTS = ["XS", "S", "M", "L", "XL", "Huge", "Unknown"] as const;
 
 export interface Comment {
@@ -213,6 +234,8 @@ export const api = {
   projects: () => http<Project[]>("GET", "/api/projects"),
   recentProject: () => http<{ project: string | null }>("GET", "/api/projects/recent"),
   createProject: (name: string) => http<{ id: number; name: string }>("POST", "/api/projects", { name }),
+  updateProject: (name: string, patch: ProjectPatch) =>
+    http<{ ok: boolean }>("PATCH", `/api/projects/${encodeURIComponent(name)}`, patch),
 
   // work items
   workItems: (project?: string) =>
@@ -274,6 +297,8 @@ export const api = {
     http<Comment[]>("GET", `/api/nodes/${node_id}/comments`),
   addComment: (node_id: number, body: string) =>
     http<Comment>("POST", `/api/nodes/${node_id}/comments`, { body }),
+  updateComment: (id: number, body: string) =>
+    http<Comment>("PATCH", `/api/comments/${id}`, { body }),
   deleteComment: (id: number) => http<{ ok: true }>("DELETE", `/api/comments/${id}`),
 
   // reading-list links
