@@ -86,6 +86,14 @@ export interface Neighbor {
   node_id: number;
   kind: string;
   label: string;
+  /** "out" = queried node is the edge's left (label reads queried → neighbor); "in" = reverse. */
+  direction: "out" | "in";
+}
+
+/** /api/projects/:name/plan — edges are [left, right]: left depends_on right. */
+export interface PlanResponse {
+  items: WorkItem[];
+  edges: [number, number][];
 }
 
 export const PROPOSAL_STATUSES = ["proposed", "active", "done", "declined"] as const;
@@ -262,6 +270,7 @@ export const api = {
     http<{ id: number }>("POST", "/api/relationships", { left, right, label }),
   unrelate: (id: number) => http<{ ok: true }>("DELETE", `/api/relationships/${id}`),
   neighbors: (id: number) => http<Neighbor[]>("GET", `/api/nodes/${id}/neighbors`),
+  plan: (project: string) => http<PlanResponse>("GET", `/api/projects/${encodeURIComponent(project)}/plan`),
 
   // sprint proposals (agent planning)
   proposals: (status?: ProposalStatus) =>

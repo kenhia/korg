@@ -58,6 +58,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/relationships", post(create_relationship))
         .route("/api/relationships/:id", delete(delete_relationship))
         .route("/api/nodes/:id/neighbors", get(neighbors))
+        .route("/api/projects/:name/plan", get(project_plan))
         .route("/api/proposals", get(list_proposals).post(create_proposal))
         .route("/api/reports", get(list_reports))
         .route("/api/reports/:node_id", get(get_report))
@@ -615,6 +616,15 @@ async fn delete_relationship(State(s): State<AppState>, Path(id): Path<i64>) -> 
 
 async fn neighbors(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
     Ok(Json(json!(repo::neighbors(&s.pool, id).await?)))
+}
+
+/// Plan view payload: a project's work items plus its `depends_on` edges
+/// ([left, right] = left depends on right). Frontier/blocked computation
+/// happens client-side — the full item set is already in the payload.
+async fn project_plan(State(s): State<AppState>, Path(name): Path<String>) -> ApiResult {
+    let items = repo::list_work_items_by_project(&s.pool, &name).await?;
+    let edges = repo::project_edges(&s.pool, &name, "depends_on").await?;
+    Ok(Json(json!({ "items": items, "edges": edges })))
 }
 
 // --- daily reports ----------------------------------------------------------

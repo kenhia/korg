@@ -122,19 +122,28 @@ async fn relate_idempotent() {
     let a = create_work_item(&pool, wi("a", p)).await.unwrap().node_id;
     let b = create_work_item(&pool, wi("b", p)).await.unwrap().node_id;
 
-    // Linking the same pair twice, and in reverse, yields ONE edge.
+    // Edges are DIRECTED (sprint 008): exact duplicates dedup, the reverse
+    // orientation is a distinct edge, and neighbors reports which end you are.
     relate(&pool, a, b, "related-to").await.unwrap();
     relate(&pool, a, b, "related-to").await.unwrap();
-    relate(&pool, b, a, "related-to").await.unwrap();
 
     let na = neighbors(&pool, a).await.unwrap();
-    assert_eq!(na.len(), 1, "duplicate/reverse relate must not add edges");
+    assert_eq!(na.len(), 1, "exact duplicate relate must not add edges");
     assert_eq!(na[0].node_id, b);
-    // Symmetric: the edge is visible from the other end too.
-    assert_eq!(neighbors(&pool, b).await.unwrap().len(), 1);
+    assert_eq!(na[0].direction, "out", "a is the edge's left");
+    let nb = neighbors(&pool, b).await.unwrap();
+    assert_eq!(nb.len(), 1, "the edge is visible from the other end too");
+    assert_eq!(nb[0].direction, "in", "b is the edge's right");
+
+    relate(&pool, b, a, "related-to").await.unwrap();
+    assert_eq!(
+        neighbors(&pool, a).await.unwrap().len(),
+        2,
+        "reverse orientation is a distinct directed edge"
+    );
 
     // A different label between the same pair is a distinct edge.
     relate(&pool, a, b, "scheduled").await.unwrap();
     let na2 = neighbors(&pool, a).await.unwrap();
-    assert_eq!(na2.len(), 2, "dedup is scoped per relationship label");
+    assert_eq!(na2.len(), 3, "dedup is scoped per (orientation, label)");
 }
