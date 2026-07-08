@@ -74,7 +74,11 @@ async fn slots_weekly_template_generate_assign_and_edit() {
     // Mon-Fri -> [30,60]
     for offset in 0..5 {
         let day = monday.checked_add(time::Duration::days(offset)).unwrap();
-        assert_eq!(durations_on(&week, day), vec![30, 60], "weekday {day} durations");
+        assert_eq!(
+            durations_on(&week, day),
+            vec![30, 60],
+            "weekday {day} durations"
+        );
     }
     assert_eq!(
         durations_on(&week, date!(2024 - 01 - 06)),
@@ -116,7 +120,11 @@ async fn slots_weekly_template_generate_assign_and_edit() {
         .expect("relate slot-wi");
 
     let reread = list_slots(&pool, monday, monday).await.expect("reread");
-    assert_eq!(reread[0].goal.as_deref(), Some("Read rmcp docs"), "goal persisted");
+    assert_eq!(
+        reread[0].goal.as_deref(),
+        Some("Read rmcp docs"),
+        "goal persisted"
+    );
     let ns = neighbors(&pool, first_slot).await.expect("neighbors");
     assert_eq!(ns.len(), 1);
     assert_eq!(ns[0].node_id, wi.node_id);
@@ -140,13 +148,21 @@ async fn slots_weekly_template_generate_assign_and_edit() {
         duration_minutes: 45,
         label: None,
     });
-    set_weekly_template(&pool, &edited).await.expect("edit template");
+    set_weekly_template(&pool, &edited)
+        .await
+        .expect("edit template");
 
     // Regenerate a later Monday and confirm the change took effect.
     let next_monday = date!(2024 - 01 - 08);
     generate_slots(&pool, next_monday, 1).await.expect("regen");
-    let next = list_slots(&pool, next_monday, next_monday).await.expect("list next");
-    assert_eq!(durations_on(&next, next_monday), vec![45], "edited Monday template");
+    let next = list_slots(&pool, next_monday, next_monday)
+        .await
+        .expect("list next");
+    assert_eq!(
+        durations_on(&next, next_monday),
+        vec![45],
+        "edited Monday template"
+    );
 }
 
 /// Regenerating the same dates must be idempotent: no duplicate slots, and any
@@ -160,15 +176,28 @@ async fn slots_generate_is_idempotent_and_preserves_goals() {
     assert_eq!(first, 16, "one week generates 16 slots");
 
     // Put a goal into one slot, then regenerate the exact same span.
-    let week = list_slots(&pool, monday, date!(2024 - 01 - 07)).await.expect("list");
+    let week = list_slots(&pool, monday, date!(2024 - 01 - 07))
+        .await
+        .expect("list");
     let target = week[0].node_id;
-    set_slot_goal(&pool, target, Some("keep me")).await.expect("goal");
+    set_slot_goal(&pool, target, Some("keep me"))
+        .await
+        .expect("goal");
 
     let again = generate_slots(&pool, monday, 7).await.expect("regenerate");
     assert_eq!(again, 0, "regenerating the same week creates no new slots");
 
-    let after = list_slots(&pool, monday, date!(2024 - 01 - 07)).await.expect("relist");
+    let after = list_slots(&pool, monday, date!(2024 - 01 - 07))
+        .await
+        .expect("relist");
     assert_eq!(after.len(), 16, "no duplicate slots after regeneration");
-    let kept = after.iter().find(|s| s.node_id == target).expect("slot still present");
-    assert_eq!(kept.goal.as_deref(), Some("keep me"), "existing goal preserved");
+    let kept = after
+        .iter()
+        .find(|s| s.node_id == target)
+        .expect("slot still present");
+    assert_eq!(
+        kept.goal.as_deref(),
+        Some("keep me"),
+        "existing goal preserved"
+    );
 }

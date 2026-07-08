@@ -77,7 +77,10 @@ async fn reads_roundtrip_work_items_cards_projects() {
         .expect("get wi")
         .expect("wi present");
     assert_eq!(got.sprint.as_deref(), Some("s1"));
-    assert!(get_work_item(&pool, 9999).await.expect("get missing").is_none());
+    assert!(get_work_item(&pool, 9999)
+        .await
+        .expect("get missing")
+        .is_none());
 
     let cards = list_cards(&pool).await.expect("list cards");
     assert_eq!(cards.len(), 1);

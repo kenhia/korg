@@ -77,7 +77,10 @@ async fn schema_applies_cleanly() {
     .await
     .expect("query sequence existence")
     .get(0);
-    assert!(!seq_exists, "workitem_wi_number_seq should be dropped by 0009_identity");
+    assert!(
+        !seq_exists,
+        "workitem_wi_number_seq should be dropped by 0009_identity"
+    );
 
     // The `link` node kind is accepted (and others still are).
     for kind in ["workitem", "card", "link", "slot"] {

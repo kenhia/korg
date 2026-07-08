@@ -87,21 +87,49 @@ async fn import_is_faithful_to_sources() {
     let report = import(&kwi, &kcard, &korg).await.expect("import");
 
     // Lookups over the source side.
-    let kwi_project_name: HashMap<i32, String> =
-        kwi.projects.iter().map(|p| (p.id, p.project.clone())).collect();
+    let kwi_project_name: HashMap<i32, String> = kwi
+        .projects
+        .iter()
+        .map(|p| (p.id, p.project.clone()))
+        .collect();
     // kwi area id -> (area name, project name)
     let kwi_area: HashMap<i32, (String, String)> = kwi
         .areas
         .iter()
-        .map(|a| (a.id, (a.name.clone(), kwi_project_name[&a.project_id].clone())))
+        .map(|a| {
+            (
+                a.id,
+                (a.name.clone(), kwi_project_name[&a.project_id].clone()),
+            )
+        })
         .collect();
 
     // ---- F1: count parity ----------------------------------------------
-    assert_eq!(count(&korg, "workitem").await, kwi.workitems.len() as i64, "F1 workitems");
-    assert_eq!(count(&korg, "card").await, kcard.cards.len() as i64, "F1 cards");
-    assert_eq!(count(&korg, "comment").await, kcard.comments.len() as i64, "F1 comments");
-    assert_eq!(count(&korg, "relationship").await, kwi.related.len() as i64, "F1 edges");
-    assert_eq!(count(&korg, "area").await, kwi.areas.len() as i64, "F1 areas");
+    assert_eq!(
+        count(&korg, "workitem").await,
+        kwi.workitems.len() as i64,
+        "F1 workitems"
+    );
+    assert_eq!(
+        count(&korg, "card").await,
+        kcard.cards.len() as i64,
+        "F1 cards"
+    );
+    assert_eq!(
+        count(&korg, "comment").await,
+        kcard.comments.len() as i64,
+        "F1 comments"
+    );
+    assert_eq!(
+        count(&korg, "relationship").await,
+        kwi.related.len() as i64,
+        "F1 edges"
+    );
+    assert_eq!(
+        count(&korg, "area").await,
+        kwi.areas.len() as i64,
+        "F1 areas"
+    );
     assert_eq!(
         count(&korg, "node").await,
         (kwi.workitems.len() + kcard.cards.len()) as i64,
@@ -131,8 +159,17 @@ async fn import_is_faithful_to_sources() {
         .await
         .unwrap_or_else(|_| panic!("F5 project `{}` missing", p.project));
         assert_eq!(row.gh_repo, p.gh_repo, "F5 gh_repo {}", p.project);
-        assert_eq!(row.cn_path.as_deref(), Some(p.cn_path.as_str()), "F5 cn_path {}", p.project);
-        assert_eq!(row.description, p.description, "F5 description {}", p.project);
+        assert_eq!(
+            row.cn_path.as_deref(),
+            Some(p.cn_path.as_str()),
+            "F5 cn_path {}",
+            p.project
+        );
+        assert_eq!(
+            row.description, p.description,
+            "F5 description {}",
+            p.project
+        );
     }
 
     // ---- F2/F3/F6/F7: work items ---------------------------------------
@@ -187,7 +224,12 @@ async fn import_is_faithful_to_sources() {
         match w.area_id {
             Some(aid) => {
                 let (area_name, area_project) = &kwi_area[&aid];
-                assert_eq!(k.area_name.as_deref(), Some(area_name.as_str()), "F6 area wi {}", w.id);
+                assert_eq!(
+                    k.area_name.as_deref(),
+                    Some(area_name.as_str()),
+                    "F6 area wi {}",
+                    w.id
+                );
                 assert_eq!(
                     k.area_project.as_deref(),
                     Some(area_project.as_str()),
@@ -199,24 +241,34 @@ async fn import_is_faithful_to_sources() {
         }
 
         // F7 hierarchy.
-        assert_eq!(k.parent_wi, w.parent_id.map(|p| p as i64), "F7 parent wi {}", w.id);
+        assert_eq!(
+            k.parent_wi,
+            w.parent_id.map(|p| p as i64),
+            "F7 parent wi {}",
+            w.id
+        );
     }
 
     // F2 (0009_identity): node ids ARE wi_numbers — every imported workitem is
     // aligned, and the single node sequence continues past the imported max.
-    let misaligned: i64 =
-        sqlx::query("SELECT COUNT(*) FROM workitem WHERE node_id <> wi_number")
-            .fetch_one(&korg)
-            .await
-            .expect("alignment count")
-            .get(0);
-    assert_eq!(misaligned, 0, "F2 every imported workitem has node_id == wi_number");
+    let misaligned: i64 = sqlx::query("SELECT COUNT(*) FROM workitem WHERE node_id <> wi_number")
+        .fetch_one(&korg)
+        .await
+        .expect("alignment count")
+        .get(0);
+    assert_eq!(
+        misaligned, 0,
+        "F2 every imported workitem has node_id == wi_number"
+    );
     let next: i64 = sqlx::query("SELECT nextval(pg_get_serial_sequence('node','id'))")
         .fetch_one(&korg)
         .await
         .expect("nextval")
         .get(0);
-    assert!(next > report.max_wi_number, "F2 node sequence past imported max");
+    assert!(
+        next > report.max_wi_number,
+        "F2 node sequence past imported max"
+    );
 
     // ---- F3: cards (positional match) ----------------------------------
     let card_rows = sqlx::query_as::<_, KorgCard>(
@@ -237,14 +289,38 @@ async fn import_is_faithful_to_sources() {
         card_id_to_node.insert(src.id, k.node_id);
         assert_eq!(k.title, src.title, "F3 card title (src id {})", src.id);
         assert_eq!(k.status, src.status, "F3 card status (src id {})", src.id);
-        assert_eq!(k.description, src.description, "F3 card description (src id {})", src.id);
+        assert_eq!(
+            k.description, src.description,
+            "F3 card description (src id {})",
+            src.id
+        );
         assert_eq!(k.rank, src.rank, "F3 card rank (src id {})", src.id);
-        assert_eq!(k.project_name, src.project, "F3 card project (src id {})", src.id);
-        assert_eq!(k.category, src.category, "F3 card category (src id {})", src.id);
+        assert_eq!(
+            k.project_name, src.project,
+            "F3 card project (src id {})",
+            src.id
+        );
+        assert_eq!(
+            k.category, src.category,
+            "F3 card category (src id {})",
+            src.id
+        );
         assert_eq!(k.tags, src.tags, "F3 card tags (src id {})", src.id);
-        assert_eq!(k.archived, src.archived, "F3 card archived (src id {})", src.id);
-        assert_eq!(k.created, src.created_at, "F3 card created (src id {})", src.id);
-        assert_eq!(k.updated, src.updated_at, "F3 card updated (src id {})", src.id);
+        assert_eq!(
+            k.archived, src.archived,
+            "F3 card archived (src id {})",
+            src.id
+        );
+        assert_eq!(
+            k.created, src.created_at,
+            "F3 card created (src id {})",
+            src.id
+        );
+        assert_eq!(
+            k.updated, src.updated_at,
+            "F3 card updated (src id {})",
+            src.id
+        );
     }
 
     // ---- F3: comments (positional, with correct card linkage) ----------
@@ -254,11 +330,23 @@ async fn import_is_faithful_to_sources() {
     .fetch_all(&korg)
     .await
     .expect("korg comments");
-    assert_eq!(comment_rows.len(), kcard.comments.len(), "F3 comment count for zip");
+    assert_eq!(
+        comment_rows.len(),
+        kcard.comments.len(),
+        "F3 comment count for zip"
+    );
     for (src, k) in kcard.comments.iter().zip(comment_rows.iter()) {
         assert_eq!(k.body, src.body, "F3 comment body (src id {})", src.id);
-        assert_eq!(k.created, src.created_at, "F3 comment created (src id {})", src.id);
-        assert_eq!(k.updated, src.updated_at, "F3 comment updated (src id {})", src.id);
+        assert_eq!(
+            k.created, src.created_at,
+            "F3 comment created (src id {})",
+            src.id
+        );
+        assert_eq!(
+            k.updated, src.updated_at,
+            "F3 comment updated (src id {})",
+            src.id
+        );
         assert_eq!(
             k.node_id, card_id_to_node[&src.card_id],
             "F3 comment card linkage (src id {})",

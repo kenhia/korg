@@ -5,6 +5,7 @@
     WI_TYPES,
     WI_STATUSES,
     TSHIRTS,
+    PROJECT_STATUSES,
     type Project,
     type WorkItem,
     type Neighbor,
@@ -51,11 +52,66 @@
   let creating = $state(false);
   let editing = $state(false);
 
-  // project rail: area-add
+  // project rail: area-add + edit-project (WI #246)
   let newProject = $state("");
   let areaAddFor = $state<string | null>(null);
   let areaName = $state("");
   let areaDesc = $state("");
+  let showAllProjects = $state(false);
+  let editProject = $state<Project | null>(null);
+  let eStatus = $state<string>("active");
+  let eMachines = $state("");
+  let eDeploy = $state("");
+  let eCategory = $state("");
+  let eDescription = $state("");
+  let eGhRepo = $state("");
+  let eCnPath = $state("");
+
+  // Rail shows only active+maintenance unless "show all" (WI #246).
+  const visibleProjects = $derived(
+    projects.filter(
+      (p) => showAllProjects || p.status === "active" || p.status === "maintenance",
+    ),
+  );
+
+  // Deterministic per-project hue — Ken tunes by eye later; hash keeps a
+  // name's color stable across sessions/machines.
+  function projColor(name: string): string {
+    let h = 0;
+    for (const ch of name) h = (h * 31 + ch.codePointAt(0)!) >>> 0;
+    return `hsl(${h % 360} 55% 62%)`;
+  }
+
+  function openEditProject(p: Project) {
+    editProject = p;
+    eStatus = p.status;
+    eMachines = p.machines.join(", ");
+    eDeploy = p.deploy_to.join(", ");
+    eCategory = p.category ?? "";
+    eDescription = p.description ?? "";
+    eGhRepo = p.gh_repo ?? "";
+    eCnPath = p.cn_path ?? "";
+    areaAddFor = null;
+  }
+
+  function csv(v: string): string[] {
+    return v.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+
+  async function saveProject() {
+    if (!editProject) return;
+    await api.updateProject(editProject.name, {
+      status: eStatus as (typeof PROJECT_STATUSES)[number],
+      machines: csv(eMachines),
+      deploy_to: csv(eDeploy),
+      category: eCategory.trim() || null,
+      description: eDescription.trim() || null,
+      gh_repo: eGhRepo.trim() || null,
+      cn_path: eCnPath.trim() || null,
+    });
+    editProject = null;
+    projects = await api.projects();
+  }
 
   // relationships
   let relAdding = $state(false);
@@ -395,22 +451,65 @@
             class:bg-[var(--color-surface-hi)]={current === ALL}
             aria-current={current === ALL ? "true" : "false"}
             onclick={() => pick(ALL)}>All projects</button>
-          {#each projects as p (p.id)}
+          {#each visibleProjects as p (p.id)}
             <div class="flex items-center" class:bg-[var(--color-surface-hi)]={current === p.name}>
               <button
                 class="flex-1 px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-hi)]"
-                class:text-[var(--color-accent)]={current === p.name}
+                style="color: {projColor(p.name)}"
+                class:font-semibold={current === p.name}
                 aria-current={current === p.name ? "true" : "false"}
-                onclick={() => pick(p.name)}>{p.name}</button>
+                onclick={() => pick(p.name)}>{p.name}{#if p.status !== "active"}<span class="ml-1 text-xs text-[var(--color-muted)]">({p.status})</span>{/if}</button>
+              <button
+                class="px-1 py-2 text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+                title={`Edit project ${p.name}`}
+                aria-label={`Edit project ${p.name}`}
+                onclick={() => (editProject?.id === p.id ? (editProject = null) : openEditProject(p))}
+              >✎</button>
               <button
                 class="px-2 py-2 text-[var(--color-muted)] hover:text-[var(--color-accent)]"
                 title={`Add area to ${p.name}`}
                 aria-label={`Add area to ${p.name}`}
-                onclick={() => { areaAddFor = areaAddFor === p.name ? null : p.name; areaName = ""; areaDesc = ""; }}
+                onclick={() => { areaAddFor = areaAddFor === p.name ? null : p.name; areaName = ""; areaDesc = ""; editProject = null; }}
               >◇</button>
             </div>
           {/each}
         </nav>
+        <label class="flex items-center gap-1 px-1 text-xs text-[var(--color-muted)]">
+          <input type="checkbox" bind:checked={showAllProjects} /> show all projects
+        </label>
+
+        {#if editProject}
+          <div class="space-y-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-2 text-sm">
+            <p class="text-xs text-[var(--color-muted)]">Edit project <span style="color: {projColor(editProject.name)}">{editProject.name}</span></p>
+            <label class="block text-xs text-[var(--color-muted)]">status
+              <select class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm" bind:value={eStatus}>
+                {#each PROJECT_STATUSES as s (s)}<option value={s}>{s}</option>{/each}
+              </select>
+            </label>
+            <label class="block text-xs text-[var(--color-muted)]">machines (comma-sep)
+              <input class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" placeholder="kai, kubs0" bind:value={eMachines} />
+            </label>
+            <label class="block text-xs text-[var(--color-muted)]">deploy to (comma-sep)
+              <input class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" placeholder="kubsdb" bind:value={eDeploy} />
+            </label>
+            <label class="block text-xs text-[var(--color-muted)]">category
+              <input class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={eCategory} />
+            </label>
+            <label class="block text-xs text-[var(--color-muted)]">description
+              <input class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={eDescription} />
+            </label>
+            <label class="block text-xs text-[var(--color-muted)]">github repo
+              <input class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={eGhRepo} />
+            </label>
+            <label class="block text-xs text-[var(--color-muted)]">cn path
+              <input class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={eCnPath} />
+            </label>
+            <div class="flex justify-end gap-2">
+              <button class="rounded px-2 py-1 text-xs hover:bg-[var(--color-surface-hi)]" onclick={() => (editProject = null)}>Cancel</button>
+              <button class="rounded bg-[var(--color-accent-soft)] px-2 py-1 text-xs hover:bg-[var(--color-accent)]" onclick={saveProject}>Save</button>
+            </div>
+          </div>
+        {/if}
 
         {#if areaAddFor}
           <div class="space-y-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-2 text-sm">
@@ -456,6 +555,10 @@
         <summary class="cursor-pointer text-xs font-semibold text-[var(--color-muted)] hover:text-[var(--color-accent)]">Project Details</summary>
         <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
           <dt class="text-[var(--color-muted)]">Short Name</dt><dd>{currentProject.name}</dd>
+          <dt class="text-[var(--color-muted)]">Status</dt><dd>{currentProject.status}</dd>
+          {#if currentProject.machines.length > 0}<dt class="text-[var(--color-muted)]">Machines</dt><dd>{currentProject.machines.join(", ")}</dd>{/if}
+          {#if currentProject.deploy_to.length > 0}<dt class="text-[var(--color-muted)]">Deploys To</dt><dd>{currentProject.deploy_to.join(", ")}</dd>{/if}
+          {#if currentProject.category}<dt class="text-[var(--color-muted)]">Category</dt><dd>{currentProject.category}</dd>{/if}
           {#if currentProject.cn_path}<dt class="text-[var(--color-muted)]">CN Path</dt><dd>{currentProject.cn_path}</dd>{/if}
           {#if currentProject.gh_repo}<dt class="text-[var(--color-muted)]">GitHub Repo</dt><dd>{currentProject.gh_repo}</dd>{/if}
           {#if currentProject.description}<dt class="text-[var(--color-muted)]">Description</dt><dd>{currentProject.description}</dd>{/if}

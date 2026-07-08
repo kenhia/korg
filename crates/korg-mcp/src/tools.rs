@@ -48,7 +48,7 @@ pub fn tools() -> Vec<Tool> {
                 "title":{"type":"string","minLength":1},
                 "content":{"type":"string"},
                 "wi_type":{"type":"string","default":"task"},
-                "wi_status":{"type":"string","default":"open"},
+                "wi_status":{"type":"string","enum":["open","resolved","done","closed"],"default":"open"},
                 "wi_tshirt":{"type":"string","enum":["XS","S","M","L","XL","Huge","Unknown"],"default":"Unknown"},
                 "sprint":{"type":["string","null"]},
                 "details":{"type":["string","null"]},
@@ -76,7 +76,7 @@ pub fn tools() -> Vec<Tool> {
             "type":"object","additionalProperties":false,"required":["wi_number"],
             "properties":{"wi_number":id}
         })),
-        tool("update_work_item", "Partially update a work item by its wi_number. Only the fields you pass are changed. Use this to set status (e.g. resolve), edit fields, reparent, or archive. For nullable fields (details, sprint, area_id, parent, category) pass null to clear or omit to leave unchanged.", json!({
+        tool("update_work_item", "Partially update a work item by its wi_number. Only the fields you pass are changed. Status lifecycle: open -> resolved (implemented; may still need a user test or PR) -> done (agent satisfied; terminal but visible in default lists) -> closed (reserved for Ken; hidden by default -- do not set unless directed). For nullable fields (details, sprint, area_id, parent, category) pass null to clear or omit to leave unchanged.", json!({
             "type":"object","additionalProperties":false,
             "required":["wi_number"],
             "properties":{
@@ -84,7 +84,7 @@ pub fn tools() -> Vec<Tool> {
                 "title":{"type":"string","minLength":1},
                 "content":{"type":"string"},
                 "wi_type":{"type":"string"},
-                "wi_status":{"type":"string"},
+                "wi_status":{"type":"string","enum":["open","resolved","done","closed"]},
                 "wi_tshirt":{"type":"string","enum":["XS","S","M","L","XL","Huge","Unknown"]},
                 "sprint":{"type":["string","null"]},
                 "details":{"type":["string","null"]},
@@ -133,6 +133,10 @@ pub fn tools() -> Vec<Tool> {
         tool("delete_comment", "Delete a comment by its id.", json!({
             "type":"object","additionalProperties":false,"required":["id"],
             "properties":{"id":id}
+        })),
+        tool("update_comment", "Edit a comment's body by its id (from list_comments). `created` is preserved; `updated` advances.", json!({
+            "type":"object","additionalProperties":false,"required":["id","body"],
+            "properties":{"id":id,"body":{"type":"string","minLength":1}}
         })),
         tool("create_link", "Capture a reading-list URL. Returns its node_id.", json!({
             "type":"object","additionalProperties":false,"required":["url"],
@@ -239,10 +243,23 @@ pub fn tools() -> Vec<Tool> {
                 "tags":tags
             }
         })),
-        tool("list_projects", "List projects.", empty()),
+        tool("list_projects", "List projects, including metadata: status (active|maintenance|inactive|archived), machines (where the working copy lives), deploy_to (where it deploys), category.", empty()),
         tool("create_project", "Create a project by name (idempotent — returns the existing id if it already exists). Returns its id.", json!({
             "type":"object","additionalProperties":false,"required":["name"],
             "properties":{"name":{"type":"string","minLength":1}}
+        })),
+        tool("update_project", "Update a project's metadata by name (the name itself is immutable): status (active|maintenance|inactive|archived), machines, deploy_to, category, description, gh_repo, cn_path. Omitted fields are unchanged.", json!({
+            "type":"object","additionalProperties":false,"required":["name"],
+            "properties":{
+                "name":{"type":"string","minLength":1},
+                "status":{"type":"string","enum":["active","maintenance","inactive","archived"]},
+                "machines":{"type":"array","items":{"type":"string"}},
+                "deploy_to":{"type":"array","items":{"type":"string"}},
+                "category":{"type":["string","null"]},
+                "description":{"type":["string","null"]},
+                "gh_repo":{"type":["string","null"]},
+                "cn_path":{"type":["string","null"]}
+            }
         })),
         tool("list_areas", "List the areas under a project (by project name).", json!({
             "type":"object","additionalProperties":false,"required":["project"],
@@ -282,7 +299,7 @@ fn ok_json(v: Value) -> Result<CallToolResult, ErrorData> {
 
 fn to_err(e: anyhow::Error) -> CallToolResult {
     CallToolResult::error(vec![
-        Content::json(json!({ "message": e.to_string() })).expect("encode error"),
+        Content::json(json!({ "message": e.to_string() })).expect("encode error")
     ])
 }
 
@@ -294,7 +311,8 @@ fn parse_args<T: serde::de::DeserializeOwned>(args: Option<JsonObject>) -> Resul
 
 fn parse_date(s: &str) -> Result<Date, ErrorData> {
     let fmt = format_description!("[year]-[month]-[day]");
-    Date::parse(s, &fmt).map_err(|e| ErrorData::invalid_params(format!("invalid date `{s}`: {e}"), None))
+    Date::parse(s, &fmt)
+        .map_err(|e| ErrorData::invalid_params(format!("invalid date `{s}`: {e}"), None))
 }
 
 /// Deserialize a nullable, optional field into `Option<Option<T>>` so callers can
@@ -311,10 +329,18 @@ where
 
 // --- argument shapes ------------------------------------------------------
 
-fn default_task() -> String { "task".into() }
-fn default_open() -> String { "open".into() }
-fn default_unknown() -> String { "Unknown".into() }
-fn default_backlog() -> String { "Backlog".into() }
+fn default_task() -> String {
+    "task".into()
+}
+fn default_open() -> String {
+    "open".into()
+}
+fn default_unknown() -> String {
+    "Unknown".into()
+}
+fn default_backlog() -> String {
+    "Backlog".into()
+}
 
 #[derive(Deserialize)]
 struct CreateWorkItemArgs {
@@ -398,6 +424,31 @@ struct UpdateCardArgs {
 #[derive(Deserialize)]
 struct IdArgs {
     id: i64,
+}
+
+#[derive(Deserialize)]
+struct UpdateCommentArgs {
+    id: i64,
+    body: String,
+}
+
+#[derive(Deserialize)]
+struct UpdateProjectArgs {
+    name: String,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    machines: Option<Vec<String>>,
+    #[serde(default)]
+    deploy_to: Option<Vec<String>>,
+    #[serde(default)]
+    category: Option<Option<String>>,
+    #[serde(default)]
+    description: Option<Option<String>>,
+    #[serde(default)]
+    gh_repo: Option<Option<String>>,
+    #[serde(default)]
+    cn_path: Option<Option<String>>,
 }
 
 #[derive(Deserialize)]
@@ -756,6 +807,13 @@ impl KorgServer {
                     Err(e) => Ok(to_err(e)),
                 }
             }
+            "update_comment" => {
+                let a: UpdateCommentArgs = parse_args(args)?;
+                match repo::update_comment(&self.pool, a.id, &a.body).await {
+                    Ok(c) => ok_json(serde_json::to_value(c).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
             "create_link" => {
                 let a: CreateLinkArgs = parse_args(args)?;
                 let new = NewLink {
@@ -881,7 +939,10 @@ impl KorgServer {
                 let a: GetReportArgs = parse_args(args)?;
                 match repo::get_report(&self.pool, a.node_id).await {
                     Ok(Some(v)) => ok_json(serde_json::to_value(v).unwrap()),
-                    Ok(None) => Ok(to_err(anyhow::anyhow!("no report with node_id {}", a.node_id))),
+                    Ok(None) => Ok(to_err(anyhow::anyhow!(
+                        "no report with node_id {}",
+                        a.node_id
+                    ))),
                     Err(e) => Ok(to_err(e)),
                 }
             }
@@ -937,6 +998,22 @@ impl KorgServer {
                 Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
                 Err(e) => Ok(to_err(e)),
             },
+            "update_project" => {
+                let a: UpdateProjectArgs = parse_args(args)?;
+                let patch = repo::ProjectPatch {
+                    gh_repo: a.gh_repo,
+                    cn_path: a.cn_path,
+                    description: a.description,
+                    status: a.status,
+                    machines: a.machines,
+                    deploy_to: a.deploy_to,
+                    category: a.category,
+                };
+                match repo::update_project_by_name(&self.pool, &a.name, &patch).await {
+                    Ok(()) => ok_json(json!({ "ok": true })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
             "create_project" => {
                 let a: CreateProjectArgs = parse_args(args)?;
                 match repo::create_project(&self.pool, &a.name).await {

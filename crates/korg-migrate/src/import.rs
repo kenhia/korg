@@ -56,21 +56,23 @@ pub async fn import(kwi: &KwiData, kcard: &KcardData, korg: &PgPool) -> Result<I
     for card in &kcard.cards {
         if let Some(name) = card.project.as_ref() {
             if !project_by_name.contains_key(name) {
-                let id: i64 =
-                    sqlx::query("INSERT INTO project (name) VALUES ($1) RETURNING id")
-                        .bind(name)
-                        .fetch_one(&mut *tx)
-                        .await
-                        .context("insert kcard-only project")?
-                        .get("id");
+                let id: i64 = sqlx::query("INSERT INTO project (name) VALUES ($1) RETURNING id")
+                    .bind(name)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .context("insert kcard-only project")?
+                    .get("id");
                 project_by_name.insert(name.clone(), id);
             }
         }
     }
 
     // kwi project id -> korg project id (via name).
-    let kwi_project_name: HashMap<i32, String> =
-        kwi.projects.iter().map(|p| (p.id, p.project.clone())).collect();
+    let kwi_project_name: HashMap<i32, String> = kwi
+        .projects
+        .iter()
+        .map(|p| (p.id, p.project.clone()))
+        .collect();
 
     // --- 2. Areas (project-scoped) ---------------------------------------
     let mut area_map: HashMap<i32, i64> = HashMap::new();
@@ -169,10 +171,7 @@ pub async fn import(kwi: &KwiData, kcard: &KcardData, korg: &PgPool) -> Result<I
     // --- 4. Cards (node + card) ------------------------------------------
     let mut card_node: HashMap<i64, i64> = HashMap::new();
     for c in &kcard.cards {
-        let korg_project_id = c
-            .project
-            .as_ref()
-            .map(|name| project_by_name[name]);
+        let korg_project_id = c.project.as_ref().map(|name| project_by_name[name]);
 
         let node_id: i64 = sqlx::query(
             "INSERT INTO node (kind, project_id, category, tags, archived, created, updated) \

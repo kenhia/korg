@@ -62,16 +62,22 @@ async fn upsert_replaces_same_day_and_keeps_node_id() {
     let (_c, pool) = fresh_korg().await;
     let w = create_work_item(&pool, wi("backup broken")).await.unwrap();
 
-    let first = upsert_report(&pool, report(date!(2026 - 07 - 04), "problem", vec![w.wi_number]))
-        .await
-        .unwrap();
+    let first = upsert_report(
+        &pool,
+        report(date!(2026 - 07 - 04), "problem", vec![w.wi_number]),
+    )
+    .await
+    .unwrap();
     assert!(!first.replaced);
     assert_eq!(first.findings_linked, vec![w.node_id]);
 
     // same-day re-run: replaced, SAME node_id, edge not duplicated
-    let second = upsert_report(&pool, report(date!(2026 - 07 - 04), "attention", vec![w.wi_number]))
-        .await
-        .unwrap();
+    let second = upsert_report(
+        &pool,
+        report(date!(2026 - 07 - 04), "attention", vec![w.wi_number]),
+    )
+    .await
+    .unwrap();
     assert!(second.replaced);
     assert_eq!(second.node_id, first.node_id);
 

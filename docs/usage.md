@@ -95,6 +95,36 @@ curl -s -X POST http://localhost:8090/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | jq
 ```
 
+## Work-item status lifecycle
+
+Statuses are validated server-side (WI #285): `open`, `resolved`, `done`,
+`closed` — anything else is rejected on create/update.
+
+| Status | Set by | Meaning | Default list visibility |
+|--------|--------|---------|------------------------|
+| `open` | anyone | not started / in progress | visible |
+| `resolved` | agent (or Ken) | implemented; may still need a user test or PR | visible |
+| `done` | agent (or Ken) | agent satisfied with the implementation | visible |
+| `closed` | **Ken only** (or at his direction) | out of sight unless searched for | hidden (filter unchecked) |
+
+Typical flows: `open → resolved → done` (agent lifecycle), `→ closed` when
+Ken sweeps; straight `open → done` for small verified agent work.
+
+## Project metadata
+
+Projects carry lifecycle metadata (WI #246): `status`
+(`active | maintenance | inactive | archived`), `machines` (where the
+working copy lives), `deploy_to` (where it deploys), `category`. The Work
+Items rail shows only active+maintenance projects unless "show all" is
+checked, renders names in stable per-name colors, and the ✎ control opens
+an edit panel (everything editable except the name). Agents:
+`update_project` MCP tool / `PATCH /api/projects/:name`.
+
+## Comments
+
+Comments are editable (WI #232): ✎ in the UI, `update_comment` MCP tool,
+`PATCH /api/comments/:id`. `created` is preserved; `updated` advances.
+
 ## Data model in brief
 
 Everything is a **node** sharing one surrogate id space, so any kind can link to

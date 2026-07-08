@@ -27,7 +27,12 @@ async fn app() -> (impl Sized, axum::Router) {
     (container, router)
 }
 
-async fn req(router: &axum::Router, method: &str, path: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn req(
+    router: &axum::Router,
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let mut builder = Request::builder().method(method).uri(path);
     let body = match body {
         Some(v) => {
@@ -61,7 +66,13 @@ async fn api_end_to_end() {
     assert_eq!(body["status"], "ok");
 
     // Create a project + work item.
-    let (st, _) = req(&router, "POST", "/api/cards", Some(json!({"title":"Board it"}))).await;
+    let (st, _) = req(
+        &router,
+        "POST",
+        "/api/cards",
+        Some(json!({"title":"Board it"})),
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
 
     let (st, wi) = req(
@@ -79,7 +90,13 @@ async fn api_end_to_end() {
     let (_st, items) = req(&router, "GET", "/api/work-items", None).await;
     assert_eq!(items.as_array().unwrap().len(), 1);
 
-    let (_st, one) = req(&router, "GET", &format!("/api/work-items/{wi_number}"), None).await;
+    let (_st, one) = req(
+        &router,
+        "GET",
+        &format!("/api/work-items/{wi_number}"),
+        None,
+    )
+    .await;
     assert_eq!(one["title"], "API done");
 
     // Cards list + move/rank in one PATCH.
@@ -119,12 +136,24 @@ async fn api_end_to_end() {
     .await;
     assert_eq!(st, StatusCode::OK);
     let cmid = cm["id"].as_i64().unwrap();
-    let (_st, comments) = req(&router, "GET", &format!("/api/nodes/{card_node}/comments"), None).await;
+    let (_st, comments) = req(
+        &router,
+        "GET",
+        &format!("/api/nodes/{card_node}/comments"),
+        None,
+    )
+    .await;
     assert_eq!(comments.as_array().unwrap().len(), 1);
     assert_eq!(comments[0]["body"], "first note");
     let (st, _) = req(&router, "DELETE", &format!("/api/comments/{cmid}"), None).await;
     assert_eq!(st, StatusCode::OK);
-    let (_st, comments) = req(&router, "GET", &format!("/api/nodes/{card_node}/comments"), None).await;
+    let (_st, comments) = req(
+        &router,
+        "GET",
+        &format!("/api/nodes/{card_node}/comments"),
+        None,
+    )
+    .await;
     assert_eq!(comments.as_array().unwrap().len(), 0);
 
     // …and equally for a work-item node (proves the route isn't card-specific).
@@ -144,7 +173,13 @@ async fn api_end_to_end() {
     )
     .await;
     assert_eq!(st, StatusCode::OK);
-    let (_st, wi_comments) = req(&router, "GET", &format!("/api/nodes/{wi_node}/comments"), None).await;
+    let (_st, wi_comments) = req(
+        &router,
+        "GET",
+        &format!("/api/nodes/{wi_node}/comments"),
+        None,
+    )
+    .await;
     assert_eq!(wi_comments.as_array().unwrap().len(), 1);
     assert_eq!(wi_comments[0]["body"], "note on a work item");
     assert_eq!(wi_comments[0]["node_id"].as_i64(), Some(wi_node));
@@ -182,7 +217,13 @@ async fn api_end_to_end() {
     .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(gen["created"].as_i64(), Some(16));
-    let (_st, week) = req(&router, "GET", "/api/slots?from=2024-01-01&to=2024-01-07", None).await;
+    let (_st, week) = req(
+        &router,
+        "GET",
+        "/api/slots?from=2024-01-01&to=2024-01-07",
+        None,
+    )
+    .await;
     let week = week.as_array().unwrap();
     assert_eq!(week.len(), 16);
     let slot_node = week[0]["node_id"].as_i64().unwrap();
@@ -204,7 +245,13 @@ async fn api_end_to_end() {
     )
     .await;
     assert_eq!(st, StatusCode::OK);
-    let (_st, ns) = req(&router, "GET", &format!("/api/nodes/{slot_node}/neighbors"), None).await;
+    let (_st, ns) = req(
+        &router,
+        "GET",
+        &format!("/api/nodes/{slot_node}/neighbors"),
+        None,
+    )
+    .await;
     assert_eq!(ns[0]["node_id"].as_i64(), Some(card_node));
     assert_eq!(ns[0]["kind"], "card");
     // The card stays where it is (Active), not forced anywhere by scheduling.
@@ -216,13 +263,33 @@ async fn api_end_to_end() {
     assert!(recent["project"].is_null() || recent["project"].is_string());
 
     // Create a project (idempotent) and create a work item in it.
-    let (st, proj) = req(&router, "POST", "/api/projects", Some(json!({"name":"alpha"}))).await;
+    let (st, proj) = req(
+        &router,
+        "POST",
+        "/api/projects",
+        Some(json!({"name":"alpha"})),
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     let pid = proj["id"].as_i64().unwrap();
-    let (st, _) = req(&router, "POST", "/api/projects", Some(json!({"name":"alpha"}))).await;
-    assert_eq!(st, StatusCode::OK, "creating the same project twice is idempotent");
+    let (st, _) = req(
+        &router,
+        "POST",
+        "/api/projects",
+        Some(json!({"name":"alpha"})),
+    )
+    .await;
+    assert_eq!(
+        st,
+        StatusCode::OK,
+        "creating the same project twice is idempotent"
+    );
     let (_st, projects) = req(&router, "GET", "/api/projects", None).await;
-    assert!(projects.as_array().unwrap().iter().any(|p| p["name"] == "alpha"));
+    assert!(projects
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["name"] == "alpha"));
 
     let (st, _) = req(
         &router,
@@ -244,17 +311,41 @@ async fn api_end_to_end() {
     )
     .await;
     assert_eq!(st, StatusCode::OK);
-    let (_st, one) = req(&router, "GET", &format!("/api/work-items/{wi_number}"), None).await;
+    let (_st, one) = req(
+        &router,
+        "GET",
+        &format!("/api/work-items/{wi_number}"),
+        None,
+    )
+    .await;
     assert_eq!(one["wi_status"], "resolved");
     assert_eq!(one["archived"], true);
     assert_eq!(one["tags"][0], "edited");
 
     // Relationship has an id and can be deleted.
-    let (_st, ns) = req(&router, "GET", &format!("/api/nodes/{slot_node}/neighbors"), None).await;
+    let (_st, ns) = req(
+        &router,
+        "GET",
+        &format!("/api/nodes/{slot_node}/neighbors"),
+        None,
+    )
+    .await;
     let rel_id = ns[0]["rel_id"].as_i64().unwrap();
-    let (st, _) = req(&router, "DELETE", &format!("/api/relationships/{rel_id}"), None).await;
+    let (st, _) = req(
+        &router,
+        "DELETE",
+        &format!("/api/relationships/{rel_id}"),
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
-    let (_st, ns2) = req(&router, "GET", &format!("/api/nodes/{slot_node}/neighbors"), None).await;
+    let (_st, ns2) = req(
+        &router,
+        "GET",
+        &format!("/api/nodes/{slot_node}/neighbors"),
+        None,
+    )
+    .await;
     assert_eq!(ns2.as_array().unwrap().len(), 0);
 }
 
@@ -328,13 +419,28 @@ async fn survey_work_items_end_to_end() {
         assert_eq!(st, StatusCode::OK);
     }
 
-    let (st, page) = req(&router, "GET", "/api/work-items/survey?limit=2&offset=0", None).await;
+    let (st, page) = req(
+        &router,
+        "GET",
+        "/api/work-items/survey?limit=2&offset=0",
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(page["total"].as_i64(), Some(3));
     assert_eq!(page["items"].as_array().unwrap().len(), 2);
-    assert!(page["items"][0].get("content").is_none(), "slim projection has no content field");
+    assert!(
+        page["items"][0].get("content").is_none(),
+        "slim projection has no content field"
+    );
 
-    let (_st, rest) = req(&router, "GET", "/api/work-items/survey?limit=2&offset=2", None).await;
+    let (_st, rest) = req(
+        &router,
+        "GET",
+        "/api/work-items/survey?limit=2&offset=2",
+        None,
+    )
+    .await;
     assert_eq!(rest["items"].as_array().unwrap().len(), 1);
 }
 

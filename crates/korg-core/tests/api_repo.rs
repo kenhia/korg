@@ -65,7 +65,9 @@ async fn api_repo_links_cards_projects() {
     .unwrap();
     assert_eq!(list_links(&pool).await.unwrap()[0].disposition, "Unread");
     set_link_disposition(&pool, link, "Revisit").await.unwrap();
-    set_node_tags(&pool, link, &["rust".into(), "mcp".into()]).await.unwrap();
+    set_node_tags(&pool, link, &["rust".into(), "mcp".into()])
+        .await
+        .unwrap();
     let links = list_links(&pool).await.unwrap();
     assert_eq!(links[0].disposition, "Revisit");
     assert_eq!(links[0].tags, vec!["rust".to_string(), "mcp".to_string()]);
@@ -106,7 +108,10 @@ async fn api_repo_links_cards_projects() {
     create_work_item(&pool, wi("a1", alpha)).await.unwrap();
     create_work_item(&pool, wi("b1", beta)).await.unwrap();
     // beta touched most recently -> recent project.
-    assert_eq!(recent_project(&pool).await.unwrap().as_deref(), Some("beta"));
+    assert_eq!(
+        recent_project(&pool).await.unwrap().as_deref(),
+        Some("beta")
+    );
     let a_items = list_work_items_by_project(&pool, "alpha").await.unwrap();
     assert_eq!(a_items.len(), 1);
     assert_eq!(a_items[0].title, "a1");

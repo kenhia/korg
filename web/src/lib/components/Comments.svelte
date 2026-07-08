@@ -31,6 +31,22 @@
     await api.deleteComment(id);
     comments = comments.filter((c) => c.id !== id);
   }
+
+  // WI #232 — edit in place ("saved, then realized I should include a WI #").
+  let editingId = $state<number | null>(null);
+  let editBuf = $state("");
+
+  function startEdit(c: Comment) {
+    editingId = c.id;
+    editBuf = c.body;
+  }
+
+  async function saveEdit() {
+    if (editingId == null || editBuf.trim() === "") return;
+    const updated = await api.updateComment(editingId, editBuf.trim());
+    comments = comments.map((c) => (c.id === updated.id ? updated : c));
+    editingId = null;
+  }
 </script>
 
 <div class="border-t border-[var(--color-border)] pt-2">
@@ -38,8 +54,15 @@
   <ul class="space-y-1" data-testid="comment-list">
     {#each comments as c (c.id)}
       <li class="flex items-start gap-2 rounded bg-[var(--color-bg)] px-2 py-1 text-sm">
-        <span class="flex-1 whitespace-pre-wrap">{c.body}</span>
-        <button class="text-xs text-[var(--color-muted)] hover:text-red-400" aria-label="Delete comment" onclick={() => removeComment(c.id)}>✕</button>
+        {#if editingId === c.id}
+          <textarea class="min-h-[3rem] flex-1 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={editBuf} onkeydown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveEdit(); if (e.key === "Escape") editingId = null; }}></textarea>
+          <button class="text-xs text-[var(--color-accent)] hover:underline" onclick={saveEdit}>Save</button>
+          <button class="text-xs text-[var(--color-muted)] hover:underline" onclick={() => (editingId = null)}>Cancel</button>
+        {:else}
+          <span class="flex-1 whitespace-pre-wrap">{c.body}</span>
+          <button class="text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]" aria-label="Edit comment" title="Edit" onclick={() => startEdit(c)}>✎</button>
+          <button class="text-xs text-[var(--color-muted)] hover:text-red-400" aria-label="Delete comment" onclick={() => removeComment(c.id)}>✕</button>
+        {/if}
       </li>
     {:else}<li class="text-xs text-[var(--color-muted)]">No comments.</li>{/each}
   </ul>

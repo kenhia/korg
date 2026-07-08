@@ -9,9 +9,28 @@ use anyhow::Result;
 use rust_decimal::Decimal;
 use serde::Serialize;
 use sqlx::{PgPool, Row};
-use time::{Date, OffsetDateTime};
+use time::OffsetDateTime;
 
 // --- work items -----------------------------------------------------------
+
+/// Canonical work-item statuses (WI #285). Lifecycle: `open → resolved`
+/// (implemented; may still need a user test / may not be PR'd) `→ done`
+/// (agent satisfied — terminal but still visible in default lists)
+/// `→ closed` (Ken only; hidden by default). Writes outside this set are
+/// rejected.
+pub const WI_STATUSES: [&str; 4] = ["open", "resolved", "done", "closed"];
+
+/// Project lifecycle statuses (WI #246). Default WI-page rail shows only
+/// `active` + `maintenance` unless "show all" is on.
+pub const PROJECT_STATUSES: [&str; 4] = ["active", "maintenance", "inactive", "archived"];
+
+fn validate_status(value: &str, allowed: &[&str], what: &str) -> Result<()> {
+    if allowed.contains(&value) {
+        Ok(())
+    } else {
+        anyhow::bail!("invalid {what} '{value}' — expected one of: {}", allowed.join(", "))
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct NewWorkItem {
@@ -35,6 +54,7 @@ pub struct WorkItemRef {
 }
 
 pub async fn create_work_item(pool: &PgPool, new: NewWorkItem) -> Result<WorkItemRef> {
+    validate_status(&new.wi_status, &WI_STATUSES, "wi_status")?;
     let mut tx = pool.begin().await?;
     let node_id: i64 = sqlx::query(
         "INSERT INTO node (kind, project_id, category, tags) \
@@ -254,11 +274,7 @@ pub async fn neighbors(pool: &PgPool, node: i64) -> Result<Vec<Neighbor>> {
 /// All (left, right) edges with the given label where BOTH endpoints belong
 /// to the named project. Feeds the Plan view: with label `depends_on`, left
 /// depends on right.
-pub async fn project_edges(
-    pool: &PgPool,
-    project: &str,
-    label: &str,
-) -> Result<Vec<(i64, i64)>> {
+pub async fn project_edges(pool: &PgPool, project: &str, label: &str) -> Result<Vec<(i64, i64)>> {
     let rows: Vec<(i64, i64)> = sqlx::query_as(
         "SELECT r.left_id, r.right_id \
          FROM relationship r \
@@ -319,7 +335,10 @@ pub struct NodePreview {
 }
 
 fn field(label: &str, value: impl Into<String>) -> NodeField {
-    NodeField { label: label.into(), value: value.into() }
+    NodeField {
+        label: label.into(),
+        value: value.into(),
+    }
 }
 
 /// Resolve any node id to a uniform preview, dispatching on its kind. Returns
@@ -519,7 +538,9 @@ const WORKITEM_SELECT: &str = "SELECT w.wi_number, w.node_id, \
 
 pub async fn list_work_items(pool: &PgPool) -> Result<Vec<WorkItemRow>> {
     let sql = format!("{WORKITEM_SELECT} ORDER BY w.wi_number");
-    Ok(sqlx::query_as::<_, WorkItemRow>(&sql).fetch_all(pool).await?)
+    Ok(sqlx::query_as::<_, WorkItemRow>(&sql)
+        .fetch_all(pool)
+        .await?)
 }
 
 pub async fn get_work_item(pool: &PgPool, wi_number: i64) -> Result<Option<WorkItemRow>> {
@@ -608,7 +629,12 @@ pub async fn survey_work_items(
             wi_tshirt: r.wi_tshirt,
         })
         .collect();
-    Ok(WorkItemSurvey { items, total, limit, offset })
+    Ok(WorkItemSurvey {
+        items,
+        total,
+        limit,
+        offset,
+    })
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
@@ -649,11 +675,114 @@ pub struct ProjectRow {
     pub gh_repo: Option<String>,
     pub cn_path: Option<String>,
     pub description: Option<String>,
+    /// Lifecycle status — see PROJECT_STATUSES.
+    pub status: String,
+    /// Machines this project's working copy lives on (kai/kubs0/cleo…).
+    pub machines: Vec<String>,
+    /// Machines this project deploys to (e.g. korg → kubsdb).
+    pub deploy_to: Vec<String>,
+    pub category: Option<String>,
+}
+
+/// Everything but `name` is editable (WI #246). `None` = leave unchanged;
+/// inner `None` on the nullable fields clears them.
+#[derive(Debug, Clone, Default)]
+pub struct ProjectPatch {
+    pub gh_repo: Option<Option<String>>,
+    pub cn_path: Option<Option<String>>,
+    pub description: Option<Option<String>>,
+    pub status: Option<String>,
+    pub machines: Option<Vec<String>>,
+    pub deploy_to: Option<Vec<String>>,
+    pub category: Option<Option<String>>,
+}
+
+pub async fn update_project(pool: &PgPool, id: i64, patch: &ProjectPatch) -> Result<()> {
+    if let Some(v) = &patch.status {
+        validate_status(v, &PROJECT_STATUSES, "project status")?;
+    }
+    let mut tx = pool.begin().await?;
+    let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM project WHERE id = $1")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if exists.is_none() {
+        anyhow::bail!("no project with id {id}");
+    }
+    if let Some(v) = &patch.gh_repo {
+        sqlx::query("UPDATE project SET gh_repo = $2 WHERE id = $1")
+            .bind(id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.cn_path {
+        sqlx::query("UPDATE project SET cn_path = $2 WHERE id = $1")
+            .bind(id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.description {
+        sqlx::query("UPDATE project SET description = $2 WHERE id = $1")
+            .bind(id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.status {
+        sqlx::query("UPDATE project SET status = $2 WHERE id = $1")
+            .bind(id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.machines {
+        sqlx::query("UPDATE project SET machines = $2 WHERE id = $1")
+            .bind(id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.deploy_to {
+        sqlx::query("UPDATE project SET deploy_to = $2 WHERE id = $1")
+            .bind(id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.category {
+        sqlx::query("UPDATE project SET category = $2 WHERE id = $1")
+            .bind(id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Name-keyed wrapper (the REST/MCP surfaces key projects by name; the
+/// name itself is immutable — see WI #246).
+pub async fn update_project_by_name(
+    pool: &PgPool,
+    name: &str,
+    patch: &ProjectPatch,
+) -> Result<()> {
+    let id: Option<i64> = sqlx::query_scalar("SELECT id FROM project WHERE name = $1")
+        .bind(name)
+        .fetch_optional(pool)
+        .await?;
+    match id {
+        Some(id) => update_project(pool, id, patch).await,
+        None => anyhow::bail!("no project named '{name}'"),
+    }
 }
 
 pub async fn list_projects(pool: &PgPool) -> Result<Vec<ProjectRow>> {
     let rows = sqlx::query_as::<_, ProjectRow>(
-        "SELECT id, name, gh_repo, cn_path, description FROM project ORDER BY name",
+        "SELECT id, name, gh_repo, cn_path, description, status, machines, deploy_to, category \
+         FROM project ORDER BY name",
     )
     .fetch_all(pool)
     .await?;
@@ -809,6 +938,20 @@ pub async fn add_comment(pool: &PgPool, node_id: i64, body: &str) -> Result<Comm
     Ok(c)
 }
 
+/// Edit a comment's body (WI #232). The `updated` column advances via the
+/// standard trigger; `created` is preserved.
+pub async fn update_comment(pool: &PgPool, id: i64, body: &str) -> Result<Comment> {
+    let c = sqlx::query_as::<_, Comment>(
+        "UPDATE comment SET body = $2 WHERE id = $1 \
+         RETURNING id, node_id, body, created, updated",
+    )
+    .bind(id)
+    .bind(body)
+    .fetch_optional(pool)
+    .await?;
+    c.ok_or_else(|| anyhow::anyhow!("no comment with id {id}"))
+}
+
 pub async fn delete_comment(pool: &PgPool, id: i64) -> Result<()> {
     sqlx::query("DELETE FROM comment WHERE id = $1")
         .bind(id)
@@ -895,7 +1038,11 @@ pub async fn create_proposal(pool: &PgPool, new: NewProposal) -> Result<Proposal
     .await?;
 
     for &target in &covered {
-        let (lo, hi) = if node_id <= target { (node_id, target) } else { (target, node_id) };
+        let (lo, hi) = if node_id <= target {
+            (node_id, target)
+        } else {
+            (target, node_id)
+        };
         sqlx::query(
             "INSERT INTO relationship (left_id, right_id, relationship) \
              VALUES ($1, $2, 'covers') \
@@ -964,25 +1111,55 @@ pub struct ProposalPatch {
 pub async fn update_proposal(pool: &PgPool, node_id: i64, patch: ProposalPatch) -> Result<()> {
     let mut tx = pool.begin().await?;
     if let Some(v) = &patch.title {
-        sqlx::query("UPDATE sprint_proposal SET title = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE sprint_proposal SET title = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = &patch.summary {
-        sqlx::query("UPDATE sprint_proposal SET summary = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE sprint_proposal SET summary = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = &patch.status {
-        sqlx::query("UPDATE sprint_proposal SET status = $2::sprint_proposal_status WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query(
+            "UPDATE sprint_proposal SET status = $2::sprint_proposal_status WHERE node_id = $1",
+        )
+        .bind(node_id)
+        .bind(v)
+        .execute(&mut *tx)
+        .await?;
     }
     if let Some(v) = patch.rank {
-        sqlx::query("UPDATE sprint_proposal SET rank = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE sprint_proposal SET rank = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = patch.pinned {
-        sqlx::query("UPDATE sprint_proposal SET pinned = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE sprint_proposal SET pinned = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = patch.archived {
-        sqlx::query("UPDATE node SET archived = $2 WHERE id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE node SET archived = $2 WHERE id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = &patch.tags {
-        sqlx::query("UPDATE node SET tags = $2 WHERE id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE node SET tags = $2 WHERE id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     tx.commit().await?;
     Ok(())
@@ -1055,40 +1232,89 @@ pub async fn update_work_item(pool: &PgPool, wi_number: i64, patch: WorkItemPatc
     let mut tx = pool.begin().await?;
 
     if let Some(v) = &patch.title {
-        sqlx::query("UPDATE workitem SET title = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE workitem SET title = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = &patch.content {
-        sqlx::query("UPDATE workitem SET content = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE workitem SET content = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = &patch.details {
-        sqlx::query("UPDATE workitem SET details = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE workitem SET details = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = &patch.wi_type {
-        sqlx::query("UPDATE workitem SET wi_type = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE workitem SET wi_type = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = &patch.wi_status {
-        sqlx::query("UPDATE workitem SET wi_status = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        validate_status(v, &WI_STATUSES, "wi_status")?;
+        sqlx::query("UPDATE workitem SET wi_status = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = &patch.wi_tshirt {
-        sqlx::query("UPDATE workitem SET wi_tshirt = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE workitem SET wi_tshirt = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = &patch.sprint {
-        sqlx::query("UPDATE workitem SET sprint = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE workitem SET sprint = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = &patch.area_id {
-        sqlx::query("UPDATE workitem SET area_id = $2 WHERE node_id = $1").bind(node_id).bind(*v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE workitem SET area_id = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(*v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = parent_node {
-        sqlx::query("UPDATE workitem SET parent_node_id = $2 WHERE node_id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE workitem SET parent_node_id = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = patch.archived {
-        sqlx::query("UPDATE node SET archived = $2 WHERE id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE node SET archived = $2 WHERE id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = &patch.category {
-        sqlx::query("UPDATE node SET category = $2 WHERE id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE node SET category = $2 WHERE id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
     if let Some(v) = &patch.tags {
-        sqlx::query("UPDATE node SET tags = $2 WHERE id = $1").bind(node_id).bind(v).execute(&mut *tx).await?;
+        sqlx::query("UPDATE node SET tags = $2 WHERE id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
     }
 
     tx.commit().await?;
@@ -1129,14 +1355,13 @@ pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
     }
 
     let mut tx = pool.begin().await?;
-    let existing: Option<i64> = sqlx::query(
-        "SELECT node_id FROM report WHERE source = $1 AND report_date = $2",
-    )
-    .bind(&new.source)
-    .bind(new.report_date)
-    .fetch_optional(&mut *tx)
-    .await?
-    .map(|r| r.get("node_id"));
+    let existing: Option<i64> =
+        sqlx::query("SELECT node_id FROM report WHERE source = $1 AND report_date = $2")
+            .bind(&new.source)
+            .bind(new.report_date)
+            .fetch_optional(&mut *tx)
+            .await?
+            .map(|r| r.get("node_id"));
 
     let (node_id, replaced) = match existing {
         Some(id) => {
@@ -1159,11 +1384,10 @@ pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
             (id, true)
         }
         None => {
-            let id: i64 =
-                sqlx::query("INSERT INTO node (kind) VALUES ('report') RETURNING id")
-                    .fetch_one(&mut *tx)
-                    .await?
-                    .get("id");
+            let id: i64 = sqlx::query("INSERT INTO node (kind) VALUES ('report') RETURNING id")
+                .fetch_one(&mut *tx)
+                .await?
+                .get("id");
             sqlx::query(
                 "INSERT INTO report \
                  (node_id, source, report_date, status, summary, body, model, escalated) \
@@ -1184,7 +1408,11 @@ pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
     };
 
     for &target in &resolved {
-        let (lo, hi) = if node_id <= target { (node_id, target) } else { (target, node_id) };
+        let (lo, hi) = if node_id <= target {
+            (node_id, target)
+        } else {
+            (target, node_id)
+        };
         sqlx::query(
             "INSERT INTO relationship (left_id, right_id, relationship) \
              VALUES ($1, $2, 'finding') \
@@ -1197,7 +1425,11 @@ pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
     }
 
     tx.commit().await?;
-    Ok(ReportRef { node_id, replaced, findings_linked: resolved })
+    Ok(ReportRef {
+        node_id,
+        replaced,
+        findings_linked: resolved,
+    })
 }
 
 time::serde::format_description!(report_date_fmt, Date, "[year]-[month]-[day]");
@@ -1252,10 +1484,7 @@ pub struct ReportFull {
 }
 
 /// One report with body + linked findings ('finding' edges to work items).
-pub async fn get_report(
-    pool: &PgPool,
-    node_id: i64,
-) -> Result<Option<ReportFull>> {
+pub async fn get_report(pool: &PgPool, node_id: i64) -> Result<Option<ReportFull>> {
     let Some(r) = sqlx::query(
         "SELECT r.node_id, r.source, r.report_date, r.status, r.summary, r.model, \
                 r.escalated, r.body, n.updated \

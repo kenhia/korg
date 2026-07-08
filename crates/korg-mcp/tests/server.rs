@@ -33,8 +33,16 @@ fn args(v: Value) -> Option<JsonObject> {
 
 /// Extract the JSON body of a successful tool result.
 fn body(result: &CallToolResult) -> Value {
-    assert_ne!(result.is_error, Some(true), "tool returned an error: {result:?}");
-    let text = result.content[0].as_text().expect("text content").text.clone();
+    assert_ne!(
+        result.is_error,
+        Some(true),
+        "tool returned an error: {result:?}"
+    );
+    let text = result.content[0]
+        .as_text()
+        .expect("text content")
+        .text
+        .clone();
     serde_json::from_str(&text).expect("result body is json")
 }
 
@@ -44,7 +52,7 @@ async fn mcp_surface_end_to_end() {
     let server = KorgServer::new(pool);
 
     // Tool descriptors are stable.
-    assert_eq!(tools().len(), 32, "expected 32 tools");
+    assert_eq!(tools().len(), 34, "expected 34 tools");
 
     // Create a work item.
     let wi = body(
@@ -61,7 +69,12 @@ async fn mcp_surface_end_to_end() {
     assert_eq!(wi["wi_number"].as_i64(), Some(wi_node));
 
     // List shows it.
-    let items = body(&server.call("list_work_items", args(json!({}))).await.unwrap());
+    let items = body(
+        &server
+            .call("list_work_items", args(json!({})))
+            .await
+            .unwrap(),
+    );
     assert_eq!(items.as_array().unwrap().len(), 1);
     assert_eq!(items[0]["title"], "Ship korg-mcp");
 
@@ -86,7 +99,12 @@ async fn mcp_surface_end_to_end() {
         .await
         .unwrap();
 
-    let ns = body(&server.call("neighbors", args(json!({"node_id":wi_node}))).await.unwrap());
+    let ns = body(
+        &server
+            .call("neighbors", args(json!({"node_id":wi_node})))
+            .await
+            .unwrap(),
+    );
     let ns = ns.as_array().unwrap();
     assert_eq!(ns.len(), 1);
     assert_eq!(ns[0]["node_id"].as_i64(), Some(link_node));
@@ -98,20 +116,31 @@ async fn mcp_surface_end_to_end() {
     assert_eq!(links.as_array().unwrap().len(), 1);
 
     // Seeded weekly template (16 rows) is visible.
-    let tmpl = body(&server.call("list_slot_templates", args(json!({}))).await.unwrap());
+    let tmpl = body(
+        &server
+            .call("list_slot_templates", args(json!({})))
+            .await
+            .unwrap(),
+    );
     assert_eq!(tmpl.as_array().unwrap().len(), 16);
 
     // Generate a week of slots and read them back.
     let gen = body(
         &server
-            .call("generate_slots", args(json!({"start":"2024-01-01","days":7})))
+            .call(
+                "generate_slots",
+                args(json!({"start":"2024-01-01","days":7})),
+            )
             .await
             .unwrap(),
     );
     assert_eq!(gen["created"].as_i64(), Some(16));
     let week = body(
         &server
-            .call("list_slots", args(json!({"from":"2024-01-01","to":"2024-01-07"})))
+            .call(
+                "list_slots",
+                args(json!({"from":"2024-01-01","to":"2024-01-07"})),
+            )
             .await
             .unwrap(),
     );
@@ -145,33 +174,59 @@ async fn update_work_item_partial_and_nullable() {
         &server
             .call(
                 "update_work_item",
-                args(json!({"wi_number":n,"wi_status":"resolved","title":"Explore trt-llm (done)"})),
+                args(
+                    json!({"wi_number":n,"wi_status":"resolved","title":"Explore trt-llm (done)"}),
+                ),
             )
             .await
             .unwrap(),
     );
     assert_eq!(res["ok"], json!(true));
 
-    let got = body(&server.call("get_work_item", args(json!({"wi_number":n}))).await.unwrap());
+    let got = body(
+        &server
+            .call("get_work_item", args(json!({"wi_number":n})))
+            .await
+            .unwrap(),
+    );
     assert_eq!(got["wi_status"], "resolved", "status flipped");
     assert_eq!(got["title"], "Explore trt-llm (done)", "title edited");
     assert_eq!(got["content"], "investigate", "untouched field preserved");
-    assert_eq!(got["details"], "notes here", "omitted nullable left unchanged");
+    assert_eq!(
+        got["details"], "notes here",
+        "omitted nullable left unchanged"
+    );
 
     // Clear a nullable field by passing null.
     server
-        .call("update_work_item", args(json!({"wi_number":n,"details":null})))
+        .call(
+            "update_work_item",
+            args(json!({"wi_number":n,"details":null})),
+        )
         .await
         .unwrap();
-    let cleared = body(&server.call("get_work_item", args(json!({"wi_number":n}))).await.unwrap());
+    let cleared = body(
+        &server
+            .call("get_work_item", args(json!({"wi_number":n})))
+            .await
+            .unwrap(),
+    );
     assert!(cleared["details"].is_null(), "null clears the field");
 
     // Archive it.
     server
-        .call("update_work_item", args(json!({"wi_number":n,"archived":true})))
+        .call(
+            "update_work_item",
+            args(json!({"wi_number":n,"archived":true})),
+        )
         .await
         .unwrap();
-    let archived = body(&server.call("get_work_item", args(json!({"wi_number":n}))).await.unwrap());
+    let archived = body(
+        &server
+            .call("get_work_item", args(json!({"wi_number":n})))
+            .await
+            .unwrap(),
+    );
     assert_eq!(archived["archived"], json!(true), "archived flag set");
 }
 
@@ -183,23 +238,45 @@ async fn mcp_coverage_gaps_end_to_end() {
     let server = KorgServer::new(pool);
 
     // create_project is idempotent and returns an id.
-    let p1 = body(&server.call("create_project", args(json!({"name":"acme"}))).await.unwrap());
+    let p1 = body(
+        &server
+            .call("create_project", args(json!({"name":"acme"})))
+            .await
+            .unwrap(),
+    );
     let pid = p1["id"].as_i64().unwrap();
-    let p2 = body(&server.call("create_project", args(json!({"name":"acme"}))).await.unwrap());
+    let p2 = body(
+        &server
+            .call("create_project", args(json!({"name":"acme"})))
+            .await
+            .unwrap(),
+    );
     assert_eq!(p2["id"].as_i64(), Some(pid), "create_project is idempotent");
 
     let projects = body(&server.call("list_projects", args(json!({}))).await.unwrap());
-    assert!(projects.as_array().unwrap().iter().any(|p| p["name"] == "acme"));
+    assert!(projects
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["name"] == "acme"));
 
     // create_area under the project, then list_areas surfaces it.
     let area = body(
         &server
-            .call("create_area", args(json!({"project":"acme","name":"backend","description":"svc"})))
+            .call(
+                "create_area",
+                args(json!({"project":"acme","name":"backend","description":"svc"})),
+            )
             .await
             .unwrap(),
     );
     let area_id = area["id"].as_i64().unwrap();
-    let areas = body(&server.call("list_areas", args(json!({"project":"acme"}))).await.unwrap());
+    let areas = body(
+        &server
+            .call("list_areas", args(json!({"project":"acme"})))
+            .await
+            .unwrap(),
+    );
     let areas = areas.as_array().unwrap();
     assert_eq!(areas.len(), 1);
     assert_eq!(areas[0]["name"], "backend");
@@ -208,14 +285,20 @@ async fn mcp_coverage_gaps_end_to_end() {
     // update_card: create a card, then move its status and edit the title.
     let card = body(
         &server
-            .call("create_card", args(json!({"title":"draft","status":"Backlog","project_id":pid})))
+            .call(
+                "create_card",
+                args(json!({"title":"draft","status":"Backlog","project_id":pid})),
+            )
             .await
             .unwrap(),
     );
     let card_node = card["node_id"].as_i64().unwrap();
     let upd = body(
         &server
-            .call("update_card", args(json!({"node_id":card_node,"status":"Active","title":"shipped"})))
+            .call(
+                "update_card",
+                args(json!({"node_id":card_node,"status":"Active","title":"shipped"})),
+            )
             .await
             .unwrap(),
     );
@@ -228,59 +311,126 @@ async fn mcp_coverage_gaps_end_to_end() {
     // comments: add two, list them, delete one (node-scoped `node_id` arg).
     let cm = body(
         &server
-            .call("add_comment", args(json!({"node_id":card_node,"body":"first"})))
+            .call(
+                "add_comment",
+                args(json!({"node_id":card_node,"body":"first"})),
+            )
             .await
             .unwrap(),
     );
     let cm_id = cm["id"].as_i64().unwrap();
     server
-        .call("add_comment", args(json!({"node_id":card_node,"body":"second"})))
+        .call(
+            "add_comment",
+            args(json!({"node_id":card_node,"body":"second"})),
+        )
         .await
         .unwrap();
-    let comments = body(&server.call("list_comments", args(json!({"node_id":card_node}))).await.unwrap());
+    let comments = body(
+        &server
+            .call("list_comments", args(json!({"node_id":card_node})))
+            .await
+            .unwrap(),
+    );
     assert_eq!(comments.as_array().unwrap().len(), 2);
-    server.call("delete_comment", args(json!({"id":cm_id}))).await.unwrap();
-    let after = body(&server.call("list_comments", args(json!({"node_id":card_node}))).await.unwrap());
+    server
+        .call("delete_comment", args(json!({"id":cm_id})))
+        .await
+        .unwrap();
+    let after = body(
+        &server
+            .call("list_comments", args(json!({"node_id":card_node})))
+            .await
+            .unwrap(),
+    );
     assert_eq!(after.as_array().unwrap().len(), 1, "one comment deleted");
     assert_eq!(after[0]["body"], "second");
 
     // Sprint 003: comments are node-scoped — they also attach to a WORK ITEM node.
     let wi = body(
         &server
-            .call("create_work_item", args(json!({"title":"commented WI","content":"x"})))
+            .call(
+                "create_work_item",
+                args(json!({"title":"commented WI","content":"x"})),
+            )
             .await
             .unwrap(),
     );
     let wi_node = wi["node_id"].as_i64().unwrap();
     let wi_cm = body(
         &server
-            .call("add_comment", args(json!({"node_id":wi_node,"body":"note on a work item"})))
+            .call(
+                "add_comment",
+                args(json!({"node_id":wi_node,"body":"note on a work item"})),
+            )
             .await
             .unwrap(),
     );
-    assert_eq!(wi_cm["node_id"].as_i64(), Some(wi_node), "comment attached to the WI node");
-    let wi_comments = body(&server.call("list_comments", args(json!({"node_id":wi_node}))).await.unwrap());
-    assert_eq!(wi_comments.as_array().unwrap().len(), 1, "WI comment listed back");
+    assert_eq!(
+        wi_cm["node_id"].as_i64(),
+        Some(wi_node),
+        "comment attached to the WI node"
+    );
+    let wi_comments = body(
+        &server
+            .call("list_comments", args(json!({"node_id":wi_node})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        wi_comments.as_array().unwrap().len(),
+        1,
+        "WI comment listed back"
+    );
     assert_eq!(wi_comments[0]["body"], "note on a work item");
 
     // relate -> unrelate round-trip. Make a second card to link to.
-    let card2 = body(&server.call("create_card", args(json!({"title":"other"}))).await.unwrap());
+    let card2 = body(
+        &server
+            .call("create_card", args(json!({"title":"other"})))
+            .await
+            .unwrap(),
+    );
     let card2_node = card2["node_id"].as_i64().unwrap();
     let rel = body(
         &server
-            .call("relate", args(json!({"left":card_node,"right":card2_node,"label":"blocks"})))
+            .call(
+                "relate",
+                args(json!({"left":card_node,"right":card2_node,"label":"blocks"})),
+            )
             .await
             .unwrap(),
     );
     let rel_id = rel["id"].as_i64().unwrap();
-    let ns = body(&server.call("neighbors", args(json!({"node_id":card_node}))).await.unwrap());
+    let ns = body(
+        &server
+            .call("neighbors", args(json!({"node_id":card_node})))
+            .await
+            .unwrap(),
+    );
     let ns = ns.as_array().unwrap();
     assert_eq!(ns.len(), 1);
-    assert_eq!(ns[0]["rel_id"].as_i64(), Some(rel_id), "neighbors exposes rel_id for unrelate");
+    assert_eq!(
+        ns[0]["rel_id"].as_i64(),
+        Some(rel_id),
+        "neighbors exposes rel_id for unrelate"
+    );
 
-    server.call("unrelate", args(json!({"id":rel_id}))).await.unwrap();
-    let ns_after = body(&server.call("neighbors", args(json!({"node_id":card_node}))).await.unwrap());
-    assert_eq!(ns_after.as_array().unwrap().len(), 0, "edge removed by unrelate");
+    server
+        .call("unrelate", args(json!({"id":rel_id})))
+        .await
+        .unwrap();
+    let ns_after = body(
+        &server
+            .call("neighbors", args(json!({"node_id":card_node})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        ns_after.as_array().unwrap().len(),
+        0,
+        "edge removed by unrelate"
+    );
 }
 
 /// WI #85 — `list_work_items` must accept an optional `project` filter so MCP
@@ -288,8 +438,12 @@ async fn mcp_coverage_gaps_end_to_end() {
 #[tokio::test]
 async fn list_work_items_filters_by_project() {
     let (_c, pool) = fresh_korg().await;
-    let alpha = korg_core::repo::create_project(&pool, "alpha").await.unwrap();
-    let beta = korg_core::repo::create_project(&pool, "beta").await.unwrap();
+    let alpha = korg_core::repo::create_project(&pool, "alpha")
+        .await
+        .unwrap();
+    let beta = korg_core::repo::create_project(&pool, "beta")
+        .await
+        .unwrap();
     let server = KorgServer::new(pool);
 
     for (title, pid) in [("A1", alpha), ("A2", alpha), ("B1", beta)] {
@@ -303,7 +457,12 @@ async fn list_work_items_filters_by_project() {
     }
 
     // Unfiltered: every work item.
-    let all = body(&server.call("list_work_items", args(json!({}))).await.unwrap());
+    let all = body(
+        &server
+            .call("list_work_items", args(json!({})))
+            .await
+            .unwrap(),
+    );
     assert_eq!(all.as_array().unwrap().len(), 3, "unfiltered returns all");
 
     // Filtered by project name: only alpha's two items.
@@ -314,7 +473,11 @@ async fn list_work_items_filters_by_project() {
             .unwrap(),
     );
     let arr = only_alpha.as_array().unwrap();
-    assert_eq!(arr.len(), 2, "project filter must scope results to that project");
+    assert_eq!(
+        arr.len(),
+        2,
+        "project filter must scope results to that project"
+    );
     assert!(
         arr.iter().all(|w| w["project"] == "alpha"),
         "every returned item must belong to alpha"
@@ -327,7 +490,11 @@ async fn list_work_items_filters_by_project() {
             .await
             .unwrap(),
     );
-    assert_eq!(none.as_array().unwrap().len(), 0, "unknown project yields none");
+    assert_eq!(
+        none.as_array().unwrap().len(),
+        0,
+        "unknown project yields none"
+    );
 }
 
 /// Sprint 004 — agent planning: `propose_sprint` bundles a proposal + its
@@ -340,7 +507,10 @@ async fn propose_sprint_and_lifecycle() {
 
     let wi = body(
         &server
-            .call("create_work_item", args(json!({"title":"fix the thing","content":"x"})))
+            .call(
+                "create_work_item",
+                args(json!({"title":"fix the thing","content":"x"})),
+            )
             .await
             .unwrap(),
     );
@@ -366,7 +536,12 @@ async fn propose_sprint_and_lifecycle() {
         "only the real wi_number resolves; 9999 is dropped"
     );
 
-    let list = body(&server.call("list_proposals", args(json!({}))).await.unwrap());
+    let list = body(
+        &server
+            .call("list_proposals", args(json!({})))
+            .await
+            .unwrap(),
+    );
     let list = list.as_array().unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0]["status"], "proposed", "default status");
@@ -374,21 +549,45 @@ async fn propose_sprint_and_lifecycle() {
 
     // Pin it, then start it.
     server
-        .call("update_proposal", args(json!({"node_id":node_id,"pinned":true})))
+        .call(
+            "update_proposal",
+            args(json!({"node_id":node_id,"pinned":true})),
+        )
         .await
         .unwrap();
     server
-        .call("update_proposal", args(json!({"node_id":node_id,"status":"active"})))
+        .call(
+            "update_proposal",
+            args(json!({"node_id":node_id,"status":"active"})),
+        )
         .await
         .unwrap();
 
-    let active = body(&server.call("list_proposals", args(json!({"status":"active"}))).await.unwrap());
+    let active = body(
+        &server
+            .call("list_proposals", args(json!({"status":"active"})))
+            .await
+            .unwrap(),
+    );
     let active = active.as_array().unwrap();
     assert_eq!(active.len(), 1);
-    assert_eq!(active[0]["pinned"], json!(true), "pin survived the status change");
+    assert_eq!(
+        active[0]["pinned"],
+        json!(true),
+        "pin survived the status change"
+    );
 
-    let none_proposed = body(&server.call("list_proposals", args(json!({"status":"proposed"}))).await.unwrap());
-    assert_eq!(none_proposed.as_array().unwrap().len(), 0, "no longer in the proposed bucket");
+    let none_proposed = body(
+        &server
+            .call("list_proposals", args(json!({"status":"proposed"})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        none_proposed.as_array().unwrap().len(),
+        0,
+        "no longer in the proposed bucket"
+    );
 }
 
 /// Sprint 006 — `survey_work_items`: a slim, paginated projection for
@@ -419,33 +618,59 @@ async fn survey_work_items_paginates_and_filters() {
     // Page 1 of 2, page size 2, status filter excludes the closed item.
     let page1 = body(
         &server
-            .call("survey_work_items", args(json!({"wi_status": "open", "limit": 2, "offset": 0})))
+            .call(
+                "survey_work_items",
+                args(json!({"wi_status": "open", "limit": 2, "offset": 0})),
+            )
             .await
             .unwrap(),
     );
-    assert_eq!(page1["total"].as_i64(), Some(5), "total reflects the full filtered count, not just the page");
+    assert_eq!(
+        page1["total"].as_i64(),
+        Some(5),
+        "total reflects the full filtered count, not just the page"
+    );
     assert_eq!(page1["items"].as_array().unwrap().len(), 2);
     let item = &page1["items"][0];
-    assert!(item.get("content").is_none(), "survey is slim -- no content field");
-    assert!(item.get("details").is_none(), "survey is slim -- no details field");
+    assert!(
+        item.get("content").is_none(),
+        "survey is slim -- no content field"
+    );
+    assert!(
+        item.get("details").is_none(),
+        "survey is slim -- no details field"
+    );
     assert!(item.get("wi_number").is_some());
     assert!(item.get("node_id").is_some());
     assert!(item.get("title").is_some());
 
     let page2 = body(
         &server
-            .call("survey_work_items", args(json!({"wi_status": "open", "limit": 2, "offset": 2})))
+            .call(
+                "survey_work_items",
+                args(json!({"wi_status": "open", "limit": 2, "offset": 2})),
+            )
             .await
             .unwrap(),
     );
     assert_eq!(page2["items"].as_array().unwrap().len(), 2);
-    assert_ne!(page1["items"][0]["wi_number"], page2["items"][0]["wi_number"], "pages don't overlap");
+    assert_ne!(
+        page1["items"][0]["wi_number"], page2["items"][0]["wi_number"],
+        "pages don't overlap"
+    );
 
     let all_open = body(
         &server
-            .call("survey_work_items", args(json!({"wi_status": "open", "limit": 50})))
+            .call(
+                "survey_work_items",
+                args(json!({"wi_status": "open", "limit": 50})),
+            )
             .await
             .unwrap(),
     );
-    assert_eq!(all_open["items"].as_array().unwrap().len(), 5, "closed item excluded by the status filter");
+    assert_eq!(
+        all_open["items"].as_array().unwrap().len(),
+        5,
+        "closed item excluded by the status filter"
+    );
 }

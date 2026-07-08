@@ -91,7 +91,7 @@ async fn mcp_http_end_to_end() {
     .await;
     assert_eq!(st, StatusCode::OK);
     let tools = tl["result"]["tools"].as_array().expect("tools array");
-    assert_eq!(tools.len(), 32, "expected 32 tools, got {}", tools.len());
+    assert_eq!(tools.len(), 34, "expected 34 tools, got {}", tools.len());
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     assert!(names.contains(&"create_work_item"));
     assert!(names.contains(&"list_work_items"));
@@ -118,7 +118,10 @@ async fn mcp_http_end_to_end() {
     assert_eq!(st, StatusCode::OK);
     let made = tool_payload(&created);
     // Since 0009_identity, wi_number IS the node id — one number everywhere.
-    assert_eq!(made["wi_number"], made["node_id"], "wi_number == node_id: {made}");
+    assert_eq!(
+        made["wi_number"], made["node_id"],
+        "wi_number == node_id: {made}"
+    );
     let _wi_number = made["wi_number"].as_i64().unwrap();
 
     // 4. tools/call list_work_items reflects the new item.
