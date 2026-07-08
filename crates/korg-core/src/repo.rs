@@ -206,20 +206,25 @@ pub struct Neighbor {
     pub node_id: i64,
     pub kind: String,
     pub label: String,
+    /// "out" = the queried node is the edge's left (label reads queried → this
+    /// neighbor, e.g. queried `depends_on` neighbor); "in" = the reverse.
+    pub direction: String,
 }
 
 pub async fn relate(pool: &PgPool, left: i64, right: i64, label: &str) -> Result<i64> {
-    // Relationships are undirected: canonicalize to left < right so the unique
-    // constraint and dedup treat (a,b) and (b,a) as the same edge.
-    let (lo, hi) = if left <= right { (left, right) } else { (right, left) };
+    // Relationships are DIRECTED (sprint 008, supersedes WI #84's undirected
+    // canonicalization): the label reads left-to-right, e.g. left `depends_on`
+    // right. Exact duplicates still dedup via the unique constraint; the
+    // reverse orientation is a distinct edge. Labels with no meaningful
+    // direction simply ignore it, as all pre-008 consumers already did.
     let id: i64 = sqlx::query(
         "INSERT INTO relationship (left_id, right_id, relationship) \
          VALUES ($1, $2, $3) \
          ON CONFLICT (left_id, right_id, relationship) DO UPDATE SET left_id = relationship.left_id \
          RETURNING id",
     )
-    .bind(lo)
-    .bind(hi)
+    .bind(left)
+    .bind(right)
     .bind(label)
     .fetch_one(pool)
     .await?
@@ -227,11 +232,13 @@ pub async fn relate(pool: &PgPool, left: i64, right: i64, label: &str) -> Result
     Ok(id)
 }
 
-/// Undirected neighbors of `node`: the node on the other end of each edge,
+/// Neighbors of `node`: the node on the other end of each edge (direction
+/// tells you which end the queried node is),
 /// with that node's kind and the relationship label. Works across kinds.
 pub async fn neighbors(pool: &PgPool, node: i64) -> Result<Vec<Neighbor>> {
     let rows = sqlx::query_as::<_, Neighbor>(
-        "SELECT r.id AS rel_id, n.id AS node_id, n.kind, r.relationship AS label \
+        "SELECT r.id AS rel_id, n.id AS node_id, n.kind, r.relationship AS label, \
+                CASE WHEN r.left_id = $1 THEN 'out' ELSE 'in' END AS direction \
          FROM relationship r \
          JOIN node n \
            ON n.id = CASE WHEN r.left_id = $1 THEN r.right_id ELSE r.left_id END \
@@ -239,6 +246,30 @@ pub async fn neighbors(pool: &PgPool, node: i64) -> Result<Vec<Neighbor>> {
          ORDER BY n.id",
     )
     .bind(node)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// All (left, right) edges with the given label where BOTH endpoints belong
+/// to the named project. Feeds the Plan view: with label `depends_on`, left
+/// depends on right.
+pub async fn project_edges(
+    pool: &PgPool,
+    project: &str,
+    label: &str,
+) -> Result<Vec<(i64, i64)>> {
+    let rows: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT r.left_id, r.right_id \
+         FROM relationship r \
+         JOIN node nl ON nl.id = r.left_id \
+         JOIN node nr ON nr.id = r.right_id \
+         JOIN project p ON p.id = nl.project_id AND p.id = nr.project_id \
+         WHERE p.name = $1 AND r.relationship = $2 \
+         ORDER BY r.id",
+    )
+    .bind(project)
+    .bind(label)
     .fetch_all(pool)
     .await?;
     Ok(rows)

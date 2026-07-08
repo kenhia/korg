@@ -149,11 +149,11 @@ pub fn tools() -> Vec<Tool> {
             "type":"object","additionalProperties":false,"required":["node_id","read"],
             "properties":{"node_id":id,"read":{"type":"boolean"}}
         })),
-        tool("relate", "Create a generalized relationship edge between any two nodes.", json!({
+        tool("relate", "Create a DIRECTED relationship edge between any two nodes; the label reads left-to-right (e.g. left depends_on right). Exact duplicates dedup; the reverse orientation is a distinct edge.", json!({
             "type":"object","additionalProperties":false,"required":["left","right","label"],
             "properties":{"left":id,"right":id,"label":{"type":"string","minLength":1}}
         })),
-        tool("neighbors", "List the nodes linked to a node (any kind), with labels. Each entry includes `rel_id`, the edge id to pass to `unrelate`.", json!({
+        tool("neighbors", "List the nodes linked to a node (any kind), with labels. Each entry includes `rel_id` (pass to `unrelate`) and `direction`: \"out\" = the queried node is the edge's left (label reads queried->neighbor), \"in\" = the reverse.", json!({
             "type":"object","additionalProperties":false,"required":["node_id"],
             "properties":{"node_id":id}
         })),
