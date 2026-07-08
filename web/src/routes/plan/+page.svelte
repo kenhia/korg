@@ -23,8 +23,11 @@
   });
   const byNumber = $derived(new Map(items.map((w) => [w.wi_number, w])));
 
+  // Terminal statuses: done and closed are finished; resolved is shipped
+  // awaiting human confirmation — all three unblock dependents.
+  const TERMINAL = new Set(["done", "closed", "resolved"]);
   function isDone(w: WorkItem): boolean {
-    return w.wi_status === "done";
+    return TERMINAL.has(w.wi_status);
   }
   function blockedBy(w: WorkItem): number[] {
     return (depsOf.get(w.wi_number) ?? []).filter((d) => {
