@@ -28,7 +28,10 @@ fn validate_status(value: &str, allowed: &[&str], what: &str) -> Result<()> {
     if allowed.contains(&value) {
         Ok(())
     } else {
-        anyhow::bail!("invalid {what} '{value}' — expected one of: {}", allowed.join(", "))
+        anyhow::bail!(
+            "invalid {what} '{value}' — expected one of: {}",
+            allowed.join(", ")
+        )
     }
 }
 
@@ -199,7 +202,7 @@ pub async fn set_link_disposition(pool: &PgPool, node_id: i64, disposition: &str
     Ok(())
 }
 
-/// Update the cross-cutting tags on any node (work item, card, link, slot).
+/// Update the cross-cutting tags on any node.
 pub async fn set_node_tags(pool: &PgPool, node_id: i64, tags: &[String]) -> Result<()> {
     sqlx::query("UPDATE node SET tags = $2 WHERE id = $1")
         .bind(node_id)
@@ -476,22 +479,36 @@ pub async fn get_node_preview(pool: &PgPool, id: i64) -> Result<Option<NodePrevi
                 p.body_label = Some("Summary".into());
             }
         }
-        "slot" => {
+        "topic" => {
             if let Some(r) = sqlx::query(
-                "SELECT to_char(slot_date, 'YYYY-MM-DD') AS slot_date, duration_minutes, \
-                        label, goal FROM slot WHERE node_id = $1",
+            "SELECT name, description FROM topic WHERE node_id = $1",
             )
             .bind(id)
             .fetch_optional(pool)
             .await?
             {
-                let date: String = r.get("slot_date");
-                p.title = r.get::<Option<String>, _>("label").unwrap_or_else(|| format!("Slot {date}"));
-                p.fields.push(field("Date", date));
-                p.fields.push(field("Duration", format!("{} min", r.get::<i32, _>("duration_minutes"))));
-                if let Some(goal) = r.get::<Option<String>, _>("goal") {
-                    p.body = Some(goal);
-                    p.body_label = Some("Goal".into());
+                p.title = r.get("name");
+                if let Some(description) = r.get::<Option<String>, _>("description") {
+                    p.body = Some(description);
+                    p.body_label = Some("Description".into());
+                }
+            }
+        }
+        "daily_plan_item" => {
+            if let Some(r) = sqlx::query(
+                "SELECT to_char(plan_date, 'YYYY-MM-DD') AS plan_date, display, \
+                        source_node_id, completed_at IS NOT NULL AS completed \
+                 FROM daily_plan_item WHERE node_id = $1",
+            )
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            {
+                p.title = r.get("display");
+                p.fields.push(field("Date", r.get::<String, _>("plan_date")));
+                p.fields.push(field("Source", format!("#{}", r.get::<i64, _>("source_node_id"))));
+                if r.get::<bool, _>("completed") {
+                    p.badges.push("complete".into());
                 }
             }
         }
@@ -764,11 +781,7 @@ pub async fn update_project(pool: &PgPool, id: i64, patch: &ProjectPatch) -> Res
 
 /// Name-keyed wrapper (the REST/MCP surfaces key projects by name; the
 /// name itself is immutable — see WI #246).
-pub async fn update_project_by_name(
-    pool: &PgPool,
-    name: &str,
-    patch: &ProjectPatch,
-) -> Result<()> {
+pub async fn update_project_by_name(pool: &PgPool, name: &str, patch: &ProjectPatch) -> Result<()> {
     let id: Option<i64> = sqlx::query_scalar("SELECT id FROM project WHERE name = $1")
         .bind(name)
         .fetch_optional(pool)

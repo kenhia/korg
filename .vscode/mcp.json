@@ -3,6 +3,10 @@
     "github": {
       "type": "http",
       "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "korg": {
+      "type": "http",
+      "url": "http://kubsdb:5674/mcp"
     }
   },
   "inputs": []

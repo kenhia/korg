@@ -4,6 +4,7 @@ use http_body_util::BodyExt;
 use korg_api::{build_router, AppState};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use time::macros::datetime;
 use tower::ServiceExt;
 
 use axum::body::Body;
@@ -23,6 +24,9 @@ async fn app() -> (impl Sized, axum::Router) {
     let pool = korg_core::connect(&url).await.expect("connect+migrate");
     let router = build_router(AppState {
         pool: Arc::new(pool),
+        config: Arc::new(
+            korg_core::config::KorgConfig::fixed("UTC", datetime!(2026-07-11 12:00 UTC)).unwrap(),
+        ),
     });
     (container, router)
 }
@@ -205,50 +209,89 @@ async fn api_end_to_end() {
     assert_eq!(links[0]["disposition"], "Revisit");
     assert_eq!(links[0]["tags"][0], "read");
 
-    // Slots: seeded templates, generate a week, list it, set a goal.
-    let (_st, tmpl) = req(&router, "GET", "/api/slot-templates", None).await;
-    assert_eq!(tmpl.as_array().unwrap().len(), 16);
-    let (st, gen) = req(
+    // Topics: create, search, update. Daily planning snapshots display server-side.
+    let (st, topic) = req(
         &router,
         "POST",
-        "/api/slots/generate",
-        Some(json!({"start":"2024-01-01","days":7})),
+        "/api/topics",
+        Some(json!({"name":"Backend architecture","description":"explore"})),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
-    assert_eq!(gen["created"].as_i64(), Some(16));
-    let (_st, week) = req(
-        &router,
-        "GET",
-        "/api/slots?from=2024-01-01&to=2024-01-07",
-        None,
-    )
-    .await;
-    let week = week.as_array().unwrap();
-    assert_eq!(week.len(), 16);
-    let slot_node = week[0]["node_id"].as_i64().unwrap();
+    let topic_node = topic["node_id"].as_i64().unwrap();
+    let (_st, found) = req(&router, "GET", "/api/topics?q=ARCH", None).await;
+    assert_eq!(found.as_array().unwrap().len(), 1);
     let (st, _) = req(
         &router,
         "PATCH",
-        &format!("/api/slots/{slot_node}"),
-        Some(json!({"goal":"Read docs"})),
+        &format!("/api/topics/{topic_node}"),
+        Some(json!({"name":"Backend systems"})),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
 
-    // Relationship: drop a card into a slot (reference, not move).
+    let (st, planned) = req(
+        &router,
+        "POST",
+        "/api/daily-plan",
+        Some(json!({"source_node_id":topic_node,"plan_date":"2026-07-11"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let planned_node = planned["node_id"].as_i64().unwrap();
+    let (_st, day) = req(
+        &router,
+        "GET",
+        "/api/daily-plan?from=2026-07-11&to=2026-07-11",
+        None,
+    )
+    .await;
+    assert_eq!(day.as_array().unwrap().len(), 1);
+    assert_eq!(day[0]["display"], "Backend systems");
+    let (st, _) = req(
+        &router,
+        "PATCH",
+        &format!("/api/daily-plan/{planned_node}/completion"),
+        Some(json!({"completed":true})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, moved) = req(
+        &router,
+        "POST",
+        &format!("/api/daily-plan/{planned_node}/move"),
+        Some(json!({"target_date":"2026-07-12","target_position":0})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(moved["copied"], false);
+    let (st, historical) = req(&router, "GET", "/api/daily-plan/history?preset=week", None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(historical["total"], 0);
+    let (st, _) = req(
+        &router,
+        "POST",
+        &format!("/api/topics/{topic_node}/archive"),
+        Some(json!({"archived":true})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (_st, topics) = req(&router, "GET", "/api/topics", None).await;
+    assert!(topics.as_array().unwrap().is_empty());
+
+    // Daily plan items remain ordinary nodes for generalized relationships.
     let (st, _) = req(
         &router,
         "POST",
         "/api/relationships",
-        Some(json!({"left":slot_node,"right":card_node,"label":"scheduled"})),
+        Some(json!({"left":planned_node,"right":card_node,"label":"scheduled"})),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
     let (_st, ns) = req(
         &router,
         "GET",
-        &format!("/api/nodes/{slot_node}/neighbors"),
+        &format!("/api/nodes/{planned_node}/neighbors"),
         None,
     )
     .await;
@@ -326,7 +369,7 @@ async fn api_end_to_end() {
     let (_st, ns) = req(
         &router,
         "GET",
-        &format!("/api/nodes/{slot_node}/neighbors"),
+        &format!("/api/nodes/{planned_node}/neighbors"),
         None,
     )
     .await;
@@ -342,7 +385,7 @@ async fn api_end_to_end() {
     let (_st, ns2) = req(
         &router,
         "GET",
-        &format!("/api/nodes/{slot_node}/neighbors"),
+        &format!("/api/nodes/{planned_node}/neighbors"),
         None,
     )
     .await;

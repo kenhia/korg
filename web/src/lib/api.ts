@@ -1,7 +1,12 @@
 // Typed client for korg-api. In dev, Vite proxies /api -> korg-api; in prod
 // korg-api serves this bundle, so same-origin /api works directly.
 
-export const PROJECT_STATUSES = ["active", "maintenance", "inactive", "archived"] as const;
+export const PROJECT_STATUSES = [
+  "active",
+  "maintenance",
+  "inactive",
+  "archived",
+] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 
 export interface Project {
@@ -90,13 +95,54 @@ export interface Link {
   tags: string[];
 }
 
-export interface Slot {
+export type DailyPlanSourceKind = "workitem" | "card" | "topic";
+
+export interface Topic {
   node_id: number;
-  slot_date: string; // YYYY-MM-DD
-  duration_minutes: number;
-  label: string | null;
-  goal: string | null;
+  name: string;
+  description: string | null;
+  project_id: number | null;
+  project: string | null;
+  category: string | null;
+  tags: string[];
+  archived: boolean;
+  created: string;
+  updated: string;
+}
+
+export interface TopicPatch {
+  name?: string;
+  description?: string | null;
+  category?: string | null;
+  tags?: string[];
+}
+
+export interface DailyPlanItem {
+  node_id: number;
+  plan_date: string;
   position: number;
+  display: string;
+  source_node_id: number;
+  source_kind: DailyPlanSourceKind;
+  source_title: string;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface DailyPlanHistory {
+  from: string;
+  to: string;
+  total: number;
+  completed: number;
+  completion_rate: number;
+  items: DailyPlanItem[];
+}
+
+export type HistoryPreset = "week" | "month" | "90days" | "year";
+
+export interface DailyPlanMoveOutcome {
+  node_id: number;
+  copied: boolean;
 }
 
 export interface Neighbor {
@@ -142,7 +188,12 @@ export interface NodePreview {
   updated: string;
 }
 
-export const PROPOSAL_STATUSES = ["proposed", "active", "done", "declined"] as const;
+export const PROPOSAL_STATUSES = [
+  "proposed",
+  "active",
+  "done",
+  "declined",
+] as const;
 export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 
 export interface Proposal {
@@ -185,10 +236,15 @@ export interface Comment {
   updated: string;
 }
 
-async function http<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function http<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<T> {
   const res = await fetch(path, {
     method,
-    headers: body !== undefined ? { "content-type": "application/json" } : undefined,
+    headers:
+      body !== undefined ? { "content-type": "application/json" } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
@@ -226,24 +282,36 @@ export const api = {
   reports: (source?: string) =>
     http<ReportRow[]>(
       "GET",
-      source ? `/api/reports?source=${encodeURIComponent(source)}` : "/api/reports",
+      source
+        ? `/api/reports?source=${encodeURIComponent(source)}`
+        : "/api/reports",
     ),
-  report: (node_id: number) => http<ReportFull>("GET", `/api/reports/${node_id}`),
+  report: (node_id: number) =>
+    http<ReportFull>("GET", `/api/reports/${node_id}`),
 
   // projects
   projects: () => http<Project[]>("GET", "/api/projects"),
-  recentProject: () => http<{ project: string | null }>("GET", "/api/projects/recent"),
-  createProject: (name: string) => http<{ id: number; name: string }>("POST", "/api/projects", { name }),
+  recentProject: () =>
+    http<{ project: string | null }>("GET", "/api/projects/recent"),
+  createProject: (name: string) =>
+    http<{ id: number; name: string }>("POST", "/api/projects", { name }),
   updateProject: (name: string, patch: ProjectPatch) =>
-    http<{ ok: boolean }>("PATCH", `/api/projects/${encodeURIComponent(name)}`, patch),
+    http<{ ok: boolean }>(
+      "PATCH",
+      `/api/projects/${encodeURIComponent(name)}`,
+      patch,
+    ),
 
   // work items
   workItems: (project?: string) =>
     http<WorkItem[]>(
       "GET",
-      project ? `/api/work-items?project=${encodeURIComponent(project)}` : "/api/work-items",
+      project
+        ? `/api/work-items?project=${encodeURIComponent(project)}`
+        : "/api/work-items",
     ),
-  workItem: (wi: number) => http<WorkItem | null>("GET", `/api/work-items/${wi}`),
+  workItem: (wi: number) =>
+    http<WorkItem | null>("GET", `/api/work-items/${wi}`),
   createWorkItem: (b: {
     title: string;
     content: string;
@@ -254,7 +322,8 @@ export const api = {
     details?: string;
     area_id?: number;
     project_id?: number;
-  }) => http<{ node_id: number; wi_number: number }>("POST", "/api/work-items", b),
+  }) =>
+    http<{ node_id: number; wi_number: number }>("POST", "/api/work-items", b),
   updateWorkItem: (
     wi: number,
     patch: Partial<{
@@ -272,9 +341,16 @@ export const api = {
     }>,
   ) => http<{ ok: true }>("PATCH", `/api/work-items/${wi}`, patch),
   areas: (project: string) =>
-    http<{ id: number; name: string }[]>("GET", `/api/areas?project=${encodeURIComponent(project)}`),
+    http<{ id: number; name: string }[]>(
+      "GET",
+      `/api/areas?project=${encodeURIComponent(project)}`,
+    ),
   createArea: (project: string, name: string, description?: string) =>
-    http<{ id: number; name: string }>("POST", "/api/areas", { project, name, description }),
+    http<{ id: number; name: string }>("POST", "/api/areas", {
+      project,
+      name,
+      description,
+    }),
 
   // cards
   cards: () => http<Card[]>("GET", "/api/cards"),
@@ -299,7 +375,8 @@ export const api = {
     http<Comment>("POST", `/api/nodes/${node_id}/comments`, { body }),
   updateComment: (id: number, body: string) =>
     http<Comment>("PATCH", `/api/comments/${id}`, { body }),
-  deleteComment: (id: number) => http<{ ok: true }>("DELETE", `/api/comments/${id}`),
+  deleteComment: (id: number) =>
+    http<{ ok: true }>("DELETE", `/api/comments/${id}`),
 
   // reading-list links
   links: () => http<Link[]>("GET", "/api/links"),
@@ -310,25 +387,89 @@ export const api = {
     patch: Partial<{ disposition: Disposition; read: boolean; tags: string[] }>,
   ) => http<{ ok: true }>("PATCH", `/api/links/${node_id}`, patch),
 
-  // slots
-  slots: (from: string, to: string) =>
-    http<Slot[]>("GET", `/api/slots?from=${from}&to=${to}`),
-  generateSlots: (start: string, days: number) =>
-    http<{ created: number }>("POST", "/api/slots/generate", { start, days }),
-  setSlotGoal: (node_id: number, goal: string | null) =>
-    http<{ ok: true }>("PATCH", `/api/slots/${node_id}`, { goal }),
+  // topics
+  topics: (query?: string) =>
+    http<Topic[]>(
+      "GET",
+      query === undefined
+        ? "/api/topics"
+        : `/api/topics?q=${encodeURIComponent(query)}`,
+    ),
+  topic: (node_id: number) =>
+    http<Topic | null>("GET", `/api/topics/${node_id}`),
+  createTopic: (body: {
+    name: string;
+    description?: string;
+    project_id?: number;
+    category?: string;
+    tags?: string[];
+  }) => http<{ node_id: number }>("POST", "/api/topics", body),
+  updateTopic: (node_id: number, patch: TopicPatch) =>
+    http<{ ok: true }>("PATCH", `/api/topics/${node_id}`, patch),
+  archiveTopic: (node_id: number, archived = true) =>
+    http<{ ok: true }>("POST", `/api/topics/${node_id}/archive`, { archived }),
+
+  // daily planning
+  dailyPlan: (from: string, to: string) =>
+    http<DailyPlanItem[]>(
+      "GET",
+      `/api/daily-plan?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    ),
+  createDailyPlanItem: (source_node_id: number, plan_date: string) =>
+    http<{ node_id: number }>("POST", "/api/daily-plan", {
+      source_node_id,
+      plan_date,
+    }),
+  setDailyPlanCompletion: (node_id: number, completed: boolean) =>
+    http<{ ok: true }>("PATCH", `/api/daily-plan/${node_id}/completion`, {
+      completed,
+    }),
+  deleteDailyPlanItem: (node_id: number) =>
+    http<{ ok: true }>("DELETE", `/api/daily-plan/${node_id}`),
+  moveDailyPlanItem: (
+    node_id: number,
+    target_date: string,
+    target_position = 0,
+  ) =>
+    http<DailyPlanMoveOutcome>("POST", `/api/daily-plan/${node_id}/move`, {
+      target_date,
+      target_position,
+    }),
+  reorderDailyPlan: (plan_date: string, node_ids: number[]) =>
+    http<{ ok: true }>(
+      "PUT",
+      `/api/daily-plan/${encodeURIComponent(plan_date)}/order`,
+      {
+        node_ids,
+      },
+    ),
+  dailyPlanHistory: (preset: HistoryPreset, source_node_id?: number) => {
+    const params = new URLSearchParams({ preset });
+    if (source_node_id !== undefined)
+      params.set("source_node_id", String(source_node_id));
+    return http<DailyPlanHistory>("GET", `/api/daily-plan/history?${params}`);
+  },
 
   // relationships
   relate: (left: number, right: number, label: string) =>
     http<{ id: number }>("POST", "/api/relationships", { left, right, label }),
-  unrelate: (id: number) => http<{ ok: true }>("DELETE", `/api/relationships/${id}`),
-  neighbors: (id: number) => http<Neighbor[]>("GET", `/api/nodes/${id}/neighbors`),
+  unrelate: (id: number) =>
+    http<{ ok: true }>("DELETE", `/api/relationships/${id}`),
+  neighbors: (id: number) =>
+    http<Neighbor[]>("GET", `/api/nodes/${id}/neighbors`),
   node: (id: number) => http<NodePreview | null>("GET", `/api/nodes/${id}`),
-  plan: (project: string) => http<PlanResponse>("GET", `/api/projects/${encodeURIComponent(project)}/plan`),
+  plan: (project: string) =>
+    http<PlanResponse>(
+      "GET",
+      `/api/projects/${encodeURIComponent(project)}/plan`,
+    ),
 
   // sprint proposals (agent planning)
   proposals: (status?: ProposalStatus) =>
-    http<Proposal[]>("GET", status ? `/api/proposals?status=${status}` : "/api/proposals"),
+    http<Proposal[]>(
+      "GET",
+      status ? `/api/proposals?status=${status}` : "/api/proposals",
+    ),
   createProposal: (b: {
     title: string;
     summary: string;
@@ -337,7 +478,8 @@ export const api = {
     rank?: number;
     pinned?: boolean;
     tags?: string[];
-  }) => http<{ node_id: number; covered: number[] }>("POST", "/api/proposals", b),
+  }) =>
+    http<{ node_id: number; covered: number[] }>("POST", "/api/proposals", b),
   updateProposal: (
     node_id: number,
     patch: Partial<{

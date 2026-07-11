@@ -8,9 +8,11 @@ use korg_mcp::tools::{tools, KorgServer};
 use rmcp::model::{CallToolResult, JsonObject};
 use serde_json::{json, Value};
 use sqlx::PgPool;
+use std::sync::Arc;
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
 use testcontainers_modules::testcontainers::ImageExt;
+use time::macros::datetime;
 
 async fn fresh_korg() -> (impl Sized, PgPool) {
     let container = Postgres::default()
@@ -31,6 +33,15 @@ fn args(v: Value) -> Option<JsonObject> {
     }
 }
 
+fn server(pool: PgPool) -> KorgServer {
+    KorgServer::new(
+        pool,
+        Arc::new(
+            korg_core::config::KorgConfig::fixed("UTC", datetime!(2026-07-11 12:00 UTC)).unwrap(),
+        ),
+    )
+}
+
 /// Extract the JSON body of a successful tool result.
 fn body(result: &CallToolResult) -> Value {
     assert_ne!(
@@ -49,10 +60,10 @@ fn body(result: &CallToolResult) -> Value {
 #[tokio::test]
 async fn mcp_surface_end_to_end() {
     let (_c, pool) = fresh_korg().await;
-    let server = KorgServer::new(pool);
+    let server = server(pool);
 
     // Tool descriptors are stable.
-    assert_eq!(tools().len(), 34, "expected 34 tools");
+    assert_eq!(tools().len(), 42, "expected 42 tools");
 
     // Create a work item.
     let wi = body(
@@ -115,36 +126,57 @@ async fn mcp_surface_end_to_end() {
     let links = body(&server.call("list_links", args(json!({}))).await.unwrap());
     assert_eq!(links.as_array().unwrap().len(), 1);
 
-    // Seeded weekly template (16 rows) is visible.
-    let tmpl = body(
+    // Topics and daily planning round-trip with server-derived display.
+    let topic = body(
         &server
-            .call("list_slot_templates", args(json!({})))
+            .call("create_topic", args(json!({"name":"Architecture"})))
             .await
             .unwrap(),
     );
-    assert_eq!(tmpl.as_array().unwrap().len(), 16);
-
-    // Generate a week of slots and read them back.
-    let gen = body(
+    let topic_node = topic["node_id"].as_i64().unwrap();
+    let planned = body(
         &server
             .call(
-                "generate_slots",
-                args(json!({"start":"2024-01-01","days":7})),
+                "create_daily_plan_item",
+                args(json!({"source_node_id":topic_node,"plan_date":"2026-07-11"})),
             )
             .await
             .unwrap(),
     );
-    assert_eq!(gen["created"].as_i64(), Some(16));
-    let week = body(
+    let planned_node = planned["node_id"].as_i64().unwrap();
+    let completed = body(
         &server
             .call(
-                "list_slots",
-                args(json!({"from":"2024-01-01","to":"2024-01-07"})),
+                "set_daily_plan_completion",
+                args(json!({"node_id":planned_node,"completed":true})),
             )
             .await
             .unwrap(),
     );
-    assert_eq!(week.as_array().unwrap().len(), 16);
+    assert_eq!(completed["ok"], true);
+    let moved = body(
+        &server
+            .call(
+                "move_daily_plan_item",
+                args(
+                    json!({"node_id":planned_node,"target_date":"2026-07-12","target_position":0}),
+                ),
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(moved["copied"], false);
+    let day = body(
+        &server
+            .call(
+                "list_daily_plan",
+                args(json!({"from":"2026-07-12","to":"2026-07-12"})),
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(day.as_array().unwrap().len(), 1);
+    assert_eq!(day[0]["display"], "Architecture");
 
     // Unknown tool is a clean error.
     assert!(server.call("nope", args(json!({}))).await.is_err());
@@ -155,7 +187,7 @@ async fn mcp_surface_end_to_end() {
 #[tokio::test]
 async fn update_work_item_partial_and_nullable() {
     let (_c, pool) = fresh_korg().await;
-    let server = KorgServer::new(pool);
+    let server = server(pool);
 
     // Create with a details value and an "open" status.
     let wi = body(
@@ -235,7 +267,7 @@ async fn update_work_item_partial_and_nullable() {
 #[tokio::test]
 async fn mcp_coverage_gaps_end_to_end() {
     let (_c, pool) = fresh_korg().await;
-    let server = KorgServer::new(pool);
+    let server = server(pool);
 
     // create_project is idempotent and returns an id.
     let p1 = body(
@@ -444,7 +476,7 @@ async fn list_work_items_filters_by_project() {
     let beta = korg_core::repo::create_project(&pool, "beta")
         .await
         .unwrap();
-    let server = KorgServer::new(pool);
+    let server = server(pool);
 
     for (title, pid) in [("A1", alpha), ("A2", alpha), ("B1", beta)] {
         server
@@ -503,7 +535,7 @@ async fn list_work_items_filters_by_project() {
 #[tokio::test]
 async fn propose_sprint_and_lifecycle() {
     let (_c, pool) = fresh_korg().await;
-    let server = KorgServer::new(pool);
+    let server = server(pool);
 
     let wi = body(
         &server
@@ -596,7 +628,7 @@ async fn propose_sprint_and_lifecycle() {
 #[tokio::test]
 async fn survey_work_items_paginates_and_filters() {
     let (_c, pool) = fresh_korg().await;
-    let server = KorgServer::new(pool);
+    let server = server(pool);
 
     for i in 0..5 {
         server

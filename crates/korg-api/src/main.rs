@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use korg_api::{build_router, AppState};
+use korg_core::config::KorgConfig;
 use korg_core::connect;
 use tracing_subscriber::EnvFilter;
 
@@ -22,8 +23,10 @@ async fn main() -> anyhow::Result<()> {
         .parse()?;
 
     let pool = connect(&database_url).await?;
+    let config = KorgConfig::from_env()?;
     let state = AppState {
         pool: Arc::new(pool),
+        config: Arc::new(config),
     };
     let app = build_router(state);
 
