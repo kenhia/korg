@@ -3,12 +3,13 @@
 //! Exposes work items, cards, reading-list links, generalized relationships,
 //! and calendar slots to AI agents over the MCP protocol.
 
+use korg_core::config::KorgConfig;
 use korg_core::repo::{
     self, create_card, create_link, create_proposal, create_work_item, list_cards, list_links,
     list_projects, list_work_items, update_work_item, upsert_report, CardPatch, NewCard, NewLink,
     NewProposal, NewReport, NewWorkItem, ProposalPatch, WorkItemPatch,
 };
-use korg_core::slots::{self, NewTemplateSlot};
+use korg_core::{daily_plan, topics};
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, Content, ErrorData, Implementation, JsonObject,
@@ -19,17 +20,19 @@ use rust_decimal::Decimal;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
+use std::sync::Arc;
 use time::macros::format_description;
 use time::Date;
 
 #[derive(Clone)]
 pub struct KorgServer {
     pub pool: PgPool,
+    pub config: Arc<KorgConfig>,
 }
 
 impl KorgServer {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: PgPool, config: Arc<KorgConfig>) -> Self {
+        Self { pool, config }
     }
 }
 
@@ -165,30 +168,50 @@ pub fn tools() -> Vec<Tool> {
             "type":"object","additionalProperties":false,"required":["id"],
             "properties":{"id":id}
         })),
-        tool("list_slots", "List calendar timebox slots between two dates (inclusive).", json!({
+        tool("create_topic", "Create a reusable planning topic. Returns its node_id.", json!({
+            "type":"object","additionalProperties":false,"required":["name"],
+            "properties":{"name":{"type":"string","minLength":1},"description":{"type":["string","null"]},"project_id":id,"category":{"type":["string","null"]},"tags":tags}
+        })),
+        tool("get_topic", "Fetch a topic by node_id, including archived topics.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id"],"properties":{"node_id":id}
+        })),
+        tool("list_topics", "List non-archived topics.", empty()),
+        tool("search_topics", "Search non-archived topic names and descriptions.", json!({
+            "type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string"}}
+        })),
+        tool("update_topic", "Partially update a topic.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id"],
+            "properties":{"node_id":id,"name":{"type":"string","minLength":1},"description":{"type":["string","null"]},"category":{"type":["string","null"]},"tags":tags}
+        })),
+        tool("archive_topic", "Archive or restore a topic.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id"],"properties":{"node_id":id,"archived":{"type":"boolean","default":true}}
+        })),
+        tool("list_daily_plan", "List daily plan items in an inclusive date range with snapshots and current source titles.", json!({
             "type":"object","additionalProperties":false,"required":["from","to"],
             "properties":{"from":date.clone(),"to":date.clone()}
         })),
-        tool("generate_slots", "Materialize slots from the weekly template for N days starting at a date.", json!({
-            "type":"object","additionalProperties":false,"required":["start","days"],
-            "properties":{"start":date,"days":{"type":"integer","minimum":1}}
+        tool("create_daily_plan_item", "Plan a work item, card, or topic. Display is resolved and snapshotted server-side.", json!({
+            "type":"object","additionalProperties":false,"required":["source_node_id","plan_date"],
+            "properties":{"source_node_id":id,"plan_date":date.clone()}
         })),
-        tool("set_slot_goal", "Set (or clear) the small goal on a slot.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id"],
-            "properties":{"node_id":id,"goal":{"type":["string","null"]}}
+        tool("set_daily_plan_completion", "Complete or uncomplete any daily plan item; timestamp is server-authoritative.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id","completed"],
+            "properties":{"node_id":id,"completed":{"type":"boolean"}}
         })),
-        tool("list_slot_templates", "List the editable weekly slot template.", empty()),
-        tool("set_slot_template", "Replace the entire weekly slot template.", json!({
-            "type":"object","additionalProperties":false,"required":["slots"],
-            "properties":{"slots":{"type":"array","items":{
-                "type":"object","additionalProperties":false,
-                "required":["dow","position","duration_minutes"],
-                "properties":{
-                    "dow":{"type":"integer","minimum":0,"maximum":6},
-                    "position":{"type":"integer"},
-                    "duration_minutes":{"type":"integer","minimum":1},
-                    "label":{"type":["string","null"]}
-                }}}}
+        tool("delete_daily_plan_item", "Delete an item from an open day; past structure is frozen.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id"],"properties":{"node_id":id}
+        })),
+        tool("reorder_daily_plan", "Replace the complete order for an open day.", json!({
+            "type":"object","additionalProperties":false,"required":["plan_date","node_ids"],
+            "properties":{"plan_date":date.clone(),"node_ids":{"type":"array","items":id}}
+        })),
+        tool("move_daily_plan_item", "Move an item to today/future. Open sources transfer; past sources copy and remain unchanged.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id","target_date"],
+            "properties":{"node_id":id,"target_date":date.clone(),"target_position":{"type":"integer","minimum":0,"default":0}}
+        })),
+        tool("daily_plan_history", "Return all complete and incomplete historical items plus completion totals/rate. End must be before local today.", json!({
+            "type":"object","additionalProperties":false,"required":["from","to"],
+            "properties":{"from":date.clone(),"to":date,"source_node_id":id}
         })),
         tool("propose_sprint", "Propose a sprint: bundle a title + summary with the work items it covers, in one call. Returns the proposal's node_id and which of the given wi_numbers actually resolved to covered items.", json!({
             "type":"object","additionalProperties":false,
@@ -297,7 +320,7 @@ fn ok_json(v: Value) -> Result<CallToolResult, ErrorData> {
     Ok(CallToolResult::success(vec![c]))
 }
 
-fn to_err(e: anyhow::Error) -> CallToolResult {
+fn to_err(e: impl std::fmt::Display) -> CallToolResult {
     CallToolResult::error(vec![
         Content::json(json!({ "message": e.to_string() })).expect("encode error")
     ])
@@ -548,36 +571,85 @@ struct NodeIdArgs {
 }
 
 #[derive(Deserialize)]
-struct ListSlotsArgs {
+struct DateRangeArgs {
     from: String,
     to: String,
 }
 
 #[derive(Deserialize)]
-struct GenerateSlotsArgs {
-    start: String,
-    days: i64,
+struct CreateTopicArgs {
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    project_id: Option<i64>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
 }
 
 #[derive(Deserialize)]
-struct SetSlotGoalArgs {
+struct SearchTopicsArgs {
+    query: String,
+}
+
+#[derive(Deserialize)]
+struct UpdateTopicArgs {
     node_id: i64,
     #[serde(default)]
-    goal: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct TemplateSlotArg {
-    dow: i16,
-    position: i32,
-    duration_minutes: i32,
+    name: Option<String>,
+    #[serde(default, deserialize_with = "double_option")]
+    description: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    category: Option<Option<String>>,
     #[serde(default)]
-    label: Option<String>,
+    tags: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
-struct SetSlotTemplateArgs {
-    slots: Vec<TemplateSlotArg>,
+struct ArchiveTopicArgs {
+    node_id: i64,
+    #[serde(default = "default_true")]
+    archived: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Deserialize)]
+struct CreateDailyPlanItemArgs {
+    source_node_id: i64,
+    plan_date: String,
+}
+
+#[derive(Deserialize)]
+struct CompletionArgs {
+    node_id: i64,
+    completed: bool,
+}
+
+#[derive(Deserialize)]
+struct ReorderDailyPlanArgs {
+    plan_date: String,
+    node_ids: Vec<i64>,
+}
+
+#[derive(Deserialize)]
+struct MoveDailyPlanItemArgs {
+    node_id: i64,
+    target_date: String,
+    #[serde(default)]
+    target_position: i32,
+}
+
+#[derive(Deserialize)]
+struct HistoryArgs {
+    from: String,
+    to: String,
+    #[serde(default)]
+    source_node_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -860,47 +932,169 @@ impl KorgServer {
                     Err(e) => Ok(to_err(e)),
                 }
             }
-            "list_slots" => {
-                let a: ListSlotsArgs = parse_args(args)?;
-                let (from, to) = (parse_date(&a.from)?, parse_date(&a.to)?);
-                match slots::list_slots(&self.pool, from, to).await {
+            "create_topic" => {
+                let a: CreateTopicArgs = parse_args(args)?;
+                match topics::create_topic(
+                    &self.pool,
+                    topics::NewTopic {
+                        project_id: a.project_id,
+                        category: a.category,
+                        tags: a.tags,
+                        name: a.name,
+                        description: a.description,
+                    },
+                )
+                .await
+                {
+                    Ok(node_id) => ok_json(json!({"node_id": node_id})),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "get_topic" => {
+                let a: NodeIdArgs = parse_args(args)?;
+                match topics::get_topic(&self.pool, a.node_id).await {
                     Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
                     Err(e) => Ok(to_err(e)),
                 }
             }
-            "generate_slots" => {
-                let a: GenerateSlotsArgs = parse_args(args)?;
-                let start = parse_date(&a.start)?;
-                match slots::generate_slots(&self.pool, start, a.days).await {
-                    Ok(n) => ok_json(json!({ "created": n })),
-                    Err(e) => Ok(to_err(e)),
-                }
-            }
-            "set_slot_goal" => {
-                let a: SetSlotGoalArgs = parse_args(args)?;
-                match slots::set_slot_goal(&self.pool, a.node_id, a.goal.as_deref()).await {
-                    Ok(()) => ok_json(json!({ "ok": true })),
-                    Err(e) => Ok(to_err(e)),
-                }
-            }
-            "list_slot_templates" => match slots::list_templates(&self.pool).await {
+            "list_topics" => match topics::list_topics(&self.pool).await {
                 Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
                 Err(e) => Ok(to_err(e)),
             },
-            "set_slot_template" => {
-                let a: SetSlotTemplateArgs = parse_args(args)?;
-                let rows: Vec<NewTemplateSlot> = a
-                    .slots
-                    .into_iter()
-                    .map(|t| NewTemplateSlot {
-                        dow: t.dow,
-                        position: t.position,
-                        duration_minutes: t.duration_minutes,
-                        label: t.label,
-                    })
-                    .collect();
-                match slots::set_weekly_template(&self.pool, &rows).await {
+            "search_topics" => {
+                let a: SearchTopicsArgs = parse_args(args)?;
+                match topics::search_topics(&self.pool, &a.query).await {
+                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "update_topic" => {
+                let a: UpdateTopicArgs = parse_args(args)?;
+                match topics::update_topic(
+                    &self.pool,
+                    a.node_id,
+                    topics::TopicPatch {
+                        name: a.name,
+                        description: a.description,
+                        category: a.category,
+                        tags: a.tags,
+                    },
+                )
+                .await
+                {
+                    Ok(()) => ok_json(json!({"ok": true})),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "archive_topic" => {
+                let a: ArchiveTopicArgs = parse_args(args)?;
+                match topics::archive_topic(&self.pool, a.node_id, a.archived).await {
+                    Ok(()) => ok_json(json!({"ok": true})),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "list_daily_plan" => {
+                let a: DateRangeArgs = parse_args(args)?;
+                let (from, to) = (parse_date(&a.from)?, parse_date(&a.to)?);
+                match daily_plan::list_items(&self.pool, from, to).await {
+                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "create_daily_plan_item" => {
+                let a: CreateDailyPlanItemArgs = parse_args(args)?;
+                let context = self
+                    .config
+                    .lifecycle_context()
+                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+                match daily_plan::create_item(
+                    &self.pool,
+                    a.source_node_id,
+                    parse_date(&a.plan_date)?,
+                    &context,
+                )
+                .await
+                {
+                    Ok(node_id) => ok_json(json!({"node_id": node_id})),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "set_daily_plan_completion" => {
+                let a: CompletionArgs = parse_args(args)?;
+                let context = self
+                    .config
+                    .lifecycle_context()
+                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+                match daily_plan::set_completion(&self.pool, a.node_id, a.completed, &context).await
+                {
                     Ok(()) => ok_json(json!({ "ok": true })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "delete_daily_plan_item" => {
+                let a: NodeIdArgs = parse_args(args)?;
+                let context = self
+                    .config
+                    .lifecycle_context()
+                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+                match daily_plan::delete_item(&self.pool, a.node_id, &context).await {
+                    Ok(()) => ok_json(json!({ "ok": true })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "reorder_daily_plan" => {
+                let a: ReorderDailyPlanArgs = parse_args(args)?;
+                let context = self
+                    .config
+                    .lifecycle_context()
+                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+                match daily_plan::reorder_day(
+                    &self.pool,
+                    parse_date(&a.plan_date)?,
+                    &a.node_ids,
+                    &context,
+                )
+                .await
+                {
+                    Ok(()) => ok_json(json!({"ok": true})),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "move_daily_plan_item" => {
+                let a: MoveDailyPlanItemArgs = parse_args(args)?;
+                let context = self
+                    .config
+                    .lifecycle_context()
+                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+                match daily_plan::move_item(
+                    &self.pool,
+                    a.node_id,
+                    parse_date(&a.target_date)?,
+                    a.target_position,
+                    &context,
+                )
+                .await
+                {
+                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "daily_plan_history" => {
+                let a: HistoryArgs = parse_args(args)?;
+                let context = self
+                    .config
+                    .lifecycle_context()
+                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+                match daily_plan::history(
+                    &self.pool,
+                    parse_date(&a.from)?,
+                    parse_date(&a.to)?,
+                    a.source_node_id,
+                    &context,
+                )
+                .await
+                {
+                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
                     Err(e) => Ok(to_err(e)),
                 }
             }
@@ -1051,7 +1245,7 @@ impl ServerHandler for KorgServer {
             .with_server_info(Implementation::new("korg-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "korg MCP server — unified work items, cards, reading-list links, \
-                 generalized relationships, and calendar timebox slots, over Postgres.",
+                  generalized relationships, topics, and source-linked daily planning, over Postgres.",
             )
     }
 

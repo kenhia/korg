@@ -48,11 +48,15 @@ rooted at `/api`. Responses are JSON.
 | `GET    /api/links`                    | List reading-list links.             |
 | `POST   /api/links`                    | Create a link.                       |
 | `PATCH  /api/links/:node_id`           | Update a link.                       |
-| `GET    /api/slots`                    | List calendar timebox slots.         |
-| `POST   /api/slots/generate`           | Generate slots from templates.       |
-| `PATCH  /api/slots/:node_id`           | Update a slot.                       |
-| `GET    /api/slot-templates`           | List slot templates.                 |
-| `PUT    /api/slot-templates`           | Replace slot templates.              |
+| `GET/POST /api/topics`                 | List/search (`?q=`) or create topics. |
+| `GET/PATCH /api/topics/:node_id`       | Fetch or update a topic.             |
+| `POST /api/topics/:node_id/archive`    | Archive or restore a topic.          |
+| `GET/POST /api/daily-plan`             | List an inclusive range or plan a source node. |
+| `PATCH /api/daily-plan/:node_id/completion` | Complete/uncomplete an item using server time. |
+| `DELETE /api/daily-plan/:node_id`      | Delete an item from an open day.     |
+| `PUT /api/daily-plan/:date/order`      | Replace an open day's item order.    |
+| `POST /api/daily-plan/:node_id/move`   | Move an open item or copy a past item. |
+| `GET /api/daily-plan/history`          | Historical range or `week`, `month`, `90days`, `year` preset. |
 | `POST   /api/relationships`            | Create a generalized relationship.   |
 | `DELETE /api/relationships/:id`        | Delete a relationship.               |
 | `GET    /api/nodes/:id`                | Kind-agnostic preview of any node by id (powers find-by-ID + the preview panel); `null` if none. |
@@ -82,7 +86,7 @@ http://<host>:8090/mcp
 ```
 
 It exposes tools for work items, cards, reading-list links, generalized
-cross-kind relationships, calendar timebox slots, and agent-planning sprint
+cross-kind relationships, topics, source-linked daily planning, and agent-planning sprint
 proposals, backed directly by `korg-core`.
 
 List the available tools with a raw request:
@@ -134,7 +138,10 @@ any other through a single generalized `relationship` edge:
   external project docs) that is *not* the primary key.
 - **card** — kanban card (status, rank, tags).
 - **link** — reading-list URL.
-- **slot** — calendar timebox slot.
+- **topic** — reusable planning identity with searchable name/description.
+- **daily_plan_item** — ordered local-date occurrence linked to a work item,
+  card, or topic; keeps an immutable display snapshot and optional completion
+  timestamp. Past structure is frozen, while completion can be corrected.
 - **sprint_proposal** — an agent-planning proposal (title, summary, status,
   drag-orderable `rank`, `pinned`); covers work items via the same
   `relationship` mechanism, label `covers`, rather than a dedicated join

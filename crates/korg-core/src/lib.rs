@@ -20,5 +20,7 @@ pub async fn connect(url: &str) -> anyhow::Result<sqlx::PgPool> {
     Ok(pool)
 }
 
+pub mod config;
+pub mod daily_plan;
 pub mod repo;
-pub mod slots;
+pub mod topics;

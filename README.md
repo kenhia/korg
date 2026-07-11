@@ -22,7 +22,9 @@ any other through a single generalized `relationship` edge:
 - **work item** — keeps a stable, user-facing serial `wi_number` (referenced by
   external project docs) that is *not* the primary key.
 - **card** — kanban card (status, rank, tags).
-- *(later)* calendar timebox slots, reading-list URLs.
+- **link** — reading-list URL.
+- **topic** — reusable source for daily planning.
+- **daily plan item** — ordered source occurrence with a historical display snapshot.
 
 Cross-cutting attributes (project, category, tags, archived, timestamps) live on
 `node`. Projects are a unified taxonomy (kwi + kcard merged by name); areas stay
@@ -31,7 +33,7 @@ project-scoped; tags/category are shared across kinds.
 ## Crates
 
 - `korg-core` — schema (sqlx migrations), domain repos (work items, cards,
-  reading-list links, generalized relationships) and calendar slots.
+  reading-list links, generalized relationships), topics, and daily planning.
 - `korg-migrate` — one-shot, fidelity-verified import of kwi + kcard data.
 - `korg-mcp` — MCP tool surface (rmcp) over the korg domain, served by `korg-api`.
 
@@ -46,8 +48,8 @@ installed; point an MCP client at the URL:
 http://<host>:8090/mcp
 ```
 
-It exposes 25 tools for work items, cards, reading-list links, generalized
-cross-kind relationships, and calendar timebox slots, backed directly by
+It exposes 42 tools for work items, cards, reading-list links, generalized
+cross-kind relationships, topics, and source-linked daily planning, backed directly by
 `korg-core`.
 
 Transport notes:
@@ -73,7 +75,7 @@ curl -s -X POST http://localhost:8090/mcp \
 
 ```bash
 cd web && pnpm install && pnpm build
-DATABASE_URL=... KORG_WEB_DIR=$PWD/build KORG_LISTEN_ADDR=0.0.0.0:8090 \
+DATABASE_URL=... KORG_TIMEZONE=Etc/UTC KORG_WEB_DIR=$PWD/build KORG_LISTEN_ADDR=0.0.0.0:8090 \
   cargo run -p korg-api          # open http://<host>:8090
 
 # Or hot-reload the UI against a running API:

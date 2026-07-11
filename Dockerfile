@@ -29,6 +29,7 @@ COPY --from=rust /src/target/release/korg-api /app/korg-api
 COPY --from=web /web/build /app/web/build
 ENV KORG_WEB_DIR=/app/web/build
 ENV KORG_LISTEN_ADDR=0.0.0.0:5674
+# KORG_TIMEZONE is intentionally required at runtime; no geographic default is guessed.
 EXPOSE 5674
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -fsS http://localhost:5674/api/health || exit 1

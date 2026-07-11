@@ -5,20 +5,21 @@ use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, Method};
-use axum::routing::{delete, get, patch, post};
+use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use time::macros::format_description;
-use time::Date;
+use time::{Date, Duration};
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
+use korg_core::config::KorgConfig;
 use korg_core::repo::{self, CardPatch, NewCard, NewLink, NewProposal, NewWorkItem, ProposalPatch};
-use korg_core::slots::{self, NewTemplateSlot};
+use korg_core::{daily_plan, topics};
 use korg_mcp::tools::KorgServer;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
@@ -29,12 +30,13 @@ use error::ApiError;
 #[derive(Clone)]
 pub struct AppState {
     pub pool: Arc<PgPool>,
+    pub config: Arc<KorgConfig>,
 }
 
 type ApiResult = Result<Json<Value>, ApiError>;
 
 pub fn build_router(state: AppState) -> Router {
-    let mcp = mcp_service(state.pool.clone());
+    let mcp = mcp_service(state.pool.clone(), state.config.clone());
     let api = Router::new()
         .route("/api/health", get(health))
         .route("/api/projects", get(list_projects).post(create_project))
@@ -56,16 +58,27 @@ pub fn build_router(state: AppState) -> Router {
             "/api/nodes/:node_id/comments",
             get(list_comments).post(add_comment),
         )
-        .route("/api/comments/:id", delete(delete_comment).patch(update_comment))
+        .route(
+            "/api/comments/:id",
+            delete(delete_comment).patch(update_comment),
+        )
         .route("/api/links", get(list_links).post(create_link))
         .route("/api/links/:node_id", patch(update_link))
-        .route("/api/slots", get(list_slots))
-        .route("/api/slots/generate", post(generate_slots))
-        .route("/api/slots/:node_id", patch(update_slot))
+        .route("/api/topics", get(list_topics).post(create_topic))
+        .route("/api/topics/:node_id", get(get_topic).patch(update_topic))
+        .route("/api/topics/:node_id/archive", post(archive_topic))
         .route(
-            "/api/slot-templates",
-            get(list_slot_templates).put(set_slot_templates),
+            "/api/daily-plan",
+            get(list_daily_plan).post(create_daily_plan_item),
         )
+        .route("/api/daily-plan/history", get(daily_plan_history))
+        .route("/api/daily-plan/:node_id", delete(delete_daily_plan_item))
+        .route(
+            "/api/daily-plan/:node_id/completion",
+            patch(set_daily_plan_completion),
+        )
+        .route("/api/daily-plan/:node_id/move", post(move_daily_plan_item))
+        .route("/api/daily-plan/:plan_date/order", put(reorder_daily_plan))
         .route("/api/relationships", post(create_relationship))
         .route("/api/relationships/:id", delete(delete_relationship))
         .route("/api/nodes/:id/neighbors", get(neighbors))
@@ -105,15 +118,18 @@ fn spa_fallback(api: Router, dir: &std::path::Path) -> Router {
 /// transport for a single-user tool and trivially testable with `curl`. Host
 /// validation is disabled because korg is reached over several hostnames
 /// (e.g. `kai`, `kubsdb`) on a trusted network — same posture as the REST API.
-fn mcp_service(pool: Arc<PgPool>) -> StreamableHttpService<KorgServer, LocalSessionManager> {
-    let config = StreamableHttpServerConfig::default()
+fn mcp_service(
+    pool: Arc<PgPool>,
+    config: Arc<KorgConfig>,
+) -> StreamableHttpService<KorgServer, LocalSessionManager> {
+    let transport_config = StreamableHttpServerConfig::default()
         .with_stateful_mode(false)
         .with_json_response(true)
         .disable_allowed_hosts();
     StreamableHttpService::new(
-        move || Ok(KorgServer::new((*pool).clone())),
+        move || Ok(KorgServer::new((*pool).clone(), config.clone())),
         Arc::new(LocalSessionManager::default()),
-        config,
+        transport_config,
     )
 }
 
@@ -495,7 +511,9 @@ async fn update_comment(
     Path(id): Path<i64>,
     Json(b): Json<UpdateCommentBody>,
 ) -> ApiResult {
-    Ok(Json(json!(repo::update_comment(&s.pool, id, &b.body).await?)))
+    Ok(Json(json!(
+        repo::update_comment(&s.pool, id, &b.body).await?
+    )))
 }
 
 #[derive(serde::Deserialize)]
@@ -604,77 +622,246 @@ async fn update_link(
     Ok(Json(json!({ "ok": true })))
 }
 
-// --- slots ----------------------------------------------------------------
+// --- topics and daily planning --------------------------------------------
 
 #[derive(Deserialize)]
-struct SlotRange {
+struct TopicsQuery {
+    #[serde(default)]
+    q: Option<String>,
+}
+
+async fn list_topics(State(s): State<AppState>, Query(q): Query<TopicsQuery>) -> ApiResult {
+    let rows = match q.q {
+        Some(query) => topics::search_topics(&s.pool, &query).await?,
+        None => topics::list_topics(&s.pool).await?,
+    };
+    Ok(Json(json!(rows)))
+}
+
+#[derive(Deserialize)]
+struct CreateTopic {
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    project_id: Option<i64>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+async fn create_topic(State(s): State<AppState>, Json(b): Json<CreateTopic>) -> ApiResult {
+    let node_id = topics::create_topic(
+        &s.pool,
+        topics::NewTopic {
+            project_id: b.project_id,
+            category: b.category,
+            tags: b.tags,
+            name: b.name,
+            description: b.description,
+        },
+    )
+    .await?;
+    Ok(Json(json!({ "node_id": node_id })))
+}
+
+async fn get_topic(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
+    Ok(Json(json!(topics::get_topic(&s.pool, node_id).await?)))
+}
+
+#[derive(Deserialize)]
+struct UpdateTopic {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default, deserialize_with = "deser_nullable_str")]
+    description: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deser_nullable_str")]
+    category: Option<Option<String>>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+}
+
+async fn update_topic(
+    State(s): State<AppState>,
+    Path(node_id): Path<i64>,
+    Json(b): Json<UpdateTopic>,
+) -> ApiResult {
+    topics::update_topic(
+        &s.pool,
+        node_id,
+        topics::TopicPatch {
+            name: b.name,
+            description: b.description,
+            category: b.category,
+            tags: b.tags,
+        },
+    )
+    .await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct ArchiveTopic {
+    #[serde(default = "default_true")]
+    archived: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+async fn archive_topic(
+    State(s): State<AppState>,
+    Path(node_id): Path<i64>,
+    Json(b): Json<ArchiveTopic>,
+) -> ApiResult {
+    topics::archive_topic(&s.pool, node_id, b.archived).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct DateRange {
     from: String,
     to: String,
 }
 
-async fn list_slots(State(s): State<AppState>, Query(q): Query<SlotRange>) -> ApiResult {
-    let (from, to) = (parse_date(&q.from)?, parse_date(&q.to)?);
-    Ok(Json(json!(slots::list_slots(&s.pool, from, to).await?)))
+async fn list_daily_plan(State(s): State<AppState>, Query(q): Query<DateRange>) -> ApiResult {
+    Ok(Json(json!(
+        daily_plan::list_items(&s.pool, parse_date(&q.from)?, parse_date(&q.to)?,).await?
+    )))
 }
 
 #[derive(Deserialize)]
-struct GenerateSlots {
-    start: String,
-    days: i64,
+struct CreateDailyPlanItem {
+    source_node_id: i64,
+    plan_date: String,
 }
 
-async fn generate_slots(State(s): State<AppState>, Json(b): Json<GenerateSlots>) -> ApiResult {
-    let start = parse_date(&b.start)?;
-    let created = slots::generate_slots(&s.pool, start, b.days).await?;
-    Ok(Json(json!({ "created": created })))
+async fn create_daily_plan_item(
+    State(s): State<AppState>,
+    Json(b): Json<CreateDailyPlanItem>,
+) -> ApiResult {
+    let context = s.config.lifecycle_context()?;
+    let node_id = daily_plan::create_item(
+        &s.pool,
+        b.source_node_id,
+        parse_date(&b.plan_date)?,
+        &context,
+    )
+    .await?;
+    Ok(Json(json!({ "node_id": node_id })))
 }
 
 #[derive(Deserialize)]
-struct UpdateSlot {
-    #[serde(default)]
-    goal: Option<String>,
+struct SetCompletion {
+    completed: bool,
 }
 
-async fn update_slot(
+async fn set_daily_plan_completion(
     State(s): State<AppState>,
     Path(node_id): Path<i64>,
-    Json(b): Json<UpdateSlot>,
+    Json(b): Json<SetCompletion>,
 ) -> ApiResult {
-    slots::set_slot_goal(&s.pool, node_id, b.goal.as_deref()).await?;
+    daily_plan::set_completion(
+        &s.pool,
+        node_id,
+        b.completed,
+        &s.config.lifecycle_context()?,
+    )
+    .await?;
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn list_slot_templates(State(s): State<AppState>) -> ApiResult {
-    Ok(Json(json!(slots::list_templates(&s.pool).await?)))
+async fn delete_daily_plan_item(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
+    daily_plan::delete_item(&s.pool, node_id, &s.config.lifecycle_context()?).await?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 #[derive(Deserialize)]
-struct TemplateRow {
-    dow: i16,
-    position: i32,
-    duration_minutes: i32,
+struct ReorderDailyPlan {
+    node_ids: Vec<i64>,
+}
+
+async fn reorder_daily_plan(
+    State(s): State<AppState>,
+    Path(plan_date): Path<String>,
+    Json(b): Json<ReorderDailyPlan>,
+) -> ApiResult {
+    daily_plan::reorder_day(
+        &s.pool,
+        parse_date(&plan_date)?,
+        &b.node_ids,
+        &s.config.lifecycle_context()?,
+    )
+    .await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct MoveDailyPlanItem {
+    target_date: String,
     #[serde(default)]
-    label: Option<String>,
+    target_position: i32,
+}
+
+async fn move_daily_plan_item(
+    State(s): State<AppState>,
+    Path(node_id): Path<i64>,
+    Json(b): Json<MoveDailyPlanItem>,
+) -> ApiResult {
+    Ok(Json(json!(
+        daily_plan::move_item(
+            &s.pool,
+            node_id,
+            parse_date(&b.target_date)?,
+            b.target_position,
+            &s.config.lifecycle_context()?,
+        )
+        .await?
+    )))
 }
 
 #[derive(Deserialize)]
-struct SetTemplates {
-    slots: Vec<TemplateRow>,
+struct HistoryQuery {
+    #[serde(default)]
+    from: Option<String>,
+    #[serde(default)]
+    to: Option<String>,
+    #[serde(default)]
+    preset: Option<String>,
+    #[serde(default)]
+    source_node_id: Option<i64>,
 }
 
-async fn set_slot_templates(State(s): State<AppState>, Json(b): Json<SetTemplates>) -> ApiResult {
-    let rows: Vec<NewTemplateSlot> = b
-        .slots
-        .into_iter()
-        .map(|t| NewTemplateSlot {
-            dow: t.dow,
-            position: t.position,
-            duration_minutes: t.duration_minutes,
-            label: t.label,
-        })
-        .collect();
-    slots::set_weekly_template(&s.pool, &rows).await?;
-    Ok(Json(json!({ "ok": true })))
+async fn daily_plan_history(State(s): State<AppState>, Query(q): Query<HistoryQuery>) -> ApiResult {
+    let context = s.config.lifecycle_context()?;
+    let (from, to) = match q.preset.as_deref() {
+        Some(preset) => {
+            let days = match preset {
+                "week" => 7,
+                "month" => 30,
+                "90days" => 90,
+                "year" => 365,
+                _ => return Err(ApiError(anyhow::anyhow!("invalid history preset"))),
+            };
+            let to = context.today - Duration::days(1);
+            (to - Duration::days(days - 1), to)
+        }
+        None => {
+            let from = q
+                .from
+                .as_deref()
+                .ok_or_else(|| ApiError(anyhow::anyhow!("from is required without preset")))?;
+            let to =
+                q.to.as_deref()
+                    .ok_or_else(|| ApiError(anyhow::anyhow!("to is required without preset")))?;
+            (parse_date(from)?, parse_date(to)?)
+        }
+    };
+    Ok(Json(json!(
+        daily_plan::history(&s.pool, from, to, q.source_node_id, &context,).await?
+    )))
 }
 
 // --- relationships --------------------------------------------------------

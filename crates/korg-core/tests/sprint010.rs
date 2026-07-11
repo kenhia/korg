@@ -2,9 +2,9 @@
 //! project metadata (WI #246).
 
 use korg_core::repo::{
-    add_comment, create_project, create_work_item, list_comments, list_projects,
-    update_comment, update_project_by_name, update_work_item, NewWorkItem, ProjectPatch,
-    WorkItemPatch, WI_STATUSES,
+    add_comment, create_project, create_work_item, list_comments, list_projects, update_comment,
+    update_project_by_name, update_work_item, NewWorkItem, ProjectPatch, WorkItemPatch,
+    WI_STATUSES,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -61,16 +61,26 @@ async fn wi_status_vocabulary_is_enforced() {
     // typos are rejected at creation…
     for s in ["active", "draft", "Done", "bogus"] {
         assert!(
-            create_work_item(&pool, wi(&format!("as {s}"), pid, s)).await.is_err(),
+            create_work_item(&pool, wi(&format!("as {s}"), pid, s))
+                .await
+                .is_err(),
             "status '{s}' should be rejected"
         );
     }
 
     // …and on update.
-    let r = create_work_item(&pool, wi("patch me", pid, "open")).await.unwrap();
-    let ok = WorkItemPatch { wi_status: Some("done".into()), ..Default::default() };
+    let r = create_work_item(&pool, wi("patch me", pid, "open"))
+        .await
+        .unwrap();
+    let ok = WorkItemPatch {
+        wi_status: Some("done".into()),
+        ..Default::default()
+    };
     update_work_item(&pool, r.wi_number, ok).await.unwrap();
-    let bad = WorkItemPatch { wi_status: Some("finished".into()), ..Default::default() };
+    let bad = WorkItemPatch {
+        wi_status: Some("finished".into()),
+        ..Default::default()
+    };
     assert!(update_work_item(&pool, r.wi_number, bad).await.is_err());
 }
 
@@ -78,10 +88,16 @@ async fn wi_status_vocabulary_is_enforced() {
 async fn comments_are_editable() {
     let (_c, pool) = fresh_korg().await;
     let pid = create_project(&pool, "p").await.unwrap();
-    let r = create_work_item(&pool, wi("holder", pid, "open")).await.unwrap();
+    let r = create_work_item(&pool, wi("holder", pid, "open"))
+        .await
+        .unwrap();
 
-    let c = add_comment(&pool, r.node_id, "forgot the WI #").await.unwrap();
-    let edited = update_comment(&pool, c.id, "refers to WI #42").await.unwrap();
+    let c = add_comment(&pool, r.node_id, "forgot the WI #")
+        .await
+        .unwrap();
+    let edited = update_comment(&pool, c.id, "refers to WI #42")
+        .await
+        .unwrap();
 
     assert_eq!(edited.id, c.id);
     assert_eq!(edited.body, "refers to WI #42");
@@ -128,8 +144,14 @@ async fn project_metadata_roundtrip() {
 
     // Invalid project status rejected; unknown project errors; name immutable
     // by construction (no field for it).
-    let bad = ProjectPatch { status: Some("paused".into()), ..Default::default() };
+    let bad = ProjectPatch {
+        status: Some("paused".into()),
+        ..Default::default()
+    };
     assert!(update_project_by_name(&pool, "meta", &bad).await.is_err());
-    let ok = ProjectPatch { status: Some("active".into()), ..Default::default() };
+    let ok = ProjectPatch {
+        status: Some("active".into()),
+        ..Default::default()
+    };
     assert!(update_project_by_name(&pool, "nope", &ok).await.is_err());
 }

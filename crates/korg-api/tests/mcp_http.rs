@@ -10,6 +10,7 @@ use http_body_util::BodyExt;
 use korg_api::{build_router, AppState};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use time::macros::datetime;
 use tower::ServiceExt;
 
 use axum::body::Body;
@@ -29,6 +30,9 @@ async fn app() -> (impl Sized, axum::Router) {
     let pool = korg_core::connect(&url).await.expect("connect+migrate");
     let router = build_router(AppState {
         pool: Arc::new(pool),
+        config: Arc::new(
+            korg_core::config::KorgConfig::fixed("UTC", datetime!(2026-07-11 12:00 UTC)).unwrap(),
+        ),
     });
     (container, router)
 }
@@ -91,7 +95,7 @@ async fn mcp_http_end_to_end() {
     .await;
     assert_eq!(st, StatusCode::OK);
     let tools = tl["result"]["tools"].as_array().expect("tools array");
-    assert_eq!(tools.len(), 34, "expected 34 tools, got {}", tools.len());
+    assert_eq!(tools.len(), 42, "expected 42 tools, got {}", tools.len());
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     assert!(names.contains(&"create_work_item"));
     assert!(names.contains(&"list_work_items"));
@@ -102,6 +106,20 @@ async fn mcp_http_end_to_end() {
     assert!(names.contains(&"update_card"));
     assert!(names.contains(&"unrelate"));
     assert!(names.contains(&"add_comment"));
+    assert!(names.contains(&"create_topic"));
+    assert!(names.contains(&"create_daily_plan_item"));
+    assert!(names.contains(&"daily_plan_history"));
+    assert!(!names.contains(&"generate_slots"));
+    let create_plan = tools
+        .iter()
+        .find(|tool| tool["name"] == "create_daily_plan_item")
+        .unwrap();
+    let properties = create_plan["inputSchema"]["properties"]
+        .as_object()
+        .unwrap();
+    assert!(!properties.contains_key("display"));
+    assert!(!properties.contains_key("source_snapshot"));
+    assert!(!properties.contains_key("completed_at"));
 
     // 3. tools/call create_work_item — a mutating tool over the wire.
     let (st, created) = rpc(

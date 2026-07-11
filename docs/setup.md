@@ -45,6 +45,7 @@ cd ..
 
 ```bash
 DATABASE_URL=postgres://korg:korg@localhost:5432/korg \
+KORG_TIMEZONE=Etc/UTC \
 KORG_WEB_DIR=$PWD/web/build \
 KORG_LISTEN_ADDR=0.0.0.0:8090 \
   cargo run -p korg-api
@@ -58,6 +59,7 @@ health check, and point an MCP client at `http://<host>:8090/mcp`.
 | Variable           | Required | Default          | Purpose                                                   |
 | ------------------ | -------- | ---------------- | --------------------------------------------------------- |
 | `DATABASE_URL`     | yes      | —                | PostgreSQL connection string.                             |
+| `KORG_TIMEZONE`    | yes      | —                | DST-aware IANA timezone used for daily lifecycle boundaries (for example `Etc/UTC`). Startup rejects missing/invalid values. |
 | `KORG_LISTEN_ADDR` | no       | `0.0.0.0:8080`   | Address/port the server binds to.                         |
 | `KORG_WEB_DIR`     | no       | —                | Path to the built SvelteKit bundle; UI is served when set.|
 | `KORG_LOG`         | no       | `info`           | `tracing` env-filter (e.g. `korg_api=debug`).             |
@@ -71,6 +73,7 @@ the release binary, then assembles a slim runtime image listening on `5674`:
 docker build -t korg .
 docker run --rm -p 5674:5674 \
   -e DATABASE_URL=postgres://korg:korg@host.docker.internal:5432/korg \
+  -e KORG_TIMEZONE=Etc/UTC \
   korg
 ```
 
@@ -82,7 +85,7 @@ Hot-reload the UI against a running API instead of rebuilding the bundle:
 
 ```bash
 # Terminal 1 — API
-DATABASE_URL=... cargo run -p korg-api
+DATABASE_URL=... KORG_TIMEZONE=Etc/UTC cargo run -p korg-api
 
 # Terminal 2 — UI dev server (proxies to the API)
 cd web && KORG_API=http://localhost:8090 pnpm dev   # http://localhost:5173

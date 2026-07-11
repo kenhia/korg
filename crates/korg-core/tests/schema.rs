@@ -43,8 +43,8 @@ async fn schema_applies_cleanly() {
         "comment",
         "relationship",
         "link",
-        "slot_template",
-        "slot",
+        "topic",
+        "daily_plan_item",
     ] {
         let exists: bool = sqlx::query(
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
@@ -82,12 +82,40 @@ async fn schema_applies_cleanly() {
         "workitem_wi_number_seq should be dropped by 0009_identity"
     );
 
-    // The `link` node kind is accepted (and others still are).
-    for kind in ["workitem", "card", "link", "slot"] {
+    for removed in ["slot_template", "slot"] {
+        let exists: bool = sqlx::query(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = $1)",
+        )
+        .bind(removed)
+        .fetch_one(&pool)
+        .await
+        .expect("query removed table existence")
+        .get(0);
+        assert!(!exists, "obsolete table `{removed}` must be removed");
+    }
+
+    // The replacement kinds are accepted and the obsolete slot kind is not.
+    for kind in [
+        "workitem",
+        "card",
+        "link",
+        "sprint_proposal",
+        "report",
+        "topic",
+        "daily_plan_item",
+    ] {
         sqlx::query("INSERT INTO node (kind) VALUES ($1)")
             .bind(kind)
             .execute(&pool)
             .await
             .unwrap_or_else(|e| panic!("kind `{kind}` should be accepted: {e}"));
     }
+    assert!(
+        sqlx::query("INSERT INTO node (kind) VALUES ('slot')")
+            .execute(&pool)
+            .await
+            .is_err(),
+        "slot must no longer be an accepted node kind"
+    );
 }

@@ -1,10 +1,13 @@
 import { test, expect } from "@playwright/test";
 
-// Dropping a card onto a timebox schedules it as a reference: a chip appears on
-// the slot and the card stays in its original column (does NOT move buckets).
+function isoDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
 
-test("drop a card onto a slot to schedule it", async ({ page }) => {
-  const title = `sched ${Date.now()}`;
+test("drag a card into today's daily plan without moving its board status", async ({
+  page,
+}) => {
+  const title = `planned card ${Date.now()}`;
 
   await page.goto("/cards");
   await page.getByPlaceholder("New card title…").fill(title);
@@ -15,28 +18,9 @@ test("drop a card onto a slot to schedule it", async ({ page }) => {
   await card.scrollIntoViewIfNeeded();
   await expect(page.getByTestId("col-Backlog").getByText(title)).toBeVisible();
 
-  const slot = page.locator('[data-testid^="slot-"]').first();
-  await expect(slot).toBeVisible();
-  await slot.scrollIntoViewIfNeeded();
-
-  const sbox = await card.boundingBox();
-  const dbox = await slot.boundingBox();
-  if (!sbox || !dbox) throw new Error("missing boxes");
-
-  await page.mouse.move(sbox.x + sbox.width / 2, sbox.y + sbox.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(sbox.x + sbox.width / 2, sbox.y + sbox.height / 2 - 8, { steps: 5 });
-  await page.waitForTimeout(120);
-  await page.mouse.move(dbox.x + dbox.width / 2, dbox.y + dbox.height / 2, { steps: 20 });
-  await page.waitForTimeout(120);
-  await page.mouse.move(dbox.x + dbox.width / 2, dbox.y + dbox.height / 2 + 2, { steps: 4 });
-  await page.waitForTimeout(120);
-  await page.mouse.up();
-
-  // A scheduled chip with the card title appears on a slot...
-  await expect(
-    page.locator('[data-testid^="sched-"]', { hasText: title }),
-  ).toBeVisible({ timeout: 10000 });
-  // ...and the card is still in Backlog (scheduling is a reference, not a move).
+  const day = page.getByTestId(`card-plan-day-${isoDate(new Date())}`);
+  await expect(day).toBeVisible();
+  await card.getByRole("button", { name: `Plan ${title}` }).dragTo(day);
+  await expect(day.getByText(title)).toBeVisible({ timeout: 10000 });
   await expect(page.getByTestId("col-Backlog").getByText(title)).toBeVisible();
 });

@@ -3,21 +3,27 @@ import { test, expect } from "@playwright/test";
 // Structural smoke: the four pages render and the SPA nav works. These
 // assertions are data-independent so the gate is deterministic.
 
-test("landing renders week + reading list", async ({ page }) => {
+test("landing renders the weekly daily planner", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("link", { name: "korg" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "This week" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Reading list" })).toBeVisible();
+  await expect(page.getByText("Daily plan", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("week-planner")).toBeVisible();
 });
 
-test("nav reaches all four pages", async ({ page }) => {
+test("nav reaches planner support pages", async ({ page }) => {
   await page.goto("/");
+  await page.getByRole("link", { name: "History" }).click();
+  await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
+  await page.getByRole("link", { name: "Topics" }).click();
+  await expect(page.getByRole("heading", { name: "Topics" })).toBeVisible();
   await page.getByRole("link", { name: "Cards" }).click();
   await expect(page.getByRole("heading", { name: "Cards" })).toBeVisible();
   await page.getByRole("link", { name: "Work Items" }).click();
   await expect(page.getByRole("heading", { name: "Work items" })).toBeVisible();
   await page.getByRole("link", { name: "Reading" }).click();
-  await expect(page.getByRole("heading", { name: "Reading list" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Reading list" }),
+  ).toBeVisible();
 });
 
 test("cards board shows all columns and toggles to list", async ({ page }) => {
@@ -33,7 +39,9 @@ test("cards board shows all columns and toggles to list", async ({ page }) => {
 test("work items page has a project rail", async ({ page }) => {
   await page.goto("/work-items");
   await expect(page.getByRole("heading", { name: "Work items" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "All projects" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "All projects" }),
+  ).toBeVisible();
 });
 
 test("reading list has an add control", async ({ page }) => {

@@ -1,7 +1,7 @@
 <script lang="ts">
   // Shared slide-over preview for any node kind (WI #231 + #260). Give it a
   // node id; it fetches GET /api/nodes/:id and renders a uniform preview —
-  // work item, card, link, report, sprint proposal or slot. Used by Planning,
+  // work item, card, link, report, sprint proposal, topic, or daily plan item. Used by Planning,
   // Daily Reports and the Work Items find-by-ID box so the panel lives once.
   import { api, type NodePreview } from "$lib/api";
   import { renderMarkdown } from "$lib/markdown";
@@ -37,7 +37,11 @@
 </script>
 
 <div class="fixed inset-0 z-50 flex justify-end">
-  <button class="absolute inset-0 bg-black/60" aria-label="Close preview" onclick={onClose}></button>
+  <button
+    class="absolute inset-0 bg-black/60"
+    aria-label="Close preview"
+    onclick={onClose}
+  ></button>
   <div
     class="relative z-10 h-full w-full max-w-md overflow-auto border-l border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-xl"
     data-testid="node-preview-panel"
@@ -45,7 +49,10 @@
     <div class="mb-3 flex items-center justify-between">
       <h2 class="text-lg font-semibold">
         {#if node}
-          <span class="rounded bg-[var(--color-accent-soft)] px-1.5 py-0.5 text-xs uppercase tracking-wide text-[var(--color-accent)]">{node.kind}</span>
+          <span
+            class="rounded bg-[var(--color-accent-soft)] px-1.5 py-0.5 text-xs uppercase tracking-wide text-[var(--color-accent)]"
+            >{node.kind}</span
+          >
         {:else}
           Preview
         {/if}
@@ -53,7 +60,8 @@
       <button
         class="rounded px-2 py-1 text-[var(--color-muted)] hover:bg-[var(--color-surface-hi)]"
         aria-label="Close"
-        onclick={onClose}>✕</button>
+        onclick={onClose}>✕</button
+      >
     </div>
 
     {#if loading}
@@ -66,15 +74,26 @@
       <h3 class="text-base font-medium">
         <span class="font-mono text-[var(--color-muted)]">{idLabel}</span>
         {node.title}
-        {#if node.archived}<span class="ml-1 rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs uppercase text-[var(--color-muted)]">archived</span>{/if}
+        {#if node.archived}<span
+            class="ml-1 rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs uppercase text-[var(--color-muted)]"
+            >archived</span
+          >{/if}
       </h3>
 
       <div class="mt-2 flex flex-wrap gap-1 text-xs">
         {#each node.badges as b (b)}
-          <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5">{b}</span>
+          <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5"
+            >{b}</span
+          >
         {/each}
-        {#if node.project}<span class="rounded bg-teal-900/60 px-1.5 py-0.5 text-teal-300">{node.project}</span>{/if}
-        {#each node.tags as t (t)}<span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-[var(--color-muted)]">#{t}</span>{/each}
+        {#if node.project}<span
+            class="rounded bg-teal-900/60 px-1.5 py-0.5 text-teal-300"
+            >{node.project}</span
+          >{/if}
+        {#each node.tags as t (t)}<span
+            class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-[var(--color-muted)]"
+            >#{t}</span
+          >{/each}
       </div>
 
       {#if node.fields.length > 0}
@@ -83,7 +102,12 @@
             <dt class="text-[var(--color-muted)]">{f.label}</dt>
             <dd class="break-words">
               {#if f.label === "URL"}
-                <a class="text-[var(--color-accent)] hover:underline" href={f.value} target="_blank" rel="noreferrer">{f.value}</a>
+                <a
+                  class="text-[var(--color-accent)] hover:underline"
+                  href={f.value}
+                  target="_blank"
+                  rel="noreferrer">{f.value}</a
+                >
               {:else}
                 {f.value}
               {/if}
@@ -94,17 +118,32 @@
 
       {#if node.body}
         <section class="mt-4">
-          {#if node.body_label}<h4 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">{node.body_label}</h4>{/if}
-          <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
-          <div class="prose prose-invert max-w-none text-sm">{@html renderMarkdown(node.body)}</div>
+          {#if node.body_label}<h4
+              class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold"
+            >
+              {node.body_label}
+            </h4>{/if}
+          <div class="prose prose-invert max-w-none text-sm">
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
+            {@html renderMarkdown(node.body)}
+          </div>
         </section>
       {/if}
 
       {#if node.details}
         <section class="mt-4">
-          <h4 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Details</h4>
-          <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
-          <div class="prose prose-invert max-w-none rounded p-2 text-sm" style="background: color-mix(in oklch, var(--color-surface) 75%, var(--color-accent) 25%)">{@html renderMarkdown(node.details)}</div>
+          <h4
+            class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold"
+          >
+            Details
+          </h4>
+          <div
+            class="prose prose-invert max-w-none rounded p-2 text-sm"
+            style="background: color-mix(in oklch, var(--color-surface) 75%, var(--color-accent) 25%)"
+          >
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
+            {@html renderMarkdown(node.details)}
+          </div>
         </section>
       {/if}
     {/if}
