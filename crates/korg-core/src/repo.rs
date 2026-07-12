@@ -11,6 +11,19 @@ use serde::Serialize;
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 
+/// Domain errors the API surface should translate to 4xx rather than 500
+/// (WI #289). Anything else stays an opaque `anyhow` error → 500. Carried
+/// through `anyhow` and recovered by `downcast_ref` in korg-api's error layer.
+#[derive(Debug, thiserror::Error)]
+pub enum RepoError {
+    /// Caller passed a bad value (unknown status, area not in project, …) → 400.
+    #[error("{0}")]
+    InvalidInput(String),
+    /// Named/keyed entity doesn't exist (no project X, …) → 404.
+    #[error("{0}")]
+    NotFound(String),
+}
+
 // --- work items -----------------------------------------------------------
 
 /// Canonical work-item statuses (WI #285). Lifecycle: `open → resolved`
@@ -28,10 +41,11 @@ fn validate_status(value: &str, allowed: &[&str], what: &str) -> Result<()> {
     if allowed.contains(&value) {
         Ok(())
     } else {
-        anyhow::bail!(
+        Err(RepoError::InvalidInput(format!(
             "invalid {what} '{value}' — expected one of: {}",
             allowed.join(", ")
-        )
+        ))
+        .into())
     }
 }
 
@@ -537,6 +551,9 @@ pub struct WorkItemRow {
     pub tags: Vec<String>,
     pub parent: Option<i64>,
     pub archived: bool,
+    /// Number of comments on this work item (WI #392) — the hint that tells an
+    /// agent "this row has discussion; fetch it".
+    pub comment_count: i64,
     #[serde(with = "time::serde::rfc3339")]
     pub created: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -546,7 +563,9 @@ pub struct WorkItemRow {
 const WORKITEM_SELECT: &str = "SELECT w.wi_number, w.node_id, \
         pj.name AS project, a.name AS area, \
         w.wi_type, w.wi_status, w.wi_tshirt, w.sprint, w.title, w.content, w.details, \
-        n.category, n.tags, pw.wi_number AS parent, n.archived, n.created, n.updated \
+        n.category, n.tags, pw.wi_number AS parent, n.archived, \
+        (SELECT count(*) FROM comment c WHERE c.node_id = w.node_id) AS comment_count, \
+        n.created, n.updated \
      FROM workitem w \
      JOIN node n ON n.id = w.node_id \
      LEFT JOIN project pj ON pj.id = n.project_id \
@@ -568,6 +587,50 @@ pub async fn get_work_item(pool: &PgPool, wi_number: i64) -> Result<Option<WorkI
         .await?)
 }
 
+/// Max comments inlined into a single-item detail fetch (WI #392). A
+/// pathological thread past this is truncated with `comments_truncated`, and
+/// the caller can page the tail via `list_comments`.
+pub const WORKITEM_COMMENT_CAP: i64 = 10;
+
+/// A work item plus its comments, capped (WI #392). The single-item detail
+/// fetch commits to the full state of one item — and comments frequently hold
+/// the payload (resolution rationale, decisions), so agents that only call
+/// `get_work_item` should see them without a second round-trip. `item.comment_count`
+/// is the true total; `comments` holds at most `WORKITEM_COMMENT_CAP` of them.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkItemDetail {
+    #[serde(flatten)]
+    pub item: WorkItemRow,
+    pub comments: Vec<Comment>,
+    /// True when there are more comments than were inlined (call `list_comments`).
+    pub comments_truncated: bool,
+}
+
+/// `get_work_item` plus inlined, capped comments (WI #392). `None` if the
+/// work item doesn't exist.
+pub async fn get_work_item_detail(
+    pool: &PgPool,
+    wi_number: i64,
+) -> Result<Option<WorkItemDetail>> {
+    let Some(item) = get_work_item(pool, wi_number).await? else {
+        return Ok(None);
+    };
+    let comments = sqlx::query_as::<_, Comment>(
+        "SELECT id, node_id, body, created, updated FROM comment \
+         WHERE node_id = $1 ORDER BY created LIMIT $2",
+    )
+    .bind(item.node_id)
+    .bind(WORKITEM_COMMENT_CAP)
+    .fetch_all(pool)
+    .await?;
+    let comments_truncated = item.comment_count > WORKITEM_COMMENT_CAP;
+    Ok(Some(WorkItemDetail {
+        item,
+        comments,
+        comments_truncated,
+    }))
+}
+
 // --- work item survey (slim, paginated) -------------------------------------
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
@@ -579,6 +642,8 @@ pub struct WorkItemSummary {
     pub wi_type: String,
     pub wi_status: String,
     pub wi_tshirt: String,
+    /// Comment count (WI #392) — signals which rows carry discussion worth fetching.
+    pub comment_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -610,11 +675,13 @@ pub async fn survey_work_items(
         wi_type: String,
         wi_status: String,
         wi_tshirt: String,
+        comment_count: i64,
         total: i64,
     }
     let rows = sqlx::query_as::<_, Row>(
         "SELECT w.wi_number, w.node_id, pj.name AS project, w.title, \
                 w.wi_type, w.wi_status, w.wi_tshirt, \
+                (SELECT count(*) FROM comment c WHERE c.node_id = w.node_id) AS comment_count, \
                 count(*) OVER() AS total \
          FROM workitem w \
          JOIN node n ON n.id = w.node_id \
@@ -644,6 +711,7 @@ pub async fn survey_work_items(
             wi_type: r.wi_type,
             wi_status: r.wi_status,
             wi_tshirt: r.wi_tshirt,
+            comment_count: r.comment_count,
         })
         .collect();
     Ok(WorkItemSurvey {
@@ -724,7 +792,7 @@ pub async fn update_project(pool: &PgPool, id: i64, patch: &ProjectPatch) -> Res
         .fetch_optional(&mut *tx)
         .await?;
     if exists.is_none() {
-        anyhow::bail!("no project with id {id}");
+        return Err(RepoError::NotFound(format!("no project with id {id}")).into());
     }
     if let Some(v) = &patch.gh_repo {
         sqlx::query("UPDATE project SET gh_repo = $2 WHERE id = $1")
@@ -788,7 +856,7 @@ pub async fn update_project_by_name(pool: &PgPool, name: &str, patch: &ProjectPa
         .await?;
     match id {
         Some(id) => update_project(pool, id, patch).await,
-        None => anyhow::bail!("no project named '{name}'"),
+        None => Err(RepoError::NotFound(format!("no project named '{name}'")).into()),
     }
 }
 
@@ -1223,6 +1291,11 @@ pub struct WorkItemPatch {
     pub wi_status: Option<String>,
     pub wi_tshirt: Option<String>,
     pub sprint: Option<Option<String>>,
+    /// Move the work item to another project (WI #291). `Some(Some(id))` moves,
+    /// `Some(None)` unassigns, `None` leaves it. A move clears an area that no
+    /// longer belongs to the target project unless a valid `area_id` is given
+    /// in the same call.
+    pub project_id: Option<Option<i64>>,
     pub area_id: Option<Option<i64>>,
     /// Parent expressed as the parent's user-facing wi_number (None clears).
     pub parent: Option<Option<i64>>,
@@ -1294,12 +1367,83 @@ pub async fn update_work_item(pool: &PgPool, wi_number: i64, patch: WorkItemPatc
             .execute(&mut *tx)
             .await?;
     }
-    if let Some(v) = &patch.area_id {
-        sqlx::query("UPDATE workitem SET area_id = $2 WHERE node_id = $1")
-            .bind(node_id)
-            .bind(*v)
-            .execute(&mut *tx)
-            .await?;
+    // Project move + area consistency (WI #291). An area must belong to the
+    // work item's project; moving projects drops an area that no longer fits
+    // (unless a valid area_id is supplied in the same call).
+    {
+        let current_pid: Option<i64> =
+            sqlx::query_scalar("SELECT project_id FROM node WHERE id = $1")
+                .bind(node_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        // Project the work item will have after this update.
+        let effective_pid = match &patch.project_id {
+            Some(v) => *v,
+            None => current_pid,
+        };
+
+        // Decide the area to leave in place. Some(Some(id)) = set+validate,
+        // Some(None) = explicit clear, None = keep (auto-clearing on a move
+        // when the current area no longer fits).
+        let new_area: Option<Option<i64>> = match &patch.area_id {
+            Some(Some(aid)) => {
+                let area_pid: Option<i64> =
+                    sqlx::query_scalar("SELECT project_id FROM area WHERE id = $1")
+                        .bind(aid)
+                        .fetch_optional(&mut *tx)
+                        .await?;
+                if effective_pid.is_some() && area_pid == effective_pid {
+                    Some(Some(*aid))
+                } else {
+                    return Err(RepoError::InvalidInput(format!(
+                        "area {aid} does not belong to the work item's project"
+                    ))
+                    .into());
+                }
+            }
+            Some(None) => Some(None),
+            None => {
+                if patch.project_id.is_some() {
+                    let cur_area: Option<i64> =
+                        sqlx::query_scalar("SELECT area_id FROM workitem WHERE node_id = $1")
+                            .bind(node_id)
+                            .fetch_one(&mut *tx)
+                            .await?;
+                    match cur_area {
+                        Some(aid) => {
+                            let area_pid: Option<i64> =
+                                sqlx::query_scalar("SELECT project_id FROM area WHERE id = $1")
+                                    .bind(aid)
+                                    .fetch_optional(&mut *tx)
+                                    .await?;
+                            if effective_pid.is_some() && area_pid == effective_pid {
+                                None
+                            } else {
+                                Some(None)
+                            }
+                        }
+                        None => None,
+                    }
+                } else {
+                    None
+                }
+            }
+        };
+
+        if let Some(v) = &patch.project_id {
+            sqlx::query("UPDATE node SET project_id = $2 WHERE id = $1")
+                .bind(node_id)
+                .bind(*v)
+                .execute(&mut *tx)
+                .await?;
+        }
+        if let Some(v) = new_area {
+            sqlx::query("UPDATE workitem SET area_id = $2 WHERE node_id = $1")
+                .bind(node_id)
+                .bind(v)
+                .execute(&mut *tx)
+                .await?;
+        }
     }
     if let Some(v) = parent_node {
         sqlx::query("UPDATE workitem SET parent_node_id = $2 WHERE node_id = $1")

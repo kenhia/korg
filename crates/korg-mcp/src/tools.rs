@@ -61,11 +61,11 @@ pub fn tools() -> Vec<Tool> {
                 "tags":tags
             }
         })),
-        tool("list_work_items", "List work items. Pass `project` (name) to scope to a single project; omit it to list all.", json!({
+        tool("list_work_items", "List work items (each includes `comment_count`; get_work_item to read the discussion). Pass `project` (name) to scope to a single project; omit it to list all.", json!({
             "type":"object","additionalProperties":false,
             "properties":{"project":{"type":["string","null"],"description":"Project name to filter by"}}
         })),
-        tool("survey_work_items", "Slim, paginated work-item listing (wi_number, node_id, project, title, wi_type, wi_status, wi_tshirt only -- no content/details). Use this instead of list_work_items for cross-project surveys, which can exceed tool-output limits at instance scale. Returns {items, total, limit, offset}.", json!({
+        tool("survey_work_items", "Slim, paginated work-item listing (wi_number, node_id, project, title, wi_type, wi_status, wi_tshirt, comment_count only -- no content/details). Use this instead of list_work_items for cross-project surveys, which can exceed tool-output limits at instance scale. Returns {items, total, limit, offset}.", json!({
             "type":"object","additionalProperties":false,
             "properties":{
                 "project":{"type":["string","null"],"description":"Project name to filter by"},
@@ -75,11 +75,11 @@ pub fn tools() -> Vec<Tool> {
                 "offset":{"type":"integer","minimum":0,"default":0}
             }
         })),
-        tool("get_work_item", "Fetch a single work item by its wi_number.", json!({
+        tool("get_work_item", "Fetch a single work item by its wi_number, with its comments inlined (up to 10; `comments_truncated:true` + `comment_count` signal a longer thread — page the tail via list_comments). Comments often hold the real payload (resolution rationale, decisions), so prefer this over list_work_items when you need the full state of one item.", json!({
             "type":"object","additionalProperties":false,"required":["wi_number"],
             "properties":{"wi_number":id}
         })),
-        tool("update_work_item", "Partially update a work item by its wi_number. Only the fields you pass are changed. Status lifecycle: open -> resolved (implemented; may still need a user test or PR) -> done (agent satisfied; terminal but visible in default lists) -> closed (reserved for Ken; hidden by default -- do not set unless directed). For nullable fields (details, sprint, area_id, parent, category) pass null to clear or omit to leave unchanged.", json!({
+        tool("update_work_item", "Partially update a work item by its wi_number. Only the fields you pass are changed. Status lifecycle: open -> resolved (implemented; may still need a user test or PR) -> done (agent satisfied; terminal but visible in default lists) -> closed (reserved for Ken; hidden by default -- do not set unless directed). For nullable fields (project_id, details, sprint, area_id, parent, category) pass null to clear or omit to leave unchanged. Moving projects (project_id) clears an area that no longer belongs to the target project unless you pass a valid area_id in the same call.", json!({
             "type":"object","additionalProperties":false,
             "required":["wi_number"],
             "properties":{
@@ -91,6 +91,7 @@ pub fn tools() -> Vec<Tool> {
                 "wi_tshirt":{"type":"string","enum":["XS","S","M","L","XL","Huge","Unknown"]},
                 "sprint":{"type":["string","null"]},
                 "details":{"type":["string","null"]},
+                "project_id":{"type":["integer","null"],"format":"int64","description":"Move to this project (id); null unassigns. Get ids from list_projects."},
                 "area_id":{"type":["integer","null"],"format":"int64"},
                 "parent":{"type":["integer","null"],"format":"int64","description":"Parent work item's wi_number; null clears the parent."},
                 "archived":{"type":"boolean"},
@@ -411,6 +412,8 @@ struct UpdateWorkItemArgs {
     sprint: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
     details: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option")]
+    project_id: Option<Option<i64>>,
     #[serde(default, deserialize_with = "double_option")]
     area_id: Option<Option<i64>>,
     #[serde(default, deserialize_with = "double_option")]
@@ -787,7 +790,7 @@ impl KorgServer {
             }
             "get_work_item" => {
                 let a: WiNumberArgs = parse_args(args)?;
-                match repo::get_work_item(&self.pool, a.wi_number).await {
+                match repo::get_work_item_detail(&self.pool, a.wi_number).await {
                     Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
                     Err(e) => Ok(to_err(e)),
                 }
@@ -802,6 +805,7 @@ impl KorgServer {
                     wi_status: a.wi_status,
                     wi_tshirt: a.wi_tshirt,
                     sprint: a.sprint,
+                    project_id: a.project_id,
                     area_id: a.area_id,
                     parent: a.parent,
                     archived: a.archived,

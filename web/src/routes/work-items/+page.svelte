@@ -265,7 +265,9 @@
   }
 
   async function gotoWorkItem(wi: number, project: string | null) {
-    const target = project ?? ALL;
+    // From "All projects" stay there and highlight in place, so the project
+    // column (WI #313) shows where the hit lives; otherwise jump to its project.
+    const target = current === ALL ? ALL : (project ?? ALL);
     detail = null;
     creating = false;
     if (target !== current) await pick(target);
@@ -610,6 +612,7 @@
         <thead class="sticky top-0 bg-[var(--color-surface)] text-left text-xs text-[var(--color-muted)]">
           <tr>
             <th class="px-3 py-2">ID</th>
+            {#if current === ALL}<th class="px-3 py-2">Project</th>{/if}
             <th class="px-3 py-2">Area</th>
             <th class="px-3 py-2">Type</th>
             <th class="px-3 py-2">Status</th>
@@ -634,6 +637,7 @@
               onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), open(item))}
             >
               <td class="px-3 py-1.5 font-mono text-xs text-[var(--color-muted)]">{item.wi_number}</td>
+              {#if current === ALL}<td class="px-3 py-1.5 text-xs text-[var(--color-muted)]">{item.project ?? "—"}</td>{/if}
               <td class="px-3 py-1.5">
                 {#if quickEdit && current !== ALL}
                   <select
@@ -695,7 +699,7 @@
               <td class="px-3 py-1.5 font-medium">{item.title}</td>
             </tr>
           {:else}
-            <tr><td class="px-3 py-3 text-sm text-[var(--color-muted)]" colspan="7">No work items found.</td></tr>
+            <tr><td class="px-3 py-3 text-sm text-[var(--color-muted)]" colspan={current === ALL ? 8 : 7}>No work items found.</td></tr>
           {/each}
         </tbody>
       </table>
@@ -704,7 +708,8 @@
 {/snippet}
 
 {#snippet detailView(item: WorkItem)}
-  <article class="space-y-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+  <!-- The route is wide for the list table; cap the single-item view so long prose stays readable. -->
+  <article class="max-w-5xl space-y-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
     <div class="flex items-center justify-between">
       <button class="rounded border border-[var(--color-border)] px-3 py-1 text-sm hover:bg-[var(--color-surface-hi)]" onclick={() => (detail = null)}>← Back</button>
       {#if !editing}
