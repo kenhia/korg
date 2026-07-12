@@ -48,6 +48,7 @@ export interface WorkItem {
   tags: string[];
   parent: number | null;
   archived: boolean;
+  comment_count: number;
   created: string;
   updated: string;
 }
@@ -334,6 +335,7 @@ export const api = {
       wi_status: string;
       wi_tshirt: string;
       sprint: string | null;
+      project_id: number | null;
       area_id: number | null;
       parent: number | null;
       archived: boolean;

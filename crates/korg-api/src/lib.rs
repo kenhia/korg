@@ -328,6 +328,8 @@ struct UpdateWorkItem {
     #[serde(default, deserialize_with = "deser_nullable_str")]
     sprint: Option<Option<String>>,
     #[serde(default, deserialize_with = "deser_nullable_i64")]
+    project_id: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "deser_nullable_i64")]
     area_id: Option<Option<i64>>,
     #[serde(default, deserialize_with = "deser_nullable_i64")]
     parent: Option<Option<i64>>,
@@ -353,6 +355,7 @@ async fn update_work_item(
             wi_status: b.wi_status,
             wi_tshirt: b.wi_tshirt,
             sprint: b.sprint,
+            project_id: b.project_id,
             area_id: b.area_id,
             parent: b.parent,
             archived: b.archived,

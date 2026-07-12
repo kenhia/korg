@@ -13,7 +13,11 @@ uncommitted changes ship — you do NOT need to commit first) and deploys it to
 ## Target
 
 `kubsdb` (192.168.1.60) runs one `korg` Docker container serving web + REST +
-MCP on `:5674`. Preserve this run config on redeploy:
+MCP on `:5674`. User-facing access is over Tailscale at
+`https://kubsdb.encke-wahoo.ts.net:5674/` (HTTPS — a secure context, so the
+browser clipboard API works there); deploy verification below uses the plain
+LAN `http://kubsdb:5674` from the build host. Preserve this run config on
+redeploy:
 
 | Setting | Value |
 |---------|-------|

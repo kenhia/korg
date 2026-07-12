@@ -17,16 +17,24 @@
     { href: "/link-up", label: "Link Up" },
   ];
 
+  // Match on full path segments so /plan doesn't also light up on /planning
+  // (WI #290) — active only on an exact match or a real subpath (/plan/…).
   function active(href: string, path: string): boolean {
-    return href === "/" ? path === "/" : path.startsWith(href);
+    if (href === "/") return path === "/";
+    return path === href || path.startsWith(href + "/");
   }
 
-  // Planner, kanban, and Link Up need the full width; detail/list pages stay narrow.
+  // Planner, kanban, and Link Up need the full width; other detail/list pages
+  // stay narrow.
   const wide = $derived(
     $page.url.pathname === "/" ||
       $page.url.pathname.startsWith("/cards") ||
       $page.url.pathname.startsWith("/link-up"),
   );
+
+  // Work Items wants room for its table but not edge-to-edge — ~10% gutters
+  // each side (80% width), keeping a little breathing space.
+  const roomy = $derived($page.url.pathname.startsWith("/work-items"));
 </script>
 
 <div class="min-h-screen">
@@ -65,8 +73,9 @@
 
   <main
     class="mx-auto w-full px-4 py-6"
-    class:max-w-5xl={!wide}
+    class:max-w-5xl={!wide && !roomy}
     class:max-w-[120rem]={wide}
+    class:max-w-[80%]={roomy}
   >
     {@render children()}
   </main>

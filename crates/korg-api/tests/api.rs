@@ -531,3 +531,49 @@ async fn node_preview_end_to_end() {
     assert_eq!(st, StatusCode::OK);
     assert!(none.is_null());
 }
+
+// WI #289 — typed domain errors map to 4xx, not 500 (agents key off status).
+#[tokio::test]
+async fn validation_and_not_found_status_codes() {
+    let (_c, router) = app().await;
+    let (_st, wi) = req(
+        &router,
+        "POST",
+        "/api/work-items",
+        Some(json!({"title":"s","content":"c"})),
+    )
+    .await;
+    let id = wi["node_id"].as_i64().unwrap();
+
+    // Invalid status → 400 (was 500).
+    let (st, _) = req(
+        &router,
+        "PATCH",
+        &format!("/api/work-items/{id}"),
+        Some(json!({"wi_status":"bogus"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+
+    // Unknown project name → 404.
+    let (st, _) = req(
+        &router,
+        "PATCH",
+        "/api/projects/no-such-project",
+        Some(json!({"status":"active"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // A valid update still succeeds, and comment_count rides along (WI #392).
+    let (st, _) = req(
+        &router,
+        "PATCH",
+        &format!("/api/work-items/{id}"),
+        Some(json!({"wi_status":"resolved"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (_st, got) = req(&router, "GET", &format!("/api/work-items/{id}"), None).await;
+    assert_eq!(got["comment_count"].as_i64(), Some(0));
+}
