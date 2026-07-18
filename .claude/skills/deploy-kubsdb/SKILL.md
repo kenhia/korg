@@ -15,8 +15,8 @@ uncommitted changes ship — you do NOT need to commit first) and deploys it to
 `kubsdb` (192.168.1.60) runs one `korg` Docker container serving web + REST +
 MCP on `:5674`. User-facing access is over Tailscale at
 `https://kubsdb.encke-wahoo.ts.net:5674/` (HTTPS — a secure context, so the
-browser clipboard API works there); deploy verification below uses the plain
-LAN `http://kubsdb:5674` from the build host. Preserve this run config on
+browser clipboard API works there); deploy verification below uses the tailnet
+HTTPS `https://kubsdb.encke-wahoo.ts.net:5674` from the build host. Preserve this run config on
 redeploy:
 
 | Setting | Value |
@@ -65,10 +65,10 @@ container via `docker inspect`, so the secret never leaves kubsdb.
    ```
 4. **Verify:**
    ```bash
-   curl -fsS http://kubsdb:5674/api/health
+   curl -fsS https://kubsdb.encke-wahoo.ts.net:5674/api/health
    ```
    Then smoke-test whatever the deploy was for — e.g. a deep link returns 200
-   (`curl -s -o /dev/null -w '%{http_code}' http://kubsdb:5674/plan`), a new
+   (`curl -s -o /dev/null -w '%{http_code}' https://kubsdb.encke-wahoo.ts.net:5674/plan`), a new
    endpoint responds, and if MCP tooling changed:
    `bash scripts/mcp-roundtrip-check.sh`.
 

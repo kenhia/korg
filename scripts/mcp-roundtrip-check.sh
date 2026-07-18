@@ -2,9 +2,9 @@
 # mcp-roundtrip-check.sh — objective end-to-end proof that the korg HTTP MCP
 # server is reachable and answers a real tools/call. Exit 0 == healthy.
 #
-#   KORG_MCP_URL  default http://kubsdb:5674/mcp
+#   KORG_MCP_URL  default https://kubsdb.encke-wahoo.ts.net:5674/mcp
 set -euo pipefail
-U="${1:-${KORG_MCP_URL:-http://kubsdb:5674/mcp}}"
+U="${1:-${KORG_MCP_URL:-https://kubsdb.encke-wahoo.ts.net:5674/mcp}}"
 hdr=(-H "Content-Type: application/json" -H "Accept: application/json, text/event-stream")
 
 # initialize must return serverInfo.name == korg-mcp
