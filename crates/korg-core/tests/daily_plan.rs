@@ -6,8 +6,7 @@ use korg_core::repo::{
     create_card, create_link, create_work_item, NewCard, NewLink, NewWorkItem, WorkItemPatch,
 };
 use korg_core::topics::{
-    archive_topic, create_topic, get_topic, list_topics, search_topics, update_topic, NewTopic,
-    TopicPatch,
+    archive_topic, create_topic, get_topic, list_topics, update_topic, NewTopic, TopicPatch,
 };
 use rust_decimal::Decimal;
 use sqlx::postgres::PgPoolOptions;
@@ -84,8 +83,28 @@ async fn topic_crud_search_and_archive() {
     let got = get_topic(&pool, id).await.unwrap().unwrap();
     assert_eq!(got.name, "Rust async");
     assert!(!got.archived);
-    assert_eq!(list_topics(&pool).await.unwrap().len(), 1);
-    assert_eq!(search_topics(&pool, "ASY").await.unwrap().len(), 1);
+    assert_eq!(
+        list_topics(&pool, Default::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+    assert_eq!(
+        list_topics(
+            &pool,
+            korg_core::topics::TopicQuery {
+                q: Some("ASY".into()),
+                ..Default::default()
+            }
+        )
+        .await
+        .unwrap()
+        .items
+        .len(),
+        1
+    );
 
     update_topic(
         &pool,
@@ -104,8 +123,22 @@ async fn topic_crud_search_and_archive() {
     assert_eq!(got.category.as_deref(), Some("learning"));
 
     archive_topic(&pool, id, true).await.unwrap();
-    assert!(list_topics(&pool).await.unwrap().is_empty());
-    assert!(search_topics(&pool, "rust").await.unwrap().is_empty());
+    assert!(list_topics(&pool, Default::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    assert!(list_topics(
+        &pool,
+        korg_core::topics::TopicQuery {
+            q: Some("rust".into()),
+            ..Default::default()
+        }
+    )
+    .await
+    .unwrap()
+    .items
+    .is_empty());
     assert!(get_topic(&pool, id).await.unwrap().unwrap().archived);
 }
 

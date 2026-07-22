@@ -81,12 +81,16 @@
     try {
       const from = isoDate(weekStart);
       const to = isoDate(addDays(weekStart, 6));
-      [items, topics, cards, workItems] = await Promise.all([
+      const [plan, topicPage, cardPage, wiPage] = await Promise.all([
         api.dailyPlan(from, to),
         api.topics(),
         api.cards(),
         api.workItems(),
       ]);
+      items = plan;
+      topics = topicPage.items;
+      cards = cardPage.items;
+      workItems = wiPage.items;
       if (trayDate < today || trayDate < from || trayDate > to)
         trayDate = today >= from && today <= to ? today : from;
     } catch (cause) {

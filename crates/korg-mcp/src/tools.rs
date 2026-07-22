@@ -41,6 +41,12 @@ impl KorgServer {
 
 pub fn tools() -> Vec<Tool> {
     let tags = json!({"type":"array","items":{"type":"string","minLength":1}});
+    // Every collection read shares these three (WI #534). `archived` is
+    // tri-state: omit for unarchived only, true for archived only, null for both.
+    let archived = json!({"type":["boolean","null"],"default":false,
+        "description":"Omit for unarchived only (the default); true for archived only; null for both."});
+    let limit = json!({"type":"integer","minimum":1,"maximum":500,"default":200});
+    let offset = json!({"type":"integer","minimum":0,"default":0});
     let id = json!({"type":"integer","format":"int64"});
     let date = json!({"type":"string","description":"YYYY-MM-DD"});
 
@@ -62,16 +68,21 @@ pub fn tools() -> Vec<Tool> {
                 "tags":tags
             }
         })),
-        tool("list_work_items", "List work items (each includes `comment_count`; get_work_item to read the discussion). Pass `project` (name) to scope to a single project; omit it to list all.", json!({
+        tool("list_work_items", "List work items as {items, total, limit, offset}, ordered by wi_number. Each row includes `comment_count` -- get_work_item to read the discussion. Pass `project` (name) to scope to one project; omit it for all projects, but prefer survey_work_items for cross-project sweeps because these rows carry full content and details. Archived items are EXCLUDED by default.", json!({
             "type":"object","additionalProperties":false,
-            "properties":{"project":{"type":["string","null"],"description":"Project name to filter by"}}
+            "properties":{
+                "project":{"type":["string","null"],"description":"Project name to filter by"},
+                "archived":archived.clone(),
+                "limit":limit.clone(),
+                "offset":offset.clone()
+            }
         })),
         tool("survey_work_items", "Slim, paginated work-item listing (wi_number, node_id, project, title, wi_type, wi_status, wi_tshirt, comment_count only -- no content/details). Use this instead of list_work_items for cross-project surveys, which can exceed tool-output limits at instance scale. Returns {items, total, limit, offset}.", json!({
             "type":"object","additionalProperties":false,
             "properties":{
                 "project":{"type":["string","null"],"description":"Project name to filter by"},
                 "wi_status":{"type":["string","null"],"description":"Status to filter by, e.g. \"open\""},
-                "archived":{"type":["boolean","null"],"default":false,"description":"Filter by archived flag; omit/null for both"},
+                "archived":{"type":["boolean","null"],"description":"Filter by archived flag; OMIT for both archived and unarchived (there is no default)."},
                 "limit":{"type":"integer","minimum":1,"maximum":500,"default":50},
                 "offset":{"type":"integer","minimum":0,"default":0}
             }
@@ -112,7 +123,7 @@ pub fn tools() -> Vec<Tool> {
                 "tags":tags
             }
         })),
-        tool("update_card", "Partially update a kanban card by its node_id; returns the updated card (isError with code `not_found` if that node is missing or is not a card). Only the fields you pass are changed (move status/rank, edit title/description, archive, reassign project). For nullable fields (project_id, category) pass null to clear or omit to leave unchanged.", json!({
+        tool("update_card", "Partially update a kanban card by its node_id; returns the updated card (isError with code `not_found` if that node is missing or is not a card). Projects are addressed by `project_id` here and over REST alike (get ids from list_projects) -- REST used to take a project *name* and silently create it. Only the fields you pass are changed (move status/rank, edit title/description, archive, reassign project). For nullable fields (project_id, category) pass null to clear or omit to leave unchanged.", json!({
             "type":"object","additionalProperties":false,"required":["node_id"],
             "properties":{
                 "node_id":id,
@@ -126,7 +137,16 @@ pub fn tools() -> Vec<Tool> {
                 "tags":tags
             }
         })),
-        tool("list_cards", "List all cards ordered by status then rank.", empty()),
+        tool("list_cards", "List cards as {items, total, limit, offset}, ordered by status, then rank, then node_id. Each row includes `comment_count`. Archived cards are EXCLUDED by default.", json!({
+            "type":"object","additionalProperties":false,
+            "properties":{
+                "status":{"type":["string","null"],"enum":["Backlog","Research","OnDeck","Active","Done","Cut",null]},
+                "project":{"type":["string","null"],"description":"Project name to filter by"},
+                "archived":archived.clone(),
+                "limit":limit.clone(),
+                "offset":offset.clone()
+            }
+        })),
         tool("list_comments", "List the comments on a node (work item or card), oldest first.", json!({
             "type":"object","additionalProperties":false,"required":["node_id"],
             "properties":{"node_id":id}
@@ -153,8 +173,26 @@ pub fn tools() -> Vec<Tool> {
                 "tags":tags
             }
         })),
-        tool("list_links", "List reading-list links.", empty()),
-        tool("mark_link_read", "Mark a reading-list link read or unread. Returns the updated link.", json!({
+        tool("list_links", "List reading-list links as {items, total, limit, offset}, ordered by node_id. Archived links are EXCLUDED by default.", json!({
+            "type":"object","additionalProperties":false,
+            "properties":{
+                "disposition":{"type":["string","null"],"enum":["Unread","Done","Revisit","Summarized","VaultSaved",null]},
+                "read":{"type":["boolean","null"]},
+                "archived":archived.clone(),
+                "limit":limit.clone(),
+                "offset":offset.clone()
+            }
+        })),
+        tool("update_link", "Update a reading-list link in ONE transaction: disposition, read flag, tags -- any combination. This is how an agent records what it decided about a captured URL (migration 0004's intended workflow). Returns the updated link; isError `not_found` if the node is missing or is not a link; an invalid disposition changes nothing.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id"],
+            "properties":{
+                "node_id":id,
+                "disposition":{"type":"string","enum":["Unread","Done","Revisit","Summarized","VaultSaved"]},
+                "read":{"type":"boolean"},
+                "tags":tags.clone()
+            }
+        })),
+        tool("mark_link_read", "DEPRECATED -- use update_link, which does this plus disposition and tags in one transaction. Marks a reading-list link read or unread; returns the updated link.", json!({
             "type":"object","additionalProperties":false,"required":["node_id","read"],
             "properties":{"node_id":id,"read":{"type":"boolean"}}
         })),
@@ -182,9 +220,23 @@ pub fn tools() -> Vec<Tool> {
         tool("get_topic", "Fetch a topic by node_id, including archived topics. isError with code `not_found` if there is none.", json!({
             "type":"object","additionalProperties":false,"required":["node_id"],"properties":{"node_id":id}
         })),
-        tool("list_topics", "List non-archived topics.", empty()),
-        tool("search_topics", "Search non-archived topic names and descriptions.", json!({
-            "type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string"}}
+        tool("list_topics", "List topics as {items, total, limit, offset}, ordered by name. Pass `q` to match name/description. Each row includes `comment_count`. Archived topics are EXCLUDED by default.", json!({
+            "type":"object","additionalProperties":false,
+            "properties":{
+                "q":{"type":["string","null"],"description":"Match against name and description"},
+                "archived":archived.clone(),
+                "limit":limit.clone(),
+                "offset":offset.clone()
+            }
+        })),
+        tool("search_topics", "Alias for list_topics with a `q` filter; same {items, total, limit, offset} shape. Prefer list_topics.", json!({
+            "type":"object","additionalProperties":false,
+            "properties":{
+                "q":{"type":["string","null"]},
+                "archived":archived.clone(),
+                "limit":limit.clone(),
+                "offset":offset.clone()
+            }
         })),
         tool("update_topic", "Partially update a topic; returns the updated topic.", json!({
             "type":"object","additionalProperties":false,"required":["node_id"],
@@ -256,9 +308,16 @@ pub fn tools() -> Vec<Tool> {
             "type":"object","additionalProperties":false,"required":["node_id"],
             "properties":{"node_id":id}
         })),
-        tool("list_proposals", "List sprint proposals, pinned first then by rank (the drag order a user or agent left them in). Pass `status` to filter.", json!({
+        tool("list_proposals", "List sprint proposals: pinned first, then rank, then node_id (a stable order -- equal ranks no longer shuffle between calls). Each row carries `covered_count` and `comment_count`; call get_proposal for the covered work items themselves. Filter by `status` and/or `project` (name).", json!({
             "type":"object","additionalProperties":false,
-            "properties":{"status":{"type":["string","null"],"enum":["proposed","active","done","declined",null]}}
+            "properties":{
+                "status":{"type":["string","null"],"enum":["proposed","active","done","declined",null]},
+                "project":{"type":["string","null"],"description":"Project name to filter by"}
+            }
+        })),
+        tool("get_proposal", "Fetch one sprint proposal by node_id with everything needed to start it: the proposal fields, `covered` (the work items it covers -- wi_number, node_id, title, wi_status, wi_tshirt, project, comment_count -- ordered by wi_number), and inlined comments (up to 10, with `comments_truncated`). This replaces the old list_proposals + neighbors + list_work_items dance. isError with code `not_found` if there is none.", json!({
+            "type":"object","additionalProperties":false,"required":["node_id"],
+            "properties":{"node_id":id}
         })),
         tool("update_proposal", "Partially update a sprint proposal by its node_id; returns the updated proposal (isError with code `not_found` if that node is missing or is not a proposal). Only the fields you pass are changed. Use this for status transitions (proposed -> active -> done/declined), reordering (rank), pinning, or archiving.", json!({
             "type":"object","additionalProperties":false,"required":["node_id"],
@@ -520,10 +579,73 @@ struct AddCommentArgs {
     body: String,
 }
 
+/// Every collection read shares these. `archived` defaults to `false` (D-3);
+/// pass JSON `null` to get both archived and unarchived.
+fn archived_default() -> Option<bool> {
+    Some(false)
+}
+
 #[derive(Deserialize, Default)]
 struct ListWorkItemsArgs {
     #[serde(default)]
     project: Option<String>,
+    #[serde(default = "archived_default")]
+    archived: Option<bool>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+struct ListCardsArgs {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    project: Option<String>,
+    #[serde(default = "archived_default")]
+    archived: Option<bool>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+struct ListLinksArgs {
+    #[serde(default)]
+    disposition: Option<String>,
+    #[serde(default)]
+    read: Option<bool>,
+    #[serde(default = "archived_default")]
+    archived: Option<bool>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+struct ListTopicsArgs {
+    #[serde(default)]
+    q: Option<String>,
+    #[serde(default = "archived_default")]
+    archived: Option<bool>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct UpdateLinkArgs {
+    node_id: i64,
+    #[serde(default)]
+    disposition: Option<String>,
+    #[serde(default)]
+    read: Option<bool>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
 }
 
 fn default_survey_limit() -> i64 {
@@ -620,11 +742,6 @@ struct CreateTopicArgs {
     category: Option<String>,
     #[serde(default)]
     tags: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct SearchTopicsArgs {
-    query: String,
 }
 
 #[derive(Deserialize)]
@@ -739,6 +856,8 @@ struct ProposeSprintArgs {
 struct ListProposalsArgs {
     #[serde(default)]
     status: Option<String>,
+    #[serde(default)]
+    project: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -791,11 +910,19 @@ impl KorgServer {
             }
             "list_work_items" => {
                 let a: ListWorkItemsArgs = parse_args(args)?;
-                let res = match a.project {
-                    Some(p) => repo::list_work_items_by_project(&self.pool, &p).await,
-                    None => list_work_items(&self.pool).await,
-                };
-                match res {
+                match list_work_items(
+                    &self.pool,
+                    repo::WorkItemQuery {
+                        project: a.project,
+                        archived: a.archived,
+                        page: repo::PageQuery {
+                            limit: a.limit,
+                            offset: a.offset,
+                        },
+                    },
+                )
+                .await
+                {
                     Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
                     Err(e) => Ok(to_err(e)),
                 }
@@ -889,10 +1016,26 @@ impl KorgServer {
                     Err(e) => Ok(to_err(e)),
                 }
             }
-            "list_cards" => match list_cards(&self.pool).await {
-                Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                Err(e) => Ok(to_err(e)),
-            },
+            "list_cards" => {
+                let a: ListCardsArgs = parse_args(args)?;
+                match list_cards(
+                    &self.pool,
+                    repo::CardQuery {
+                        status: a.status,
+                        project: a.project,
+                        archived: a.archived,
+                        page: repo::PageQuery {
+                            limit: a.limit,
+                            offset: a.offset,
+                        },
+                    },
+                )
+                .await
+                {
+                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
             "list_comments" => {
                 let a: NodeIdArgs = parse_args(args)?;
                 match repo::list_comments(&self.pool, a.node_id).await {
@@ -935,10 +1078,43 @@ impl KorgServer {
                     Err(e) => Ok(to_err(e)),
                 }
             }
-            "list_links" => match list_links(&self.pool).await {
-                Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                Err(e) => Ok(to_err(e)),
-            },
+            "list_links" => {
+                let a: ListLinksArgs = parse_args(args)?;
+                match list_links(
+                    &self.pool,
+                    repo::LinkQuery {
+                        disposition: a.disposition,
+                        read: a.read,
+                        archived: a.archived,
+                        page: repo::PageQuery {
+                            limit: a.limit,
+                            offset: a.offset,
+                        },
+                    },
+                )
+                .await
+                {
+                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "update_link" => {
+                let a: UpdateLinkArgs = parse_args(args)?;
+                match repo::update_link(
+                    &self.pool,
+                    a.node_id,
+                    repo::LinkPatch {
+                        disposition: a.disposition,
+                        read: a.read,
+                        tags: a.tags,
+                    },
+                )
+                .await
+                {
+                    Ok(link) => ok_json(serde_json::to_value(link).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
             "mark_link_read" => {
                 let a: MarkLinkReadArgs = parse_args(args)?;
                 match repo::mark_link_read(&self.pool, a.node_id, a.read).await {
@@ -1003,13 +1179,23 @@ impl KorgServer {
                     Err(e) => Ok(to_err(e)),
                 }
             }
-            "list_topics" => match topics::list_topics(&self.pool).await {
-                Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                Err(e) => Ok(to_err(e)),
-            },
-            "search_topics" => {
-                let a: SearchTopicsArgs = parse_args(args)?;
-                match topics::search_topics(&self.pool, &a.query).await {
+            "list_topics" | "search_topics" => {
+                // search_topics is list_topics with a `q` filter; both names
+                // stay registered, one implementation (WI #534).
+                let a: ListTopicsArgs = parse_args(args)?;
+                match topics::list_topics(
+                    &self.pool,
+                    topics::TopicQuery {
+                        q: a.q,
+                        archived: a.archived,
+                        page: repo::PageQuery {
+                            limit: a.limit,
+                            offset: a.offset,
+                        },
+                    },
+                )
+                .await
+                {
                     Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
                     Err(e) => Ok(to_err(e)),
                 }
@@ -1204,8 +1390,24 @@ impl KorgServer {
             }
             "list_proposals" => {
                 let a: ListProposalsArgs = parse_args(args)?;
-                match repo::list_proposals(&self.pool, a.status.as_deref()).await {
+                match repo::list_proposals(
+                    &self.pool,
+                    repo::ProposalQuery {
+                        status: a.status,
+                        project: a.project,
+                    },
+                )
+                .await
+                {
                     Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "get_proposal" => {
+                let a: NodeIdArgs = parse_args(args)?;
+                match repo::get_proposal_detail(&self.pool, a.node_id).await {
+                    Ok(Some(v)) => ok_json(serde_json::to_value(v).unwrap()),
+                    Ok(None) => Ok(not_found(format!("no proposal with node_id {}", a.node_id))),
                     Err(e) => Ok(to_err(e)),
                 }
             }

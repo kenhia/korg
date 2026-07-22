@@ -1,14 +1,36 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { dndzone, type DndEvent } from "svelte-dnd-action";
-  import { api, type Proposal, type WorkItem } from "$lib/api";
+  import { api, type Proposal } from "$lib/api";
   import NodePreview from "$lib/components/NodePreview.svelte";
 
   type DndItem = { id: number; proposal: Proposal };
   type Covered = { wi_number: number; title: string };
 
+  // WI #565 — the queue spans repos, so scope it to the project you're in.
+  // Sticky like the work-items rail (same convention, SSR-safe).
+  const PROJECT_KEY = "korg.planning.project";
+  const ALL_PROJECTS = "";
+  function loadStickyProject(): string {
+    try {
+      return typeof localStorage !== "undefined"
+        ? (localStorage.getItem(PROJECT_KEY) ?? ALL_PROJECTS)
+        : ALL_PROJECTS;
+    } catch {
+      return ALL_PROJECTS;
+    }
+  }
+  function saveStickyProject(name: string): void {
+    try {
+      if (typeof localStorage !== "undefined")
+        localStorage.setItem(PROJECT_KEY, name);
+    } catch {
+      /* storage unavailable — non-fatal */
+    }
+  }
+
+  let projectFilter = $state(ALL_PROJECTS);
   let proposalsRaw = $state<Proposal[]>([]);
-  let workItems = $state<WorkItem[]>([]);
   let covers = $state<Record<number, Covered[]>>({});
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -29,6 +51,15 @@
   let showDone = $state(false);
   let showDeclined = $state(false);
 
+  // Every project the queue mentions, for the filter control.
+  let knownProjects = $state<string[]>([]);
+
+  async function pickProject(name: string) {
+    projectFilter = name;
+    saveStickyProject(name);
+    await load();
+  }
+
   function rebuild() {
     const proposed = proposalsRaw.filter((p) => p.status === "proposed");
     pinnedBuf = proposed
@@ -41,26 +72,35 @@
       .map((p) => ({ id: p.node_id, proposal: p }));
   }
 
+  // One authoritative read per proposal (WI #536) — no neighbors call, no
+  // client-side join against every work item in the instance.
   async function loadCovers(proposalNodeId: number) {
-    // Filter server-side (WI #533) rather than pulling every edge and sifting.
-    const page = await api
-      .neighbors(proposalNodeId, { label: "covers", kind: "workitem" })
-      .catch(() => null);
-    const items: Covered[] = [];
-    for (const n of page?.items ?? []) {
-      const wi = workItems.find((w) => w.node_id === n.node_id);
-      if (wi) items.push({ wi_number: wi.wi_number, title: wi.title });
-    }
-    covers[proposalNodeId] = items;
+    const detail = await api.proposal(proposalNodeId).catch(() => null);
+    covers[proposalNodeId] = (detail?.covered ?? []).map((c) => ({
+      wi_number: c.wi_number,
+      title: c.title,
+    }));
   }
 
   async function load() {
     loading = true;
     error = null;
     try {
-      [proposalsRaw, workItems] = await Promise.all([api.proposals(), api.workItems()]);
+      proposalsRaw = await api.proposals(
+        undefined,
+        projectFilter === ALL_PROJECTS ? undefined : projectFilter,
+      );
+      if (projectFilter === ALL_PROJECTS) {
+        knownProjects = [
+          ...new Set(proposalsRaw.map((p) => p.project).filter((n): n is string => !!n)),
+        ].sort();
+      }
       rebuild();
-      await Promise.all(proposalsRaw.map((p) => loadCovers(p.node_id)));
+      // Only proposals that actually cover something need a detail read;
+      // `covered_count` on the row answers the rest.
+      await Promise.all(
+        proposalsRaw.filter((p) => p.covered_count > 0).map((p) => loadCovers(p.node_id)),
+      );
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -160,7 +200,10 @@
     previewNode = wi_number;
   }
 
-  onMount(load);
+  onMount(() => {
+    projectFilter = loadStickyProject();
+    void load();
+  });
 </script>
 
 {#snippet card(p: Proposal)}
@@ -181,6 +224,9 @@
         >{copiedId === p.node_id ? "✓" : "⧉"}</button>
       </div>
     </div>
+    {#if p.project}
+      <span class="mt-1 inline-block rounded bg-[var(--color-surface)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-muted)]" data-testid="proposal-project">{p.project}</span>
+    {/if}
     <p class="mt-1 text-xs text-[var(--color-muted)]">{p.summary}</p>
     {#if covers[p.node_id]?.length}
       <div class="mt-2 flex flex-wrap gap-1">
@@ -211,7 +257,22 @@
 <section class="space-y-4">
   <div class="flex items-center justify-between">
     <h1 class="text-xl font-semibold">Planning</h1>
-    <p class="text-xs text-[var(--color-muted)]">Proposals agents (or you) can drag to reorder — pinned always sort first.</p>
+    <div class="flex items-center gap-3">
+      <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]">
+        <span class="sr-only">Filter proposals by project</span>
+        Project
+        <select
+          class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-xs"
+          data-testid="planning-project-filter"
+          value={projectFilter}
+          onchange={(e) => pickProject((e.currentTarget as HTMLSelectElement).value)}
+        >
+          <option value="">All projects</option>
+          {#each knownProjects as name (name)}<option value={name}>{name}</option>{/each}
+        </select>
+      </label>
+      <p class="text-xs text-[var(--color-muted)]">Proposals agents (or you) can drag to reorder — pinned always sort first.</p>
+    </div>
   </div>
 
   {#if error}<p class="rounded bg-red-950 px-3 py-2 text-sm text-red-300">{error}</p>{/if}

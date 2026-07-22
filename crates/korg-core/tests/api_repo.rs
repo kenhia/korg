@@ -64,12 +64,15 @@ async fn api_repo_links_cards_projects() {
     .await
     .unwrap()
     .node_id;
-    assert_eq!(list_links(&pool).await.unwrap()[0].disposition, "Unread");
+    assert_eq!(
+        list_links(&pool, Default::default()).await.unwrap().items[0].disposition,
+        "Unread"
+    );
     set_link_disposition(&pool, link, "Revisit").await.unwrap();
     set_node_tags(&pool, link, &["rust".into(), "mcp".into()])
         .await
         .unwrap();
-    let links = list_links(&pool).await.unwrap();
+    let links = list_links(&pool, Default::default()).await.unwrap().items;
     assert_eq!(links[0].disposition, "Revisit");
     assert_eq!(links[0].tags, vec!["rust".to_string(), "mcp".to_string()]);
 
@@ -100,7 +103,7 @@ async fn api_repo_links_cards_projects() {
     )
     .await
     .unwrap();
-    let cards = list_cards(&pool).await.unwrap();
+    let cards = list_cards(&pool, Default::default()).await.unwrap().items;
     assert_eq!(cards[0].status, "Active");
     assert_eq!(cards[0].rank, Decimal::new(25, 1));
 

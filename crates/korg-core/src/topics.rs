@@ -6,6 +6,7 @@ use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 
 use crate::error::RepoError;
+use crate::repo::{ArchivedFilter, Page, PageQuery};
 
 #[derive(Debug, Clone)]
 pub struct NewTopic {
@@ -34,6 +35,9 @@ pub struct Topic {
     pub category: Option<String>,
     pub tags: Vec<String>,
     pub archived: bool,
+    /// Comments on this topic (WI #535) — the two-level read contract
+    /// generalized past work items: any commentable row says so.
+    pub comment_count: i64,
     #[serde(with = "time::serde::rfc3339")]
     pub created: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -79,7 +83,9 @@ pub async fn create_topic(pool: &PgPool, new: NewTopic) -> Result<Topic> {
 
 const SELECT_TOPIC: &str =
     "SELECT t.node_id, t.name, t.description, n.project_id, p.name AS project, \
-            n.category, n.tags, n.archived, n.created, n.updated \
+            n.category, n.tags, n.archived, \
+            (SELECT count(*) FROM comment c WHERE c.node_id = t.node_id) AS comment_count, \
+            n.created, n.updated \
      FROM topic t JOIN node n ON n.id = t.node_id \
      LEFT JOIN project p ON p.id = n.project_id";
 
@@ -92,23 +98,50 @@ pub async fn get_topic(pool: &PgPool, node_id: i64) -> Result<Option<Topic>> {
     )
 }
 
-pub async fn list_topics(pool: &PgPool) -> Result<Vec<Topic>> {
-    Ok(sqlx::query_as::<_, Topic>(&format!(
-        "{SELECT_TOPIC} WHERE NOT n.archived ORDER BY lower(t.name), t.node_id"
-    ))
-    .fetch_all(pool)
-    .await?)
+#[derive(Debug, Clone)]
+pub struct TopicQuery {
+    /// Free-text match against name and description.
+    pub q: Option<String>,
+    pub archived: ArchivedFilter,
+    pub page: PageQuery,
 }
 
-pub async fn search_topics(pool: &PgPool, query: &str) -> Result<Vec<Topic>> {
-    Ok(sqlx::query_as::<_, Topic>(&format!(
-        "{SELECT_TOPIC} WHERE NOT n.archived \
-         AND (t.name ILIKE '%' || $1 || '%' OR coalesce(t.description, '') ILIKE '%' || $1 || '%') \
-         ORDER BY lower(t.name), t.node_id"
+impl Default for TopicQuery {
+    fn default() -> Self {
+        Self {
+            q: None,
+            archived: crate::repo::archived_default(),
+            page: PageQuery::default(),
+        }
+    }
+}
+
+/// Topics, enveloped and bounded (WI #534). `list_topics` and the old
+/// `search_topics` collapse into one call: `q` is just another filter.
+pub async fn list_topics(pool: &PgPool, query: TopicQuery) -> Result<Page<Topic>> {
+    let (limit, offset) = query.page.resolve_public();
+    let q = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    const WHERE: &str = "WHERE ($1::bool IS NULL OR n.archived = $1) \
+           AND ($2::text IS NULL \
+                OR t.name ILIKE '%' || $2 || '%' \
+                OR coalesce(t.description, '') ILIKE '%' || $2 || '%')";
+    let items = sqlx::query_as::<_, Topic>(&format!(
+        "{SELECT_TOPIC} {WHERE} ORDER BY lower(t.name), t.node_id LIMIT $3 OFFSET $4"
     ))
-    .bind(query.trim())
+    .bind(query.archived)
+    .bind(q)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(pool)
-    .await?)
+    .await?;
+    let total: i64 = sqlx::query_scalar(&format!(
+        "SELECT count(*) FROM topic t JOIN node n ON n.id = t.node_id {WHERE}"
+    ))
+    .bind(query.archived)
+    .bind(q)
+    .fetch_one(pool)
+    .await?;
+    Ok(Page::from_parts(items, total, limit, offset))
 }
 
 pub async fn update_topic(pool: &PgPool, node_id: i64, patch: TopicPatch) -> Result<Topic> {

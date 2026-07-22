@@ -157,7 +157,10 @@ async fn get_work_item_detail_inlines_capped_comments() {
     assert!(d.comments_truncated);
 
     // list_work_items carries the count too.
-    let items = list_work_items(&pool).await.unwrap();
+    let items = list_work_items(&pool, Default::default())
+        .await
+        .unwrap()
+        .items;
     let row = items.iter().find(|w| w.wi_number == wi.wi_number).unwrap();
     assert_eq!(row.comment_count, over);
 

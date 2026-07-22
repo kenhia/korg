@@ -92,7 +92,9 @@ async fn api_end_to_end() {
     assert_eq!(wi["node_id"].as_i64(), Some(wi_number));
 
     let (_st, items) = req(&router, "GET", "/api/work-items", None).await;
-    assert_eq!(items.as_array().unwrap().len(), 1);
+    assert_eq!(items["items"].as_array().unwrap().len(), 1);
+    assert_eq!(items["total"], 1);
+    assert_eq!(items["limit"], 200, "default page size");
 
     let (_st, one) = req(
         &router,
@@ -105,7 +107,7 @@ async fn api_end_to_end() {
 
     // Cards list + move/rank in one PATCH.
     let (_st, cards) = req(&router, "GET", "/api/cards", None).await;
-    let card_node = cards[0]["node_id"].as_i64().unwrap();
+    let card_node = cards["items"][0]["node_id"].as_i64().unwrap();
     let (st, _) = req(
         &router,
         "PATCH",
@@ -115,20 +117,28 @@ async fn api_end_to_end() {
     .await;
     assert_eq!(st, StatusCode::OK);
     let (_st, cards) = req(&router, "GET", "/api/cards", None).await;
-    assert_eq!(cards[0]["status"], "Active");
+    assert_eq!(cards["items"][0]["status"], "Active");
 
-    // Card project (free-text resolves/creates) + a comment thread.
+    // Card project moves by project_id on REST as well as MCP (WI #537) —
+    // it used to take a name and create the project as a side effect.
+    let (_st, proj) = req(
+        &router,
+        "POST",
+        "/api/projects",
+        Some(json!({"name":"boardproj"})),
+    )
+    .await;
     let (st, _) = req(
         &router,
         "PATCH",
         &format!("/api/cards/{card_node}"),
-        Some(json!({"project":"boardproj","category":"chores","tags":["x","y"]})),
+        Some(json!({"project_id": proj["id"], "category":"chores","tags":["x","y"]})),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
     let (_st, cards) = req(&router, "GET", "/api/cards", None).await;
-    assert_eq!(cards[0]["project"], "boardproj");
-    assert_eq!(cards[0]["category"], "chores");
+    assert_eq!(cards["items"][0]["project"], "boardproj");
+    assert_eq!(cards["items"][0]["category"], "chores");
 
     // Comments are node-scoped: /api/nodes/:node_id/comments works for a card node…
     let (st, cm) = req(
@@ -206,8 +216,8 @@ async fn api_end_to_end() {
     .await;
     assert_eq!(st, StatusCode::OK);
     let (_st, links) = req(&router, "GET", "/api/links", None).await;
-    assert_eq!(links[0]["disposition"], "Revisit");
-    assert_eq!(links[0]["tags"][0], "read");
+    assert_eq!(links["items"][0]["disposition"], "Revisit");
+    assert_eq!(links["items"][0]["tags"][0], "read");
 
     // Topics: create, search, update. Daily planning snapshots display server-side.
     let (st, topic) = req(
@@ -220,7 +230,8 @@ async fn api_end_to_end() {
     assert_eq!(st, StatusCode::OK);
     let topic_node = topic["node_id"].as_i64().unwrap();
     let (_st, found) = req(&router, "GET", "/api/topics?q=ARCH", None).await;
-    assert_eq!(found.as_array().unwrap().len(), 1);
+    assert_eq!(found["items"].as_array().unwrap().len(), 1);
+    assert_eq!(found["total"], 1);
     let (st, _) = req(
         &router,
         "PATCH",
@@ -277,7 +288,12 @@ async fn api_end_to_end() {
     .await;
     assert_eq!(st, StatusCode::OK);
     let (_st, topics) = req(&router, "GET", "/api/topics", None).await;
-    assert!(topics.as_array().unwrap().is_empty());
+    assert!(
+        topics["items"].as_array().unwrap().is_empty(),
+        "archived topics are excluded by default"
+    );
+    let (_st, all) = req(&router, "GET", "/api/topics?archived=all", None).await;
+    assert_eq!(all["total"], 1, "…but still reachable with archived=all");
 
     // Daily plan items remain ordinary nodes for generalized relationships.
     let (st, _) = req(
@@ -301,7 +317,7 @@ async fn api_end_to_end() {
     assert_eq!(ns["truncated"], false);
     // The card stays where it is (Active), not forced anywhere by scheduling.
     let (_st, cards) = req(&router, "GET", "/api/cards", None).await;
-    assert_eq!(cards[0]["status"], "Active");
+    assert_eq!(cards["items"][0]["status"], "Active");
 
     // Recent project resolves to the one we touched.
     let (_st, recent) = req(&router, "GET", "/api/projects/recent", None).await;
@@ -345,7 +361,8 @@ async fn api_end_to_end() {
     .await;
     assert_eq!(st, StatusCode::OK);
     let (_st, alpha_items) = req(&router, "GET", "/api/work-items?project=alpha", None).await;
-    assert_eq!(alpha_items.as_array().unwrap().len(), 1);
+    assert_eq!(alpha_items["items"].as_array().unwrap().len(), 1);
+    assert_eq!(alpha_items["total"], 1);
 
     // Edit + archive the work item via PATCH.
     let (st, _) = req(

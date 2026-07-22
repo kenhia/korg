@@ -124,7 +124,8 @@
     loading = true;
     error = null;
     try {
-      cardsRaw = await api.cards();
+      // The page filters archived client-side behind a toggle, so it needs both.
+    cardsRaw = (await api.cards({ archived: "all" })).items;
       rebuild();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -260,11 +261,18 @@
       .split(",")
       .map((t) => t.trim())
       .filter((t) => t !== "");
+    // The API now takes project_id on both surfaces (WI #537). Creating a
+    // project from a typed name is a UI affordance, so it happens here rather
+    // than as a hidden side effect of a card PATCH. createProject is
+    // idempotent, so this is one call whether or not the project exists.
+    const projectName = form.project.trim();
+    const project_id =
+      projectName === "" ? null : (await api.createProject(projectName)).id;
     await api.updateCard(editing.node_id, {
       title: form.title,
       status: form.status,
       description: form.description,
-      project: form.project.trim() === "" ? null : form.project.trim(),
+      project_id,
       category: form.category.trim() === "" ? null : form.category.trim(),
       tags,
     });

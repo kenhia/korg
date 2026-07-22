@@ -79,9 +79,9 @@
 
   async function load() {
     [cards, workItems, links, projects] = await Promise.all([
-      api.cards().catch(() => []),
-      api.workItems().catch(() => []),
-      api.links().catch(() => []),
+      api.cards().then((p) => p.items).catch(() => []),
+      api.workItems().then((p) => p.items).catch(() => []),
+      api.links().then((p) => p.items).catch(() => []),
       api.projects().catch(() => []),
     ]);
   }

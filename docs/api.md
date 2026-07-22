@@ -4,10 +4,73 @@ Normative reference for korg's agent-facing surfaces. Where this document and
 a tool description disagree, this document is right and the description is a
 bug.
 
-This file starts with the relationship model (sprint 014). The full response
-and error contract currently lives in
-[usage.md](usage.md#response-and-error-contract) and moves here as the
-remaining cleanup bundles land.
+Error codes and the mutation contract live in
+[usage.md](usage.md#response-and-error-contract); collection reads and the
+relationship model are below. The remaining pieces move here as the cleanup
+bundles land.
+
+## Collection reads
+
+Every list returns the same envelope (sprint 015):
+
+```json
+{ "items": [ ... ], "total": 42, "limit": 200, "offset": 0 }
+```
+
+`total` is the full **filtered** count before `limit`/`offset`, so you can page
+without guessing and can tell a complete answer from a clipped one. `limit`
+defaults to 200 and is clamped to 500.
+
+**Archived rows are excluded by default.** This is deliberate (D-3): the common
+question is "what is live", and the old behaviour silently mixed archived rows
+into every answer. To see them:
+
+| You want | REST | MCP |
+|---|---|---|
+| live only (default) | omit `archived` | omit `archived` |
+| archived only | `?archived=true` | `"archived": true` |
+| both | `?archived=all` | `"archived": null` |
+
+Per-entity filters, all applied server-side — prefer them to fetching
+everything and sifting:
+
+| Operation | Filters | Ordering |
+|---|---|---|
+| `list_work_items` | `project` (name), `archived` | `wi_number` |
+| `list_cards` | `status`, `project`, `archived` | `status`, `rank`, `node_id` |
+| `list_links` | `disposition`, `read`, `archived` | `node_id` |
+| `list_topics` | `q` (name/description), `archived` | `name`, `node_id` |
+| `list_proposals` | `status`, `project` | pinned, `rank`, `node_id` |
+| `neighbors` | `label`, `kind` | `node_id`, `rel_id` |
+
+Every ordering carries an id tie-breaker, so equal ranks no longer shuffle
+between calls. `list_proposals` is not enveloped — the queue is small and
+ordered by hand.
+
+`survey_work_items` remains the cross-project sweep: same envelope, no
+`content`/`details`. Reach for `list_work_items` when you want one project's
+items in full, and the survey when you want many projects' shape (D-10).
+
+## Two-level reads
+
+Collections say **whether** there is discussion; focused reads **inline** it.
+Every commentable row (`WorkItemRow`, `CardRow`, `ProposalRow`, `ReportRow`,
+`Topic`) carries an exact `comment_count`, and `ProposalRow` also carries
+`covered_count`.
+
+Focused reads inline up to 10 comments with a `comments_truncated` flag; page
+the tail via `list_comments`:
+
+- `GET /api/work-items/:wi` and the `get_work_item` tool — **the same shape**.
+  They were one operation under one name with two shapes until sprint 015.
+- `GET /api/proposals/:node_id` and the `get_proposal` tool — the proposal,
+  its `covered` work items (`wi_number`, `node_id`, `title`, `wi_status`,
+  `wi_tshirt`, `project`, `comment_count`, ordered by `wi_number`), and its
+  comments. This is the authoritative "what is this sprint" read: it replaces
+  `list_proposals` + `neighbors` + `list_work_items` and a client-side join.
+
+Missing single-item reads are 404 / `isError` `not_found`, never `200 null`
+(D-6).
 
 ## Relationships
 
