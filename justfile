@@ -19,7 +19,9 @@ verify-import:
     cargo test -p korg-migrate --test fidelity
 
 # Import kwi+kcard from snapshots into korg (set KORG_DATABASE_URL). Pass
-# --reset to clear existing korg work items/cards/projects/areas first.
+# --reset to TRUNCATE *every* node kind (work items, cards, links, topics,
+# daily plans, proposals, reports) plus projects and areas first — it refuses
+# to run without KORG_RESET_CONFIRM=yes.
 #   just snapshot        # refresh snapshots from the live sources (read-only)
 #   KORG_DATABASE_URL=... just import --reset
 import *ARGS:

@@ -44,7 +44,7 @@ parent-hierarchy preservation, project merge, and project-scoped areas.
 ## 3. Import into a korg database
 
 ```bash
-KORG_DATABASE_URL=postgres://korg:korg@host:5432/korg just import --reset
+KORG_DATABASE_URL=postgres://korg:korg@host:5432/korg just import
 ```
 
 | Variable            | Purpose                                                                 |
@@ -52,11 +52,17 @@ KORG_DATABASE_URL=postgres://korg:korg@host:5432/korg just import --reset
 | `KORG_DATABASE_URL` | (required) destination korg database.                                   |
 | `KORG_ADMIN_URL`    | admin connection used to create scratch source DBs (defaults to the `postgres` db on the same host). |
 | `KORG_SNAPSHOTS`    | directory holding `kwi.dump` / `kcard.dump` (default `./snapshots`).    |
+| `KORG_RESET_CONFIRM` | must be `yes` for `--reset` to run at all (WI #528).                   |
 
 Flags:
 
-- `--reset` — `TRUNCATE` korg work items / cards / projects / areas before
-  importing (clears any previous import).
+- `--reset` — `TRUNCATE node, project, area … CASCADE` before importing. Read
+  that literally: it destroys **every** node kind — work items, cards,
+  reading-list links, topics, daily plan items, sprint proposals and reports —
+  not just the entities this import creates. The import is one-shot and long
+  finished, so a `--reset` against a live korg database is almost certainly a
+  mistake; korg-migrate refuses unless `KORG_RESET_CONFIRM=yes` and prints the
+  per-kind inventory it is about to destroy.
 
 The importer restores the snapshots into scratch source databases, reads them,
 and writes into korg — the original `kwi` / `kcard` databases are never touched.

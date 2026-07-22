@@ -76,7 +76,9 @@ async fn create_proposal_bundles_covers_edges() {
     assert!(r.covered.contains(&a_node));
     assert!(r.covered.contains(&b_node));
 
-    let ns = korg_core::repo::neighbors(&pool, r.node_id).await.unwrap();
+    let ns = korg_core::repo::neighbors(&pool, r.row.node_id)
+        .await
+        .unwrap();
     assert_eq!(ns.len(), 2);
     assert!(ns.iter().all(|n| n.label == "covers"));
 }
@@ -95,7 +97,7 @@ async fn list_proposals_pinned_first_then_rank_and_status_filter() {
         .unwrap();
     update_proposal(
         &pool,
-        pinned.node_id,
+        pinned.row.node_id,
         ProposalPatch {
             pinned: Some(true),
             ..Default::default()
@@ -108,7 +110,7 @@ async fn list_proposals_pinned_first_then_rank_and_status_filter() {
     let order: Vec<i64> = all.iter().map(|p| p.node_id).collect();
     assert_eq!(
         order,
-        vec![pinned.node_id, low.node_id, high.node_id],
+        vec![pinned.row.node_id, low.row.node_id, high.row.node_id],
         "pinned sorts first regardless of rank, then ascending rank"
     );
     assert!(
@@ -118,7 +120,7 @@ async fn list_proposals_pinned_first_then_rank_and_status_filter() {
 
     update_proposal(
         &pool,
-        low.node_id,
+        low.row.node_id,
         ProposalPatch {
             status: Some("active".into()),
             ..Default::default()
@@ -128,7 +130,7 @@ async fn list_proposals_pinned_first_then_rank_and_status_filter() {
     .unwrap();
     let active = list_proposals(&pool, Some("active")).await.unwrap();
     assert_eq!(active.len(), 1);
-    assert_eq!(active[0].node_id, low.node_id);
+    assert_eq!(active[0].node_id, low.row.node_id);
     let still_proposed = list_proposals(&pool, Some("proposed")).await.unwrap();
     assert_eq!(
         still_proposed.len(),
@@ -146,7 +148,7 @@ async fn update_proposal_patches_only_given_fields() {
 
     update_proposal(
         &pool,
-        p.node_id,
+        p.row.node_id,
         ProposalPatch {
             summary: Some("updated summary".into()),
             rank: Some(Decimal::new(3, 0)),

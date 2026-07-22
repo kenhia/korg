@@ -33,7 +33,9 @@ project-scoped; tags/category are shared across kinds.
 ## Crates
 
 - `korg-core` — schema (sqlx migrations), domain repos (work items, cards,
-  reading-list links, generalized relationships), topics, and daily planning.
+  reading-list links, generalized relationships), topics, and daily planning,
+  plus the domain vocabulary and error taxonomy both transports present
+  (see [the response and error contract](docs/usage.md#response-and-error-contract)).
 - `korg-migrate` — one-shot, fidelity-verified import of kwi + kcard data.
 - `korg-mcp` — MCP tool surface (rmcp) over the korg domain, served by `korg-api`.
 
@@ -104,8 +106,11 @@ just snapshot
 # 2a. Verify fidelity invariants F1-F7 (CI-style gate, throwaway DB).
 just verify-import
 
-# 2b. Or load the data into a real korg database (--reset clears it first).
-KORG_DATABASE_URL=postgres://korg:korg@host:5432/korg just import --reset
+# 2b. Or load the data into a real korg database. --reset first TRUNCATEs
+# EVERY node kind (work items, cards, links, topics, daily plans, proposals,
+# reports) plus projects and areas, so it demands an explicit confirmation.
+KORG_DATABASE_URL=postgres://korg:korg@host:5432/korg \
+KORG_RESET_CONFIRM=yes just import --reset
 ```
 
 `verify-import` proves the import is faithful to both sources: count parity,

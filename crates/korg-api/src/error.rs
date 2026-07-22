@@ -1,47 +1,40 @@
-//! HTTP error wrapper: wraps any `anyhow::Error` as a JSON body, mapping
-//! recognized typed domain errors to 4xx and everything else to 500.
+//! HTTP error wrapper: wraps any `anyhow::Error` as a JSON body, mapping the
+//! core error taxonomy to a status and a stable machine-readable `code`.
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
 
+use korg_core::error::{ErrorClass, ErrorCode};
+
 pub struct ApiError(pub anyhow::Error);
 
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        let status = self.status();
-        (status, Json(json!({ "error": self.0.to_string() }))).into_response()
+impl ApiError {
+    /// A caller-facing 400 — use for parse/validation failures that happen at
+    /// the transport edge, before korg-core sees them.
+    pub fn invalid(msg: impl Into<String>) -> Self {
+        Self(korg_core::error::RepoError::invalid(msg).into())
     }
 }
 
-impl ApiError {
-    /// Map the underlying error to an HTTP status. Typed domain errors
-    /// (`PlanningError`, `RepoError`) become 4xx; everything else is 500
-    /// (WI #289 — validation/not-found no longer masquerade as server errors).
-    fn status(&self) -> StatusCode {
-        use korg_core::daily_plan::PlanningError;
-        use korg_core::repo::RepoError;
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let code = self.0.code();
+        let body = json!({ "error": self.0.to_string(), "code": code.as_str() });
+        (status_for(code), Json(body)).into_response()
+    }
+}
 
-        if let Some(e) = self.0.downcast_ref::<PlanningError>() {
-            return match e {
-                PlanningError::SourceNotFound(_) | PlanningError::ItemNotFound(_) => {
-                    StatusCode::NOT_FOUND
-                }
-                PlanningError::WrongSource { .. }
-                | PlanningError::TargetPast
-                | PlanningError::InvalidRange(_) => StatusCode::BAD_REQUEST,
-                PlanningError::FrozenPast | PlanningError::InvalidReorder => StatusCode::CONFLICT,
-                PlanningError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            };
-        }
-        if let Some(e) = self.0.downcast_ref::<RepoError>() {
-            return match e {
-                RepoError::InvalidInput(_) => StatusCode::BAD_REQUEST,
-                RepoError::NotFound(_) => StatusCode::NOT_FOUND,
-            };
-        }
-        StatusCode::INTERNAL_SERVER_ERROR
+/// Codes → statuses (D-5). Everything korg-core doesn't classify is a genuine
+/// server fault; before WI #524 that bucket also held bad dates, unknown
+/// reports and invalid t-shirt sizes.
+fn status_for(code: ErrorCode) -> StatusCode {
+    match code {
+        ErrorCode::InvalidInput => StatusCode::BAD_REQUEST,
+        ErrorCode::NotFound => StatusCode::NOT_FOUND,
+        ErrorCode::Conflict => StatusCode::CONFLICT,
+        ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 

@@ -1,9 +1,11 @@
 //! Reusable planning topics backed by first-class nodes.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use serde::Serialize;
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
+
+use crate::error::RepoError;
 
 #[derive(Debug, Clone)]
 pub struct NewTopic {
@@ -41,12 +43,16 @@ pub struct Topic {
 fn validate_name(name: &str) -> Result<&str> {
     let name = name.trim();
     if name.is_empty() {
-        bail!("topic name is required");
+        return Err(RepoError::invalid("topic name is required").into());
     }
     Ok(name)
 }
 
-pub async fn create_topic(pool: &PgPool, new: NewTopic) -> Result<i64> {
+fn topic_not_found(node_id: i64) -> anyhow::Error {
+    RepoError::NotFound(format!("no topic with node_id {node_id}")).into()
+}
+
+pub async fn create_topic(pool: &PgPool, new: NewTopic) -> Result<Topic> {
     let name = validate_name(&new.name)?;
     let mut tx = pool.begin().await?;
     let node_id: i64 = sqlx::query(
@@ -66,7 +72,9 @@ pub async fn create_topic(pool: &PgPool, new: NewTopic) -> Result<i64> {
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    Ok(node_id)
+    get_topic(pool, node_id)
+        .await?
+        .ok_or_else(|| topic_not_found(node_id))
 }
 
 const SELECT_TOPIC: &str =
@@ -103,7 +111,7 @@ pub async fn search_topics(pool: &PgPool, query: &str) -> Result<Vec<Topic>> {
     .await?)
 }
 
-pub async fn update_topic(pool: &PgPool, node_id: i64, patch: TopicPatch) -> Result<()> {
+pub async fn update_topic(pool: &PgPool, node_id: i64, patch: TopicPatch) -> Result<Topic> {
     let name = match patch.name.as_deref() {
         Some(value) => Some(validate_name(value)?.to_owned()),
         None => None,
@@ -123,7 +131,7 @@ pub async fn update_topic(pool: &PgPool, node_id: i64, patch: TopicPatch) -> Res
     .execute(&mut *tx)
     .await?;
     if result.rows_affected() == 0 {
-        bail!("topic {node_id} not found");
+        return Err(topic_not_found(node_id));
     }
     sqlx::query(
         "UPDATE node SET \
@@ -139,17 +147,21 @@ pub async fn update_topic(pool: &PgPool, node_id: i64, patch: TopicPatch) -> Res
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok(())
+    get_topic(pool, node_id)
+        .await?
+        .ok_or_else(|| topic_not_found(node_id))
 }
 
-pub async fn archive_topic(pool: &PgPool, node_id: i64, archived: bool) -> Result<()> {
+pub async fn archive_topic(pool: &PgPool, node_id: i64, archived: bool) -> Result<Topic> {
     let result = sqlx::query("UPDATE node SET archived = $2 WHERE id = $1 AND kind = 'topic'")
         .bind(node_id)
         .bind(archived)
         .execute(pool)
         .await?;
     if result.rows_affected() == 0 {
-        bail!("topic {node_id} not found");
+        return Err(topic_not_found(node_id));
     }
-    Ok(())
+    get_topic(pool, node_id)
+        .await?
+        .ok_or_else(|| topic_not_found(node_id))
 }

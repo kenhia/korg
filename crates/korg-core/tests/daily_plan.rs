@@ -77,7 +77,10 @@ async fn work_item(pool: &PgPool, title: &str) -> i64 {
 async fn topic_crud_search_and_archive() {
     let (_c, pool) = fresh_korg().await;
     assert!(create_topic(&pool, topic("   ")).await.is_err());
-    let id = create_topic(&pool, topic("Rust async")).await.unwrap();
+    let id = create_topic(&pool, topic("Rust async"))
+        .await
+        .unwrap()
+        .node_id;
     let got = get_topic(&pool, id).await.unwrap().unwrap();
     assert_eq!(got.name, "Rust async");
     assert!(!got.archived);
@@ -110,7 +113,7 @@ async fn topic_crud_search_and_archive() {
 async fn planning_snapshots_orders_duplicates_and_validates_sources() {
     let (_c, pool) = fresh_korg().await;
     let wi = work_item(&pool, "Original title").await;
-    let t = create_topic(&pool, topic("Explore")).await.unwrap();
+    let t = create_topic(&pool, topic("Explore")).await.unwrap().node_id;
     let card = create_card(
         &pool,
         NewCard {
@@ -124,7 +127,8 @@ async fn planning_snapshots_orders_duplicates_and_validates_sources() {
         },
     )
     .await
-    .unwrap();
+    .unwrap()
+    .node_id;
     let link = create_link(
         &pool,
         NewLink {
@@ -136,17 +140,21 @@ async fn planning_snapshots_orders_duplicates_and_validates_sources() {
         },
     )
     .await
-    .unwrap();
+    .unwrap()
+    .node_id;
 
     let a = create_item(&pool, wi, date!(2026 - 07 - 11), &ctx())
         .await
-        .unwrap();
+        .unwrap()
+        .node_id;
     let b = create_item(&pool, t, date!(2026 - 07 - 11), &ctx())
         .await
-        .unwrap();
+        .unwrap()
+        .node_id;
     let c = create_item(&pool, wi, date!(2026 - 07 - 11), &ctx())
         .await
-        .unwrap();
+        .unwrap()
+        .node_id;
     create_item(&pool, card, date!(2026 - 07 - 12), &ctx())
         .await
         .unwrap();
@@ -208,13 +216,16 @@ async fn completion_reorder_delete_move_copy_and_frozen_history() {
         },
     )
     .await
-    .unwrap();
+    .unwrap()
+    .node_id;
     let a = create_item(&pool, source, date!(2026 - 07 - 11), &ctx())
         .await
-        .unwrap();
+        .unwrap()
+        .node_id;
     let b = create_item(&pool, source, date!(2026 - 07 - 11), &ctx())
         .await
-        .unwrap();
+        .unwrap()
+        .node_id;
 
     set_completion(&pool, past, true, &ctx()).await.unwrap();
     assert_eq!(
@@ -286,7 +297,8 @@ async fn history_includes_all_filters_and_rejects_today() {
     };
     let completed = create_item(&pool, one, date!(2026 - 07 - 09), &old)
         .await
-        .unwrap();
+        .unwrap()
+        .node_id;
     create_item(
         &pool,
         two,

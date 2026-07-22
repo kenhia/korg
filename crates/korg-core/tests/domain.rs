@@ -71,7 +71,8 @@ async fn domain_cross_kind_relationships_and_reading_list() {
         },
     )
     .await
-    .expect("create card");
+    .expect("create card")
+    .node_id;
 
     let link = create_link(
         &pool,
@@ -84,7 +85,8 @@ async fn domain_cross_kind_relationships_and_reading_list() {
         },
     )
     .await
-    .expect("create link");
+    .expect("create link")
+    .node_id;
 
     // Cross-kind edges.
     korg_core::repo::relate(&pool, wi.node_id, card, "implements")
