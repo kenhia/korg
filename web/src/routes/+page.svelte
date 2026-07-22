@@ -3,11 +3,12 @@
   import TopicPicker from "$lib/components/TopicPicker.svelte";
   import {
     api,
-    type Card,
+    type CardRow,
     type DailyPlanItem,
     type Topic,
-    type WorkItem,
+    type WorkItemRow,
   } from "$lib/api";
+  import { isCut, isHiddenByDefault, kindLabel } from "$lib/domain";
   import {
     addDays,
     isoDate,
@@ -21,8 +22,8 @@
   let weekStart = $state(startOfWeek(new Date()));
   let items = $state<DailyPlanItem[]>([]);
   let topics = $state<Topic[]>([]);
-  let cards = $state<Card[]>([]);
-  let workItems = $state<WorkItem[]>([]);
+  let cards = $state<CardRow[]>([]);
+  let workItems = $state<WorkItemRow[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let notice = $state<string | null>(null);
@@ -34,14 +35,14 @@
   const sources = $derived(
     [
       ...cards
-        .filter((card) => !card.archived && card.status !== "Cut")
+        .filter((card) => !card.archived && !isCut(card.status))
         .map((card) => ({
           node_id: card.node_id,
           kind: "card",
           title: card.title,
         })),
       ...workItems
-        .filter((item) => !item.archived && item.wi_status !== "closed")
+        .filter((item) => !item.archived && !isHiddenByDefault(item.wi_status))
         .map((item) => ({
           node_id: item.node_id,
           kind: "work item",
@@ -63,9 +64,6 @@
   }
   function frozen(date: string): boolean {
     return date < today;
-  }
-  function kindLabel(kind: DailyPlanItem["source_kind"]): string {
-    return kind === "workitem" ? "WI" : kind === "card" ? "Card" : "Topic";
   }
   function kindClass(kind: DailyPlanItem["source_kind"]): string {
     return kind === "workitem"

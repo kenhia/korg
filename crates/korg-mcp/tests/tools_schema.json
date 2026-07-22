@@ -1,0 +1,1559 @@
+[
+  {
+    "description": "Create a work item. Returns the created row (including node_id and the serial wi_number, which are the same number since the 0009 identity migration).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "area_id": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content": {
+          "type": "string"
+        },
+        "details": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tags": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "wi_status": {
+          "default": "open",
+          "enum": [
+            "open",
+            "resolved",
+            "done",
+            "closed"
+          ],
+          "type": "string"
+        },
+        "wi_tshirt": {
+          "default": "Unknown",
+          "enum": [
+            "XS",
+            "S",
+            "M",
+            "L",
+            "XL",
+            "Huge",
+            "Unknown"
+          ],
+          "type": "string"
+        },
+        "wi_type": {
+          "default": "task",
+          "enum": [
+            "task",
+            "bug",
+            "chore",
+            "feature",
+            "research",
+            "tweak",
+            "brainstorm"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "title"
+      ],
+      "type": "object"
+    },
+    "name": "create_work_item"
+  },
+  {
+    "description": "List work items as {items, total, limit, offset}, ordered by wi_number. Each row includes `comment_count` -- get_work_item to read the discussion. Pass `project` (name) to scope to one project; omit it for all projects, but prefer survey_work_items for cross-project sweeps because these rows carry full content and details. Archived items are EXCLUDED by default.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "default": false,
+          "description": "Omit for unarchived only (the default); true for archived only; null for both.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": 200,
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project": {
+          "description": "Project name to filter by",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_work_items"
+  },
+  {
+    "description": "Slim, paginated work-item listing (wi_number, node_id, project, title, wi_type, wi_status, wi_tshirt, comment_count only -- no content/details). Use this instead of list_work_items for cross-project surveys, which can exceed tool-output limits at instance scale. Returns {items, total, limit, offset}.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "description": "Filter by archived flag; OMIT for both archived and unarchived (there is no default).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": 50,
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project": {
+          "description": "Project name to filter by",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "wi_status": {
+          "description": "Status to filter by, e.g. \"open\"",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "survey_work_items"
+  },
+  {
+    "description": "Fetch a single work item by its wi_number (isError with code `not_found` if there is none), with its comments inlined (up to 10; `comments_truncated:true` + `comment_count` signal a longer thread — page the tail via list_comments). Comments often hold the real payload (resolution rationale, decisions), so prefer this over list_work_items when you need the full state of one item.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "wi_number": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "wi_number"
+      ],
+      "type": "object"
+    },
+    "name": "get_work_item"
+  },
+  {
+    "description": "Partially update a work item by its wi_number; returns the updated row (isError with code `not_found` if the wi_number does not exist). Only the fields you pass are changed. Status lifecycle: open -> resolved (implemented; may still need a user test or PR) -> done (agent satisfied; terminal but visible in default lists) -> closed (reserved for Ken; hidden by default -- do not set unless directed). For nullable fields (project_id, details, sprint, area_id, parent, category) pass null to clear or omit to leave unchanged. Moving projects (project_id) clears an area that no longer belongs to the target project unless you pass a valid area_id in the same call.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "area_id": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "details": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent": {
+          "description": "Parent work item's wi_number; null clears the parent.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "project_id": {
+          "description": "Move to this project (id); null unassigns. Get ids from list_projects.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tags": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "wi_number": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "wi_status": {
+          "enum": [
+            "open",
+            "resolved",
+            "done",
+            "closed"
+          ],
+          "type": "string"
+        },
+        "wi_tshirt": {
+          "enum": [
+            "XS",
+            "S",
+            "M",
+            "L",
+            "XL",
+            "Huge",
+            "Unknown"
+          ],
+          "type": "string"
+        },
+        "wi_type": {
+          "enum": [
+            "task",
+            "bug",
+            "chore",
+            "feature",
+            "research",
+            "tweak",
+            "brainstorm"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "wi_number"
+      ],
+      "type": "object"
+    },
+    "name": "update_work_item"
+  },
+  {
+    "description": "Create a kanban card. Returns the created card row.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "default": "",
+          "type": "string"
+        },
+        "project_id": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "rank": {
+          "default": 0,
+          "type": "number"
+        },
+        "status": {
+          "default": "Backlog",
+          "enum": [
+            "Backlog",
+            "Research",
+            "OnDeck",
+            "Active",
+            "Done",
+            "Cut"
+          ],
+          "type": "string"
+        },
+        "tags": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "type": "object"
+    },
+    "name": "create_card"
+  },
+  {
+    "description": "Partially update a kanban card by its node_id; returns the updated card (isError with code `not_found` if that node is missing or is not a card). Projects are addressed by `project_id` here and over REST alike (get ids from list_projects) -- REST used to take a project *name* and silently create it. Only the fields you pass are changed (move status/rank, edit title/description, archive, reassign project). For nullable fields (project_id, category) pass null to clear or omit to leave unchanged.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "project_id": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "rank": {
+          "type": "number"
+        },
+        "status": {
+          "enum": [
+            "Backlog",
+            "Research",
+            "OnDeck",
+            "Active",
+            "Done",
+            "Cut"
+          ],
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "update_card"
+  },
+  {
+    "description": "List cards as {items, total, limit, offset}, ordered by status, then rank, then node_id. Each row includes `comment_count`. Archived cards are EXCLUDED by default.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "default": false,
+          "description": "Omit for unarchived only (the default); true for archived only; null for both.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": 200,
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project": {
+          "description": "Project name to filter by",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "Backlog",
+            "Research",
+            "OnDeck",
+            "Active",
+            "Done",
+            "Cut",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_cards"
+  },
+  {
+    "description": "List the comments on a node (work item or card), oldest first.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "list_comments"
+  },
+  {
+    "description": "Add a comment to a node of any kind. Returns the created comment; isError with code `not_found` if the node does not exist.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "body",
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "add_comment"
+  },
+  {
+    "description": "Delete a comment by its id. Returns {deleted: bool} — false means there was no such comment.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "delete_comment"
+  },
+  {
+    "description": "Edit a comment's body by its id (from list_comments). `created` is preserved; `updated` advances.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "body",
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "update_comment"
+  },
+  {
+    "description": "Capture a reading-list URL. Returns the created link row.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "tags": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "name": "create_link"
+  },
+  {
+    "description": "List reading-list links as {items, total, limit, offset}, ordered by node_id. Archived links are EXCLUDED by default.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "default": false,
+          "description": "Omit for unarchived only (the default); true for archived only; null for both.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "disposition": {
+          "enum": [
+            "Unread",
+            "Done",
+            "Revisit",
+            "Summarized",
+            "VaultSaved",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": 200,
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "read": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_links"
+  },
+  {
+    "description": "Update a reading-list link in ONE transaction: disposition, read flag, tags -- any combination. This is how an agent records what it decided about a captured URL (migration 0004's intended workflow). Returns the updated link; isError `not_found` if the node is missing or is not a link; an invalid disposition changes nothing.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "disposition": {
+          "enum": [
+            "Unread",
+            "Done",
+            "Revisit",
+            "Summarized",
+            "VaultSaved"
+          ],
+          "type": "string"
+        },
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "read": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "tags": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "update_link"
+  },
+  {
+    "description": "DEPRECATED -- use update_link, which does this plus disposition and tags in one transaction. Marks a reading-list link read or unread; returns the updated link.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "read": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "node_id",
+        "read"
+      ],
+      "type": "object"
+    },
+    "name": "mark_link_read"
+  },
+  {
+    "description": "Create a relationship edge between any two nodes. The label reads left-to-right. Known labels and their direction: `covers` (proposal -> work item), `finding` (report -> work item), `depends_on` (dependent -> dependency) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. Any other label is allowed and its direction is caller-defined: korg stores your order faithfully without interpreting it. Exact duplicates dedup. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "left": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "right": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "label",
+        "left",
+        "right"
+      ],
+      "type": "object"
+    },
+    "name": "relate"
+  },
+  {
+    "description": "List the nodes linked to a node (any kind), with labels. Returns {items, total, limit, truncated}. Each item has `rel_id` (pass to `unrelate`), `direction` (\"out\" = the queried node is the edge's left, so the label reads queried->neighbor; \"in\" = the reverse) and `directed` -- when `directed` is false the label is registry-undirected (e.g. related-to) and you MUST treat the edge as symmetric, ignoring `direction`. Filter server-side with `label` and/or `kind` instead of pulling every edge: e.g. label=\"covers\", kind=\"workitem\" for a proposal's work items. Ordering is neighbor node_id then rel_id.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "Only neighbors of this node kind, e.g. \"workitem\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "description": "Only edges with this relationship label.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": 100,
+          "description": "Cap on returned edges; `truncated` says whether more matched.",
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "neighbors"
+  },
+  {
+    "description": "Remove a relationship edge by its id (the `rel_id` from `neighbors`, or the id returned by `relate`). Returns {deleted: bool} — false means there was no such edge.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "unrelate"
+  },
+  {
+    "description": "Create a reusable planning topic. Returns the created topic.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "project_id": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "tags": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "create_topic"
+  },
+  {
+    "description": "Fetch a topic by node_id, including archived topics. isError with code `not_found` if there is none.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_topic"
+  },
+  {
+    "description": "List topics as {items, total, limit, offset}, ordered by name. Pass `q` to match name/description. Each row includes `comment_count`. Archived topics are EXCLUDED by default.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "default": false,
+          "description": "Omit for unarchived only (the default); true for archived only; null for both.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": 200,
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "q": {
+          "description": "Match against name and description",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_topics"
+  },
+  {
+    "description": "Alias for list_topics with a `q` filter; same {items, total, limit, offset} shape. Prefer list_topics.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "default": false,
+          "description": "Omit for unarchived only (the default); true for archived only; null for both.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": 200,
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "q": {
+          "description": "Match against name and description",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "search_topics"
+  },
+  {
+    "description": "Partially update a topic; returns the updated topic.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "tags": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "update_topic"
+  },
+  {
+    "description": "Archive or restore a topic; returns the updated topic.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "default": true,
+          "type": "boolean"
+        },
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "archive_topic"
+  },
+  {
+    "description": "List daily plan items in an inclusive date range with snapshots and current source titles.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "description": "YYYY-MM-DD",
+          "type": "string"
+        },
+        "to": {
+          "description": "YYYY-MM-DD",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "name": "list_daily_plan"
+  },
+  {
+    "description": "Plan a work item, card, or topic. Display is resolved and snapshotted server-side. Returns the created item.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "plan_date": {
+          "description": "YYYY-MM-DD",
+          "type": "string"
+        },
+        "source_node_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "plan_date",
+        "source_node_id"
+      ],
+      "type": "object"
+    },
+    "name": "create_daily_plan_item"
+  },
+  {
+    "description": "Complete or uncomplete any daily plan item; timestamp is server-authoritative. Returns the updated item.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "completed": {
+          "type": "boolean"
+        },
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "completed",
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "set_daily_plan_completion"
+  },
+  {
+    "description": "Delete an item from an open day; past structure is frozen. Returns {deleted: true}.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "delete_daily_plan_item"
+  },
+  {
+    "description": "Replace the complete order for an open day. Returns the day in its new order.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "node_ids": {
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "plan_date": {
+          "description": "YYYY-MM-DD",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_ids",
+        "plan_date"
+      ],
+      "type": "object"
+    },
+    "name": "reorder_daily_plan"
+  },
+  {
+    "description": "Move an item to today/future. Open sources transfer; past sources copy and remain unchanged.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "target_date": {
+          "description": "YYYY-MM-DD",
+          "type": "string"
+        },
+        "target_position": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id",
+        "target_date"
+      ],
+      "type": "object"
+    },
+    "name": "move_daily_plan_item"
+  },
+  {
+    "description": "Return all complete and incomplete historical items plus completion totals/rate. End must be before local today.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "description": "YYYY-MM-DD",
+          "type": "string"
+        },
+        "source_node_id": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "to": {
+          "description": "YYYY-MM-DD",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "name": "daily_plan_history"
+  },
+  {
+    "description": "Propose a sprint: bundle a title + summary with the work items it covers, in one call. Returns the created proposal plus `covered` -- which of the given wi_numbers actually resolved. Numbers that do not resolve are dropped, so compare `covered` against your request.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pinned": {
+          "default": false,
+          "type": "boolean"
+        },
+        "project_id": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "rank": {
+          "default": 0,
+          "description": "Drag-order position; lower sorts first among unpinned proposals.",
+          "type": "number"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "tags": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "work_item_numbers": {
+          "default": [],
+          "description": "wi_numbers this proposal covers; numbers that don't resolve are dropped.",
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "summary",
+        "title"
+      ],
+      "type": "object"
+    },
+    "name": "propose_sprint"
+  },
+  {
+    "description": "Create or replace the daily report for (source, report_date). Same-day re-runs REPLACE both the content and the finding set -- findings you omit are unlinked -- but keep the node_id (links/comments survive). `findings_linked` echoes the wi_numbers that resolved; numbers that do not resolve are dropped, so compare it against your request.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "description": "full markdown report",
+          "type": "string"
+        },
+        "escalated": {
+          "default": false,
+          "type": "boolean"
+        },
+        "finding_work_items": {
+          "default": [],
+          "description": "wi_numbers of finding work items; numbers that don't resolve are dropped.",
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "report_date": {
+          "description": "YYYY-MM-DD",
+          "format": "date",
+          "type": "string"
+        },
+        "source": {
+          "description": "reporter id, e.g. 'kmon'",
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "attention",
+            "problem"
+          ],
+          "type": "string"
+        },
+        "summary": {
+          "description": "one-liner for the list view",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "body",
+        "report_date",
+        "source",
+        "status",
+        "summary"
+      ],
+      "type": "object"
+    },
+    "name": "create_report"
+  },
+  {
+    "description": "List daily reports, newest first (summary fields only). Pass `source` to filter.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "default": 30,
+          "type": "integer"
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_reports"
+  },
+  {
+    "description": "Fetch one report by node_id: full body plus linked finding work items. isError with code `not_found` if there is none.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_report"
+  },
+  {
+    "description": "List sprint proposals: pinned first, then rank, then node_id (a stable order -- equal ranks no longer shuffle between calls). Each row carries `covered_count` and `comment_count`; call get_proposal for the covered work items themselves. Filter by `status` and/or `project` (name).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "description": "Project name to filter by",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "proposed",
+            "active",
+            "done",
+            "declined",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_proposals"
+  },
+  {
+    "description": "Fetch one sprint proposal by node_id with everything needed to start it: the proposal fields, `covered` (the work items it covers -- wi_number, node_id, title, wi_status, wi_tshirt, project, comment_count -- ordered by wi_number), and inlined comments (up to 10, with `comments_truncated`). This replaces the old list_proposals + neighbors + list_work_items dance. isError with code `not_found` if there is none.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_proposal"
+  },
+  {
+    "description": "Partially update a sprint proposal by its node_id; returns the updated proposal (isError with code `not_found` if that node is missing or is not a proposal). Only the fields you pass are changed. Use this for status transitions (proposed -> active -> done/declined), reordering (rank), pinning, or archiving.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "pinned": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "rank": {
+          "type": "number"
+        },
+        "status": {
+          "enum": [
+            "proposed",
+            "active",
+            "done",
+            "declined"
+          ],
+          "type": "string"
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tags": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "update_proposal"
+  },
+  {
+    "description": "List projects, including metadata: status (active|maintenance|inactive|archived), machines (where the working copy lives), deploy_to (where it deploys), category.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "name": "list_projects"
+  },
+  {
+    "description": "Create a project by name (idempotent — returns the existing id if it already exists). Returns its id.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "create_project"
+  },
+  {
+    "description": "Update a project's metadata by name (the name itself is immutable), returning the updated project: status (active|maintenance|inactive|archived), machines, deploy_to, category, description, gh_repo, cn_path. Omitted fields are unchanged.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cn_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "deploy_to": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gh_repo": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "machines": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "maintenance",
+            "inactive",
+            "archived"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "update_project"
+  },
+  {
+    "description": "List the areas under a project (by project name).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "type": "object"
+    },
+    "name": "list_areas"
+  },
+  {
+    "description": "Create an area under a project by name (idempotent — updates the description if it already exists). Returns its id.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "project": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "project"
+      ],
+      "type": "object"
+    },
+    "name": "create_area"
+  }
+]

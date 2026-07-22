@@ -91,6 +91,29 @@ DATABASE_URL=... KORG_TIMEZONE=Etc/UTC cargo run -p korg-api
 cd web && KORG_API=http://localhost:8090 pnpm dev   # http://localhost:5173
 ```
 
+### Generated files
+
+`web/src/lib/generated/` and `crates/korg-mcp/tests/tools_schema.json` are
+derived from korg-core and must never be hand-edited. After changing a shared
+operation struct (`korg_core::ops`, or any `New*`/`*Patch` in `repo`/`topics`),
+a response row, or a vocabulary:
+
+```bash
+just gen        # rewrites the TypeScript and the MCP tool-schema snapshot
+```
+
+The ts-rs export directory and its `i64 -> number` mapping live in
+`.cargo/config.toml`, not in the recipe, so a plain `cargo test --workspace`
+writes to the same place `just gen` does instead of leaving a stale copy in
+`crates/korg-core/bindings/`.
+
+Then read the diff — every line of the snapshot is a change agents see. `just
+check` (and CI) fail if the committed output is stale:
+
+```bash
+just check      # fmt, gen freshness, clippy -D warnings, full test suite
+```
+
 ## Tests
 
 ```bash

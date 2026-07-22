@@ -10,6 +10,8 @@ sqlx = { workspace = true }
 rust_decimal = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+schemars = { workspace = true }
+ts-rs = { workspace = true }
 time = { workspace = true }
 jiff = { workspace = true }
 uuid = { workspace = true }

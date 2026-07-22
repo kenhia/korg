@@ -1,11 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type Card, type WorkItem, type Link, type Project } from "$lib/api";
+  import { api, type CardRow, type WorkItemRow, type LinkRow, type ProjectRow } from "$lib/api";
+  import {
+    DEFAULT_RELATIONSHIP_LABEL,
+    isCut,
+    isHiddenByDefault,
+  } from "$lib/domain";
 
-  let cards = $state<Card[]>([]);
-  let workItems = $state<WorkItem[]>([]);
-  let links = $state<Link[]>([]);
-  let projects = $state<Project[]>([]);
+  let cards = $state<CardRow[]>([]);
+  let workItems = $state<WorkItemRow[]>([]);
+  let links = $state<LinkRow[]>([]);
+  let projects = $state<ProjectRow[]>([]);
 
   // Filters
   const ALL = "\u0000all";
@@ -28,7 +33,7 @@
       (c) =>
         (cardProject === ALL || c.project === cardProject) &&
         matches(c.title, cardText) &&
-        (showAll || c.status !== "Cut"),
+        (showAll || !isCut(c.status)),
     ),
   );
   const shownWorkItems = $derived(
@@ -36,7 +41,7 @@
       (w) =>
         (wiProject === ALL || w.project === wiProject) &&
         matches(w.title, wiText) &&
-        (showAll || w.wi_status !== "closed"),
+        (showAll || !isHiddenByDefault(w.wi_status)),
     ),
   );
   const shownLinks = $derived(links.filter((l) => matches(l.title ?? l.url, linkText)));
@@ -63,7 +68,7 @@
       // Clique: relate every selected pair. relate() is idempotent + symmetric.
       for (let i = 0; i < ids.length; i++) {
         for (let j = i + 1; j < ids.length; j++) {
-          await api.relate(ids[i], ids[j], "related-to");
+          await api.relate(ids[i], ids[j], DEFAULT_RELATIONSHIP_LABEL);
         }
       }
       const n = ids.length;

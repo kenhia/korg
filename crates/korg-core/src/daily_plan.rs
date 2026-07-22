@@ -4,6 +4,7 @@ use serde::Serialize;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use thiserror::Error;
 use time::{Date, OffsetDateTime};
+use ts_rs::TS;
 
 #[derive(Debug, Clone, Copy)]
 pub struct LifecycleContext {
@@ -47,10 +48,12 @@ mod date_str {
     }
 }
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct DailyPlanItem {
     pub node_id: i64,
     #[serde(with = "date_str")]
+    #[ts(type = "string")]
     pub plan_date: Date,
     pub position: i32,
     pub display: String,
@@ -58,16 +61,21 @@ pub struct DailyPlanItem {
     pub source_kind: String,
     pub source_title: String,
     #[serde(with = "time::serde::rfc3339::option")]
+    #[ts(type = "string | null")]
     pub completed_at: Option<OffsetDateTime>,
     #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
     pub created_at: OffsetDateTime,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct History {
     #[serde(with = "date_str")]
+    #[ts(type = "string")]
     pub from: Date,
     #[serde(with = "date_str")]
+    #[ts(type = "string")]
     pub to: Date,
     pub total: usize,
     pub completed: usize,
@@ -75,7 +83,8 @@ pub struct History {
     pub items: Vec<DailyPlanItem>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct MoveOutcome {
     pub node_id: i64,
     pub copied: bool,

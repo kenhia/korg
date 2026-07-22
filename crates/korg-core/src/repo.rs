@@ -7,11 +7,14 @@
 
 use anyhow::Result;
 use rust_decimal::Decimal;
-use serde::Serialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use sqlx::{Executor, PgPool, Postgres, Row};
 use time::OffsetDateTime;
+use ts_rs::TS;
 
 pub use crate::error::RepoError;
+use crate::ops::{self, schema};
 use crate::relationships;
 use crate::vocab::{self, CARD_STATUSES, LINK_DISPOSITIONS, PROPOSAL_STATUSES, REPORT_STATUSES};
 pub use crate::vocab::{PROJECT_STATUSES, WI_STATUSES};
@@ -62,7 +65,8 @@ where
 /// Unbounded list reads were the review's context bomb: `list_work_items`
 /// returned every row with full content, which is why `survey_work_items` had
 /// to exist at all.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct Page<T> {
     pub items: Vec<T>,
     pub total: i64,
@@ -133,18 +137,34 @@ pub fn archived_default() -> ArchivedFilter {
 
 // --- work items -----------------------------------------------------------
 
-#[derive(Debug, Clone)]
+/// `create_work_item` / `POST /api/work-items`. Both transports deserialize
+/// this exact type, and the MCP input schema is derived from it (WI #539/#540).
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct NewWorkItem {
+    #[serde(default)]
     pub project_id: Option<i64>,
+    #[serde(default)]
     pub area_id: Option<i64>,
+    #[serde(default = "ops::default_task")]
+    #[schemars(schema_with = "schema::wi_type")]
     pub wi_type: String,
+    #[serde(default = "ops::default_open")]
+    #[schemars(schema_with = "schema::wi_status")]
     pub wi_status: String,
+    #[serde(default = "ops::default_unknown")]
+    #[schemars(schema_with = "schema::wi_tshirt")]
     pub wi_tshirt: String,
+    #[serde(default)]
     pub sprint: Option<String>,
+    #[schemars(schema_with = "schema::non_empty")]
     pub title: String,
     pub content: String,
+    #[serde(default)]
     pub details: Option<String>,
+    #[serde(default)]
     pub category: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::tags")]
     pub tags: Vec<String>,
 }
 
@@ -213,14 +233,26 @@ pub async fn create_work_item(pool: &PgPool, new: NewWorkItem) -> Result<WorkIte
 
 // --- cards ----------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+/// `create_card` / `POST /api/cards`. `rank` arrives as a JSON number and is
+/// kept as a `Decimal` so fractional insertion never loses precision.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct NewCard {
+    #[serde(default)]
     pub project_id: Option<i64>,
+    #[serde(default)]
     pub category: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::tags")]
     pub tags: Vec<String>,
+    #[serde(default = "ops::default_backlog")]
+    #[schemars(schema_with = "schema::card_status")]
     pub status: String,
+    #[schemars(schema_with = "schema::non_empty")]
     pub title: String,
+    #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::rank")]
     pub rank: Decimal,
 }
 
@@ -258,16 +290,24 @@ pub async fn create_card(pool: &PgPool, new: NewCard) -> Result<CardRow> {
 
 // --- reading-list links ---------------------------------------------------
 
-#[derive(Debug, Clone)]
+/// `create_link` / `POST /api/links`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct NewLink {
+    #[serde(default)]
     pub project_id: Option<i64>,
+    #[serde(default)]
     pub category: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::tags")]
     pub tags: Vec<String>,
+    #[schemars(schema_with = "schema::non_empty")]
     pub url: String,
+    #[serde(default)]
     pub title: Option<String>,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct LinkRow {
     pub node_id: i64,
     pub url: String,
@@ -370,10 +410,15 @@ pub async fn get_link(pool: &PgPool, node_id: i64) -> Result<Option<LinkRow>> {
 
 /// Everything `update_link` can change in one transaction. `None` leaves a
 /// field alone.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 pub struct LinkPatch {
+    #[serde(default)]
+    #[schemars(schema_with = "schema::disposition")]
     pub disposition: Option<String>,
+    #[serde(default)]
     pub read: Option<bool>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::tags")]
     pub tags: Option<Vec<String>>,
 }
 
@@ -456,7 +501,8 @@ async fn reread_link(pool: &PgPool, node_id: i64) -> Result<LinkRow> {
 
 // --- generalized relationships --------------------------------------------
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct Neighbor {
     pub rel_id: i64,
     pub node_id: i64,
@@ -464,6 +510,7 @@ pub struct Neighbor {
     pub label: String,
     /// "out" = the queried node is the edge's left (label reads queried → this
     /// neighbor, e.g. queried `depends_on` neighbor); "in" = the reverse.
+    #[ts(type = "\"out\" | \"in\"")]
     pub direction: String,
     /// Whether `direction` carries meaning for this label (WI #530). False for
     /// registry-undirected labels like `related-to`, where the orientation is
@@ -484,7 +531,8 @@ pub struct NeighborQuery {
 
 /// Neighbors plus the bound that produced them. `total` is the full match
 /// count before the limit, so `truncated` is exact rather than inferred.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct NeighborPage {
     pub items: Vec<Neighbor>,
     pub total: i64,
@@ -626,7 +674,8 @@ pub async fn unrelate(pool: &PgPool, id: i64) -> Result<bool> {
 // --- cross-kind node preview (WI #260) -------------------------------------
 
 /// A label/value metadata row in a node preview (e.g. "Area" → "ui").
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct NodeField {
     pub label: String,
     pub value: String,
@@ -638,7 +687,8 @@ pub struct NodeField {
 /// equals the node id) — the UI navigates to those rather than previewing.
 /// `body`/`details` are markdown; `badges` are short status chips; `fields`
 /// are label/value metadata rows.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct NodePreview {
     pub node_id: i64,
     pub kind: String,
@@ -653,8 +703,10 @@ pub struct NodePreview {
     pub body_label: Option<String>,
     pub details: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
     pub created: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
     pub updated: OffsetDateTime,
 }
 
@@ -841,7 +893,8 @@ pub async fn get_node_preview(pool: &PgPool, id: i64) -> Result<Option<NodePrevi
 
 // --- read views -----------------------------------------------------------
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct WorkItemRow {
     pub wi_number: i64,
     pub node_id: i64,
@@ -862,8 +915,10 @@ pub struct WorkItemRow {
     /// agent "this row has discussion; fetch it".
     pub comment_count: i64,
     #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
     pub created: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
     pub updated: OffsetDateTime,
 }
 
@@ -948,9 +1003,11 @@ pub const WORKITEM_COMMENT_CAP: i64 = 10;
 /// the payload (resolution rationale, decisions), so agents that only call
 /// `get_work_item` should see them without a second round-trip. `item.comment_count`
 /// is the true total; `comments` holds at most `WORKITEM_COMMENT_CAP` of them.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct WorkItemDetail {
     #[serde(flatten)]
+    #[ts(flatten)]
     pub item: WorkItemRow,
     pub comments: Vec<Comment>,
     /// True when there are more comments than were inlined (call `list_comments`).
@@ -981,7 +1038,8 @@ pub async fn get_work_item_detail(pool: &PgPool, wi_number: i64) -> Result<Optio
 
 // --- work item survey (slim, paginated) -------------------------------------
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct WorkItemSummary {
     pub wi_number: i64,
     pub node_id: i64,
@@ -994,7 +1052,8 @@ pub struct WorkItemSummary {
     pub comment_count: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct WorkItemSurvey {
     pub items: Vec<WorkItemSummary>,
     pub total: i64,
@@ -1070,12 +1129,14 @@ pub async fn survey_work_items(
     })
 }
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct CardRow {
     pub node_id: i64,
     pub status: String,
     pub title: String,
     pub description: String,
+    #[ts(type = "string")]
     pub rank: Decimal,
     pub project: Option<String>,
     pub category: Option<String>,
@@ -1084,8 +1145,10 @@ pub struct CardRow {
     /// Comments on this card (WI #535).
     pub comment_count: i64,
     #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
     pub created: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
     pub updated: OffsetDateTime,
 }
 
@@ -1158,7 +1221,8 @@ pub async fn get_card(pool: &PgPool, node_id: i64) -> Result<Option<CardRow>> {
     )
 }
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct ProjectRow {
     pub id: i64,
     pub name: String,
@@ -1176,14 +1240,22 @@ pub struct ProjectRow {
 
 /// Everything but `name` is editable (WI #246). `None` = leave unchanged;
 /// inner `None` on the nullable fields clears them.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 pub struct ProjectPatch {
+    #[serde(default, deserialize_with = "ops::double_option")]
     pub gh_repo: Option<Option<String>>,
+    #[serde(default, deserialize_with = "ops::double_option")]
     pub cn_path: Option<Option<String>>,
+    #[serde(default, deserialize_with = "ops::double_option")]
     pub description: Option<Option<String>>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::project_status")]
     pub status: Option<String>,
+    #[serde(default)]
     pub machines: Option<Vec<String>>,
+    #[serde(default)]
     pub deploy_to: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "ops::double_option")]
     pub category: Option<Option<String>>,
 }
 
@@ -1329,15 +1401,29 @@ pub async fn list_work_items_by_project(pool: &PgPool, project: &str) -> Result<
 
 // --- cards (update: move + rank in one) -----------------------------------
 
-#[derive(Debug, Clone, Default)]
+/// `update_card` / `PATCH /api/cards/:node_id`. Projects are addressed by
+/// `project_id` on both transports (WI #537).
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 pub struct CardPatch {
+    #[serde(default)]
+    #[schemars(schema_with = "schema::card_status")]
     pub status: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::rank")]
     pub rank: Option<Decimal>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::non_empty")]
     pub title: Option<String>,
+    #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
     pub archived: Option<bool>,
+    #[serde(default, deserialize_with = "ops::double_option")]
     pub project_id: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "ops::double_option")]
     pub category: Option<Option<String>>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::tags")]
     pub tags: Option<Vec<String>>,
 }
 
@@ -1411,14 +1497,17 @@ pub async fn update_card(pool: &PgPool, node_id: i64, patch: CardPatch) -> Resul
 
 // --- comments -------------------------------------------------------------
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct Comment {
     pub id: i64,
     pub node_id: i64,
     pub body: String,
     #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
     pub created: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
     pub updated: OffsetDateTime,
 }
 
@@ -1472,7 +1561,8 @@ pub async fn delete_comment(pool: &PgPool, id: i64) -> Result<bool> {
 
 // --- areas ----------------------------------------------------------------
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct AreaRow {
     pub id: i64,
     pub name: String,
@@ -1492,25 +1582,39 @@ pub async fn list_areas(pool: &PgPool, project: &str) -> Result<Vec<AreaRow>> {
 
 // --- sprint proposals (agent planning) -------------------------------------
 
-#[derive(Debug, Clone)]
+/// `propose_sprint` / `POST /api/proposals`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct NewProposal {
+    #[serde(default)]
     pub project_id: Option<i64>,
+    #[serde(default)]
     pub category: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::tags")]
     pub tags: Vec<String>,
+    #[schemars(schema_with = "schema::non_empty")]
     pub title: String,
     pub summary: String,
+    /// Drag-order position; lower sorts first among unpinned proposals.
+    #[serde(default)]
+    #[schemars(schema_with = "schema::rank")]
     pub rank: Decimal,
+    #[serde(default)]
     pub pinned: bool,
     /// wi_numbers this proposal covers; numbers that don't resolve are dropped.
+    #[serde(default, rename = "work_item_numbers")]
+    #[schemars(rename = "work_item_numbers", schema_with = "schema::wi_numbers")]
     pub covers: Vec<i64>,
 }
 
 /// The created proposal plus which of the requested wi_numbers resolved.
 /// `covered` is the honest echo of a drop-and-report input (F-06): compare it
 /// against what you asked for.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct ProposalCreated {
     #[serde(flatten)]
+    #[ts(flatten)]
     pub row: ProposalRow,
     pub covered: Vec<i64>,
 }
@@ -1572,12 +1676,14 @@ pub async fn create_proposal(pool: &PgPool, new: NewProposal) -> Result<Proposal
     Ok(ProposalCreated { row, covered })
 }
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct ProposalRow {
     pub node_id: i64,
     pub title: String,
     pub summary: String,
     pub status: String,
+    #[ts(type = "string")]
     pub rank: Decimal,
     pub pinned: bool,
     pub project: Option<String>,
@@ -1590,8 +1696,10 @@ pub struct ProposalRow {
     /// saves the Planning page a `neighbors` call per row just to show chips.
     pub covered_count: i64,
     #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
     pub created: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
     pub updated: OffsetDateTime,
 }
 
@@ -1636,7 +1744,8 @@ pub async fn list_proposals(pool: &PgPool, query: ProposalQuery) -> Result<Vec<P
 
 /// A covered work item as a proposal's detail read reports it — enough to
 /// decide and to render, without a second call per item (§4.3).
-#[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct CoveredRef {
     pub wi_number: i64,
     pub node_id: i64,
@@ -1652,9 +1761,11 @@ pub struct CoveredRef {
 /// fetched every proposal, every work item, then called `neighbors` once per
 /// proposal and joined client-side, and `start-sprint` did the same dance over
 /// MCP in three tools.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct ProposalDetail {
     #[serde(flatten)]
+    #[ts(flatten)]
     pub proposal: ProposalRow,
     /// Covered work items, ordered by wi_number.
     pub covered: Vec<CoveredRef>,
@@ -1711,14 +1822,26 @@ pub async fn get_proposal(pool: &PgPool, node_id: i64) -> Result<Option<Proposal
     )
 }
 
-#[derive(Debug, Clone, Default)]
+/// `update_proposal` / `PATCH /api/proposals/:node_id`.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 pub struct ProposalPatch {
+    #[serde(default)]
+    #[schemars(schema_with = "schema::non_empty")]
     pub title: Option<String>,
+    #[serde(default)]
     pub summary: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::proposal_status")]
     pub status: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::rank")]
     pub rank: Option<Decimal>,
+    #[serde(default)]
     pub pinned: Option<bool>,
+    #[serde(default)]
     pub archived: Option<bool>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::tags")]
     pub tags: Option<Vec<String>>,
 }
 
@@ -1829,25 +1952,44 @@ pub async fn node_id_for_wi(pool: &PgPool, wi_number: i64) -> Result<Option<i64>
 
 // --- work item update (Edit + Archive) ------------------------------------
 
-#[derive(Debug, Clone, Default)]
+/// `update_work_item` / `PATCH /api/work-items/:wi_number`.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 pub struct WorkItemPatch {
+    #[serde(default)]
+    #[schemars(schema_with = "schema::non_empty")]
     pub title: Option<String>,
+    #[serde(default)]
     pub content: Option<String>,
+    #[serde(default, deserialize_with = "ops::double_option")]
     pub details: Option<Option<String>>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::wi_type")]
     pub wi_type: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::wi_status")]
     pub wi_status: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::wi_tshirt")]
     pub wi_tshirt: Option<String>,
+    #[serde(default, deserialize_with = "ops::double_option")]
     pub sprint: Option<Option<String>>,
-    /// Move the work item to another project (WI #291). `Some(Some(id))` moves,
-    /// `Some(None)` unassigns, `None` leaves it. A move clears an area that no
-    /// longer belongs to the target project unless a valid `area_id` is given
-    /// in the same call.
+    /// Move to this project (id); null unassigns. Get ids from list_projects.
+    // `Some(Some(id))` moves, `Some(None)` unassigns, `None` leaves it (WI
+    // #291). A move clears an area that no longer belongs to the target project
+    // unless a valid `area_id` is given in the same call.
+    #[serde(default, deserialize_with = "ops::double_option")]
     pub project_id: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "ops::double_option")]
     pub area_id: Option<Option<i64>>,
-    /// Parent expressed as the parent's user-facing wi_number (None clears).
+    /// Parent work item's wi_number; null clears the parent.
+    #[serde(default, deserialize_with = "ops::double_option")]
     pub parent: Option<Option<i64>>,
+    #[serde(default)]
     pub archived: Option<bool>,
+    #[serde(default, deserialize_with = "ops::double_option")]
     pub category: Option<Option<String>>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::tags")]
     pub tags: Option<Vec<String>>,
 }
 
@@ -2044,20 +2186,35 @@ pub async fn update_work_item(
 
 // --- daily reports (kmon et al.) --------------------------------------------
 
-#[derive(Debug, Clone)]
+/// `create_report`. `report_date` is `YYYY-MM-DD`; both transports used to
+/// parse it by hand into a `time::Date` with their own error message.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct NewReport {
+    /// reporter id, e.g. 'kmon'
+    #[schemars(schema_with = "schema::non_empty")]
     pub source: String,
+    #[serde(with = "report_date_fmt")]
+    #[schemars(schema_with = "schema::report_date")]
     pub report_date: time::Date,
+    #[schemars(schema_with = "schema::report_status")]
     pub status: String,
+    /// one-liner for the list view
+    #[schemars(schema_with = "schema::non_empty")]
     pub summary: String,
+    /// full markdown report
     pub body: String,
+    #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
     pub escalated: bool,
     /// wi_numbers of finding work items; numbers that don't resolve are dropped.
+    #[serde(default, rename = "finding_work_items")]
+    #[schemars(rename = "finding_work_items", schema_with = "schema::wi_numbers")]
     pub findings: Vec<i64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct ReportRef {
     pub node_id: i64,
     pub replaced: bool,
@@ -2167,11 +2324,13 @@ pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
 
 time::serde::format_description!(report_date_fmt, Date, "[year]-[month]-[day]");
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct ReportRow {
     pub node_id: i64,
     pub source: String,
     #[serde(with = "report_date_fmt")]
+    #[ts(type = "string")]
     pub report_date: time::Date,
     pub status: String,
     pub summary: String,
@@ -2180,6 +2339,7 @@ pub struct ReportRow {
     /// Comments on this report (WI #535).
     pub comment_count: i64,
     #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
     pub updated: OffsetDateTime,
 }
 
@@ -2205,16 +2365,19 @@ pub async fn list_reports(
     Ok(rows)
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct ReportFinding {
     pub wi_number: i64,
     pub title: String,
     pub wi_status: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct ReportFull {
     #[serde(flatten)]
+    #[ts(flatten)]
     pub row: ReportRow,
     pub body: String,
     pub findings: Vec<ReportFinding>,

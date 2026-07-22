@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, DISPOSITIONS, type Disposition, type Link } from "$lib/api";
+  import { api, type LinkRow } from "$lib/api";
+  import { LINK_DISPOSITIONS, type Disposition } from "$lib/generated/vocab";
+  import { chip } from "$lib/domain";
 
-  let links = $state<Link[]>([]);
+  let links = $state<LinkRow[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let editing = $state<number | null>(null);
@@ -30,12 +32,12 @@
     await load();
   }
 
-  async function setDisposition(link: Link, d: Disposition) {
+  async function setDisposition(link: LinkRow, d: Disposition) {
     await api.updateLink(link.node_id, { disposition: d });
     link.disposition = d;
   }
 
-  async function saveTags(link: Link, value: string) {
+  async function saveTags(link: LinkRow, value: string) {
     const tags = value
       .split(",")
       .map((t) => t.trim())
@@ -45,7 +47,7 @@
   }
 
   // Reserve plain click for editing; ctrl/cmd-click opens the URL.
-  function onTitleClick(e: MouseEvent, link: Link) {
+  function onTitleClick(e: MouseEvent, link: LinkRow) {
     if (e.ctrlKey || e.metaKey) {
       window.open(link.url, "_blank", "noopener,noreferrer");
       return;
@@ -112,7 +114,7 @@
           {#if editing === link.node_id}
             <div class="mt-2 space-y-2">
               <div class="flex flex-wrap gap-1">
-                {#each DISPOSITIONS as d (d)}
+                {#each LINK_DISPOSITIONS as d (d)}
                   <button
                     class="rounded px-2 py-0.5 text-xs hover:bg-[var(--color-surface-hi)]"
                     class:bg-[var(--color-accent-soft)]={link.disposition === d}
@@ -132,7 +134,7 @@
           {:else if link.tags.length > 0}
             <div class="mt-1 flex flex-wrap gap-1">
               {#each link.tags as tag (tag)}
-                <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs text-[var(--color-muted)]">#{tag}</span>
+                <span class={chip.tag}>#{tag}</span>
               {/each}
             </div>
           {/if}

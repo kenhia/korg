@@ -3,12 +3,12 @@
   import { dndzone, type DndEvent } from "svelte-dnd-action";
   import {
     api,
-    CARD_STATUSES,
-    type Card,
-    type CardStatus,
+    type CardRow,
     type DailyPlanItem,
     type Comment,
   } from "$lib/api";
+  import { CARD_STATUSES, type CardStatus } from "$lib/generated/vocab";
+  import { activeCardStatuses, chip, CUT, isCut, midRank } from "$lib/domain";
   import Comments from "$lib/components/Comments.svelte";
   import {
     startOfWeek,
@@ -19,13 +19,13 @@
   } from "$lib/dates";
   import { extractUrls } from "$lib/urls";
 
-  type DndItem = { id: number; card: Card };
+  type DndItem = { id: number; card: CardRow };
 
-  const NON_CUT = CARD_STATUSES.filter((s) => s !== "Cut");
+  const NON_CUT = activeCardStatuses();
   const STATUS_IDX = (s: string) => CARD_STATUSES.indexOf(s as CardStatus);
   let cutExpanded = $state(false);
 
-  let cardsRaw = $state<Card[]>([]);
+  let cardsRaw = $state<CardRow[]>([]);
   let board = $state<Record<CardStatus, DndItem[]>>(emptyBoard());
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -59,7 +59,7 @@
     [...new Set(cardsRaw.flatMap((c) => c.tags))].sort(),
   );
 
-  function passesCommon(c: Card): boolean {
+  function passesCommon(c: CardRow): boolean {
     if (!showArchived && c.archived) return false;
     if (fProject && c.project !== fProject) return false;
     if (fCategory && c.category !== fCategory) return false;
@@ -79,7 +79,7 @@
 
   const listCards = $derived(
     cardsRaw
-      .filter((c) => passesCommon(c) && (showCut || c.status !== "Cut"))
+      .filter((c) => passesCommon(c) && (showCut || !isCut(c.status)))
       .sort(
         (a, b) =>
           STATUS_IDX(a.status) - STATUS_IDX(b.status) ||
@@ -113,7 +113,7 @@
     const b = emptyBoard();
     for (const c of cardsRaw) {
       if (!passesCommon(c)) continue;
-      b[c.status].push({ id: c.node_id, card: c });
+      b[c.status as CardStatus].push({ id: c.node_id, card: c });
     }
     for (const s of CARD_STATUSES)
       b[s].sort((x, y) => Number(x.card.rank) - Number(y.card.rank));
@@ -164,14 +164,6 @@
       await load();
     }
   }
-  function midRank(prev?: string, next?: string): number {
-    const p = prev !== undefined ? Number(prev) : undefined;
-    const n = next !== undefined ? Number(next) : undefined;
-    if (p !== undefined && n !== undefined) return (p + n) / 2;
-    if (n !== undefined) return n - 1;
-    if (p !== undefined) return p + 1;
-    return 1;
-  }
 
   // --- daily-plan card drop targets ---
   const SOURCE_DRAG = "application/x-korg-source";
@@ -195,7 +187,7 @@
     weekStart = addDays(weekStart, delta * 7);
     void loadPlan();
   }
-  function dragCard(event: DragEvent, card: Card) {
+  function dragCard(event: DragEvent, card: CardRow) {
     event.stopPropagation();
     event.dataTransfer?.setData(SOURCE_DRAG, String(card.node_id));
     if (event.dataTransfer) event.dataTransfer.effectAllowed = "copy";
@@ -216,7 +208,7 @@
   }
 
   // --- edit modal (+ comments) ---
-  let editing = $state<Card | null>(null);
+  let editing = $state<CardRow | null>(null);
   let form = $state({
     title: "",
     status: "Backlog" as CardStatus,
@@ -233,11 +225,13 @@
   );
   const dirty = $derived(editing !== null && JSON.stringify(form) !== original);
 
-  function openEdit(card: Card) {
+  function openEdit(card: CardRow) {
     editing = card;
     form = {
       title: card.title,
-      status: card.status,
+      // The server validates the vocabulary, so a row's status is always one of
+      // CARD_STATUSES; the generated type carries the DB's plain text.
+      status: card.status as CardStatus,
       project: card.project ?? "",
       category: card.category ?? "",
       description: card.description,
@@ -321,20 +315,17 @@
     </div>
     {#if item.card.project || item.card.category}
       <div class="mt-1 flex flex-wrap gap-1">
-        {#if item.card.project}<span
-            class="rounded bg-teal-900/60 px-1.5 py-0.5 text-xs font-medium text-teal-300"
-            title="Project">{item.card.project}</span
+        {#if item.card.project}<span class={chip.project} title="Project"
+            >{item.card.project}</span
           >{/if}
-        {#if item.card.category}<span
-            class="rounded bg-purple-800/80 px-1.5 py-0.5 text-xs font-medium text-white"
-            title="Category">{item.card.category}</span
+        {#if item.card.category}<span class={chip.category} title="Category"
+            >{item.card.category}</span
           >{/if}
       </div>
     {/if}
     {#if item.card.tags.length > 0}
       <div class="mt-1 flex flex-wrap gap-1">
-        {#each item.card.tags as tag (tag)}<span
-            class="rounded bg-black px-1.5 py-0.5 text-xs text-white"
+        {#each item.card.tags as tag (tag)}<span class={chip.tag}
             >{tag}</span
           >{/each}
       </div>
@@ -497,8 +488,8 @@
           onclick={() => (cutExpanded = !cutExpanded)}
           title={cutExpanded ? "Collapse Cut" : "Expand Cut"}
         >
-          <span>{cutExpanded ? "Cut" : "CUT"}</span><span
-            >{board["Cut"].length}</span
+          <span>{cutExpanded ? CUT : CUT.toUpperCase()}</span><span
+            >{board[CUT].length}</span
           >
         </button>
         <div
@@ -506,16 +497,16 @@
           class:overflow-hidden={!cutExpanded}
           data-testid="col-Cut"
           use:dndzone={{
-            items: board["Cut"],
+            items: board[CUT],
             flipDurationMs: flip,
             dropTargetStyle: {},
           }}
           onconsider={(e) =>
-            consider("Cut", e as CustomEvent<DndEvent<DndItem>>)}
+            consider(CUT, e as CustomEvent<DndEvent<DndItem>>)}
           onfinalize={(e) =>
-            finalize("Cut", e as CustomEvent<DndEvent<DndItem>>)}
+            finalize(CUT, e as CustomEvent<DndEvent<DndItem>>)}
         >
-          {#each board["Cut"] as item (item.id)}<div
+          {#each board[CUT] as item (item.id)}<div
               class:hidden={!cutExpanded}
             >
               {@render tile(item)}
@@ -553,21 +544,18 @@
                 <td class="px-3 py-1.5 font-medium">{card.title}</td>
                 <td class="px-3 py-1.5">{card.status}</td>
                 <td class="px-3 py-1.5"
-                  >{#if card.project}<span
-                      class="rounded bg-teal-900/60 px-1.5 py-0.5 text-xs text-teal-300"
+                  >{#if card.project}<span class={chip.project}
                       >{card.project}</span
                     >{/if}</td
                 >
                 <td class="px-3 py-1.5"
-                  >{#if card.category}<span
-                      class="rounded bg-purple-800/80 px-1.5 py-0.5 text-xs text-white"
+                  >{#if card.category}<span class={chip.category}
                       >{card.category}</span
                     >{/if}</td
                 >
                 <td class="px-3 py-1.5"
                   ><div class="flex flex-wrap gap-1">
-                    {#each card.tags as t (t)}<span
-                        class="rounded bg-black px-1.5 py-0.5 text-xs text-white"
+                    {#each card.tags as t (t)}<span class={chip.tag}
                         >{t}</span
                       >{/each}
                   </div></td

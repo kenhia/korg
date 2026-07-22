@@ -9,6 +9,32 @@ Error codes and the mutation contract live in
 relationship model are below. The remaining pieces move here as the cleanup
 bundles land.
 
+## Where the contract lives
+
+Since sprint 016 there is **one** definition of every request shape, and the
+other surfaces are derived from it:
+
+| Surface | Source |
+|---|---|
+| REST request bodies | the `korg-core` struct itself — `NewWorkItem`, `WorkItemPatch`, `NewCard`, `CardPatch`, `NewLink`, `LinkPatch`, `NewProposal`, `ProposalPatch`, `ProjectPatch`, `NewTopic`, `TopicPatch`, `NewReport`, plus the operations in `korg_core::ops` |
+| MCP tool input schemas | derived from those same structs via `schemars`; enum lists come from `korg_core::vocab` |
+| TypeScript in `web/src/lib/generated/` | derived from the response rows via `ts-rs`, plus the vocabularies |
+
+Both transports deserialize the *same* type, so REST and MCP cannot accept
+different fields for the same operation. `korg-mcp` carries the target id in
+the argument object and `korg-api` carries it in the path; the MCP schema is
+the union of the derived id-selector and body schemas.
+
+Two things are deliberately *not* shared. Collection **filters** differ by
+encoding — a query string cannot carry a JSON `null`, so REST spells the
+tri-state `archived` as `true|false|all` while MCP spells it as a nullable
+boolean; both resolve to the same core query type. And `additionalProperties:
+false` in the tool schemas remains advisory: the server ignores unknown fields
+rather than rejecting them, as it always has.
+
+Regenerate with `just gen`; `just check` fails if the committed output is
+stale. See [setup.md](setup.md#generated-files).
+
 ## Collection reads
 
 Every list returns the same envelope (sprint 015):

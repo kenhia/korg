@@ -1,0 +1,14 @@
+# ts-rs reads these at compile time, so they must be set for EVERY cargo
+# invocation — not just `just gen`. A plain `cargo test --workspace` runs the
+# generated `export_bindings_*` tests too, and without this it would quietly
+# write a stale copy to korg-core/bindings/ instead of the directory the web
+# app imports.
+#
+# `relative = true` resolves against the workspace root (the parent of .cargo),
+# which is what makes this work at all: ts-rs otherwise resolves a relative
+# export dir against the *crate* root.
+[env]
+TS_RS_EXPORT_DIR = { value = "web/src/lib/generated", relative = true }
+# korg serializes i64 as a JSON number, so `number` is what the client actually
+# receives. ts-rs would default these to `bigint`.
+TS_RS_LARGE_INT = "number"

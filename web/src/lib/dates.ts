@@ -27,9 +27,3 @@ export const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 export function weekDays(monday: Date): Date[] {
   return Array.from({ length: 7 }, (_, i) => addDays(monday, i));
 }
-
-export function prettyDuration(min: number): string {
-  if (min % 60 === 0) return `${min / 60}h`;
-  if (min < 60) return `${min}m`;
-  return `${Math.floor(min / 60)}h${min % 60}`;
-}
