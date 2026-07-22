@@ -105,6 +105,41 @@ all updated in this change.
 - Production untouched throughout: the rehearsal ran against a restored dump in
   a scratch container, which was destroyed afterwards along with the dump.
 
+## Deployed
+
+Deployed to `kubsdb` 2026-07-22 (post-merge, from `main` @ `7c3032b`) via the
+`deploy-kubsdb` skill, on the loopback+LAN port binding sprint 013 established.
+Image `sha256:b5d220a5…`; prior production image `sha256:d2197807…` (sprint
+013) retained for rollback. Container healthy, 0 restarts. Today's nightly
+backup (`korg-20260722-032426.sql.gz`) confirmed present beforehand, and all
+252 edges were captured verbatim as a baseline.
+
+**Migration 0014 ran against production and did exactly what the rehearsal
+predicted.** Diffing the verbatim edge dump before and after:
+
+- 252 edges before, 252 after, **identical `rel_id` set** — nothing created or
+  destroyed, only orientation rewritten.
+- Per-label counts unchanged: covers 208, depends_on 23, related 7,
+  related-to 5, finding 5, part_of 3, follows_from 1.
+- All 23 `depends_on` edges **byte-identical**, so `plan-status` and
+  `refill-queue` are unaffected.
+- 204 `covers` + 3 `finding` edges flipped. (The rehearsal predicted 203
+  covers; the extra one is proposal `korg:569`, created between the rehearsal
+  and the deploy by the *old* build, so it too was stored id-canonically —
+  a small confirmation that the backfill catches whatever the previous writers
+  left behind.)
+- Final orientation: `covers` 181 `sprint_proposal → workitem` + 27 legacy
+  `workitem → workitem`, `finding` 5 `report → workitem`. Postcondition 0/0;
+  `relationship_no_self_edge` present; zero self-edges.
+
+Verified live over `https://kubsdb.encke-wahoo.ts.net:5674`: proposal
+`korg:555` returns its 6 covered work items with `direction: "out"` and
+`directed: true`; the same edge reads `"in"` from the work-item end; legacy
+bundle #109 reads outward with an exact `truncated` flag under `limit=2`;
+self-edges refused `400 invalid_input` over REST and `isError`/`invalid_input`
+over MCP; `neighbors` filters work over MCP; `/plan` deep link 200;
+`scripts/mcp-roundtrip-check.sh` green.
+
 ## Noticed, not fixed
 
 The production edge corpus carries **two spellings of the same idea** —
