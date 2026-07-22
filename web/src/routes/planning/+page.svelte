@@ -42,10 +42,12 @@
   }
 
   async function loadCovers(proposalNodeId: number) {
-    const ns = await api.neighbors(proposalNodeId).catch(() => []);
+    // Filter server-side (WI #533) rather than pulling every edge and sifting.
+    const page = await api
+      .neighbors(proposalNodeId, { label: "covers", kind: "workitem" })
+      .catch(() => null);
     const items: Covered[] = [];
-    for (const n of ns) {
-      if (n.label !== "covers" || n.kind !== "workitem") continue;
+    for (const n of page?.items ?? []) {
       const wi = workItems.find((w) => w.node_id === n.node_id);
       if (wi) items.push({ wi_number: wi.wi_number, title: wi.title });
     }

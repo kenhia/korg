@@ -116,11 +116,13 @@ async fn mcp_surface_end_to_end() {
             .await
             .unwrap(),
     );
-    let ns = ns.as_array().unwrap();
-    assert_eq!(ns.len(), 1);
-    assert_eq!(ns[0]["node_id"].as_i64(), Some(link_node));
-    assert_eq!(ns[0]["kind"], "link");
-    assert_eq!(ns[0]["label"], "references");
+    let items = ns["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(ns["total"], 1);
+    assert_eq!(ns["truncated"], false);
+    assert_eq!(items[0]["node_id"].as_i64(), Some(link_node));
+    assert_eq!(items[0]["kind"], "link");
+    assert_eq!(items[0]["label"], "references");
 
     // Reading list reflects the link.
     let links = body(&server.call("list_links", args(json!({}))).await.unwrap());
@@ -447,10 +449,10 @@ async fn mcp_coverage_gaps_end_to_end() {
             .await
             .unwrap(),
     );
-    let ns = ns.as_array().unwrap();
-    assert_eq!(ns.len(), 1);
+    let items = ns["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
     assert_eq!(
-        ns[0]["rel_id"].as_i64(),
+        items[0]["rel_id"].as_i64(),
         Some(rel_id),
         "neighbors exposes rel_id for unrelate"
     );
@@ -466,7 +468,7 @@ async fn mcp_coverage_gaps_end_to_end() {
             .unwrap(),
     );
     assert_eq!(
-        ns_after.as_array().unwrap().len(),
+        ns_after["items"].as_array().unwrap().len(),
         0,
         "edge removed by unrelate"
     );

@@ -295,8 +295,10 @@ async fn api_end_to_end() {
         None,
     )
     .await;
-    assert_eq!(ns[0]["node_id"].as_i64(), Some(card_node));
-    assert_eq!(ns[0]["kind"], "card");
+    assert_eq!(ns["items"][0]["node_id"].as_i64(), Some(card_node));
+    assert_eq!(ns["items"][0]["kind"], "card");
+    assert_eq!(ns["total"], 1);
+    assert_eq!(ns["truncated"], false);
     // The card stays where it is (Active), not forced anywhere by scheduling.
     let (_st, cards) = req(&router, "GET", "/api/cards", None).await;
     assert_eq!(cards[0]["status"], "Active");
@@ -373,7 +375,7 @@ async fn api_end_to_end() {
         None,
     )
     .await;
-    let rel_id = ns[0]["rel_id"].as_i64().unwrap();
+    let rel_id = ns["items"][0]["rel_id"].as_i64().unwrap();
     let (st, _) = req(
         &router,
         "DELETE",
@@ -389,7 +391,8 @@ async fn api_end_to_end() {
         None,
     )
     .await;
-    assert_eq!(ns2.as_array().unwrap().len(), 0);
+    assert_eq!(ns2["items"].as_array().unwrap().len(), 0);
+    assert_eq!(ns2["total"], 0);
 }
 
 /// Sprint 004 — /api/proposals: bundled create, pinned/rank ordering,

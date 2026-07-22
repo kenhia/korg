@@ -12,6 +12,7 @@ use sqlx::{Executor, PgPool, Postgres, Row};
 use time::OffsetDateTime;
 
 pub use crate::error::RepoError;
+use crate::relationships;
 use crate::vocab::{self, CARD_STATUSES, LINK_DISPOSITIONS, PROPOSAL_STATUSES, REPORT_STATUSES};
 pub use crate::vocab::{PROJECT_STATUSES, WI_STATUSES};
 
@@ -299,9 +300,46 @@ pub struct Neighbor {
     /// "out" = the queried node is the edge's left (label reads queried → this
     /// neighbor, e.g. queried `depends_on` neighbor); "in" = the reverse.
     pub direction: String,
+    /// Whether `direction` carries meaning for this label (WI #530). False for
+    /// registry-undirected labels like `related-to`, where the orientation is
+    /// an artifact of how the edge happened to be written and readers must
+    /// treat the edge as symmetric.
+    #[sqlx(default)]
+    pub directed: bool,
 }
 
+/// Filters and bound for a `neighbors` read (WI #533). Defaults: no filters,
+/// [`NEIGHBOR_LIMIT_DEFAULT`].
+#[derive(Debug, Clone, Default)]
+pub struct NeighborQuery {
+    pub label: Option<String>,
+    pub kind: Option<String>,
+    pub limit: Option<i64>,
+}
+
+/// Neighbors plus the bound that produced them. `total` is the full match
+/// count before the limit, so `truncated` is exact rather than inferred.
+#[derive(Debug, Clone, Serialize)]
+pub struct NeighborPage {
+    pub items: Vec<Neighbor>,
+    pub total: i64,
+    pub limit: i64,
+    pub truncated: bool,
+}
+
+/// Default cap on a `neighbors` read. Generous next to real fan-out (the
+/// biggest production node has ~10 edges) but finite.
+pub const NEIGHBOR_LIMIT_DEFAULT: i64 = 100;
+/// Hard ceiling a caller may request.
+pub const NEIGHBOR_LIMIT_MAX: i64 = 500;
+
 pub async fn relate(pool: &PgPool, left: i64, right: i64, label: &str) -> Result<i64> {
+    // A node related to itself is meaningless under every registry label and
+    // actively harmful under depends_on — it would block itself forever
+    // (WI #532). Backed by relationship_no_self_edge since 0014.
+    if left == right {
+        return Err(RepoError::InvalidInput(format!("cannot relate node {left} to itself")).into());
+    }
     // Endpoints are checked up front so a typo'd node id is a 404, not a raw
     // FK violation surfaced as a 500 (WI #524).
     require_node(pool, left).await?;
@@ -327,22 +365,67 @@ pub async fn relate(pool: &PgPool, left: i64, right: i64, label: &str) -> Result
 }
 
 /// Neighbors of `node`: the node on the other end of each edge (direction
-/// tells you which end the queried node is),
-/// with that node's kind and the relationship label. Works across kinds.
-pub async fn neighbors(pool: &PgPool, node: i64) -> Result<Vec<Neighbor>> {
-    let rows = sqlx::query_as::<_, Neighbor>(
-        "SELECT r.id AS rel_id, n.id AS node_id, n.kind, r.relationship AS label, \
-                CASE WHEN r.left_id = $1 THEN 'out' ELSE 'in' END AS direction \
-         FROM relationship r \
-         JOIN node n \
-           ON n.id = CASE WHEN r.left_id = $1 THEN r.right_id ELSE r.left_id END \
-         WHERE r.left_id = $1 OR r.right_id = $1 \
-         ORDER BY n.id",
-    )
-    .bind(node)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows)
+/// tells you which end the queried node is), with that node's kind and the
+/// relationship label. Works across kinds.
+///
+/// Ordering is `node_id` then `rel_id`, so two edges to the same neighbor have
+/// a stable relative order (F-19). `label`/`kind` filter server-side — the
+/// Planning page and several skills used to pull every edge and filter in the
+/// client.
+pub async fn neighbors(pool: &PgPool, node: i64, query: NeighborQuery) -> Result<NeighborPage> {
+    let limit = query
+        .limit
+        .unwrap_or(NEIGHBOR_LIMIT_DEFAULT)
+        .clamp(1, NEIGHBOR_LIMIT_MAX);
+    let sql = "SELECT r.id AS rel_id, n.id AS node_id, n.kind, r.relationship AS label, \
+                      CASE WHEN r.left_id = $1 THEN 'out' ELSE 'in' END AS direction, \
+                      count(*) OVER() AS total \
+               FROM relationship r \
+               JOIN node n \
+                 ON n.id = CASE WHEN r.left_id = $1 THEN r.right_id ELSE r.left_id END \
+               WHERE (r.left_id = $1 OR r.right_id = $1) \
+                 AND ($2::text IS NULL OR r.relationship = $2) \
+                 AND ($3::text IS NULL OR n.kind = $3) \
+               ORDER BY n.id, r.id \
+               LIMIT $4";
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        rel_id: i64,
+        node_id: i64,
+        kind: String,
+        label: String,
+        direction: String,
+        total: i64,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(sql)
+        .bind(node)
+        .bind(query.label.as_deref())
+        .bind(query.kind.as_deref())
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+
+    let total = rows.first().map(|r| r.total).unwrap_or(0);
+    let items: Vec<Neighbor> = rows
+        .into_iter()
+        .map(|r| Neighbor {
+            directed: relationships::direction_is_meaningful(&r.label),
+            rel_id: r.rel_id,
+            node_id: r.node_id,
+            kind: r.kind,
+            label: r.label,
+            direction: r.direction,
+        })
+        .collect();
+    let truncated = total > items.len() as i64;
+    Ok(NeighborPage {
+        items,
+        total,
+        limit,
+        truncated,
+    })
 }
 
 /// All (left, right) edges with the given label where BOTH endpoints belong
@@ -1212,19 +1295,16 @@ pub async fn create_proposal(pool: &PgPool, new: NewProposal) -> Result<Proposal
     .execute(&mut *tx)
     .await?;
 
+    // Semantic orientation: proposal -> work item (WI #531). This used to
+    // insert (least, greatest), which recorded id ordering instead of meaning.
     for &target in &covered {
-        let (lo, hi) = if node_id <= target {
-            (node_id, target)
-        } else {
-            (target, node_id)
-        };
         sqlx::query(
             "INSERT INTO relationship (left_id, right_id, relationship) \
              VALUES ($1, $2, 'covers') \
              ON CONFLICT (left_id, right_id, relationship) DO UPDATE SET left_id = relationship.left_id",
         )
-        .bind(lo)
-        .bind(hi)
+        .bind(node_id)
+        .bind(target)
         .execute(&mut *tx)
         .await?;
     }
@@ -1703,8 +1783,9 @@ pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
         }
     };
 
-    // Drop finding edges this run didn't produce. Orientation is still
-    // id-canonical here (F-01 / B2 fixes that), so match on "the other end".
+    // Drop finding edges this run didn't produce. Matching on "the other end"
+    // rather than on left_id keeps this correct for any pre-0014 edge that a
+    // database might still carry unoriented.
     sqlx::query(
         "DELETE FROM relationship \
          WHERE relationship = 'finding' AND (left_id = $1 OR right_id = $1) \
@@ -1715,19 +1796,15 @@ pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
     .execute(&mut *tx)
     .await?;
 
+    // Semantic orientation: report -> work item (WI #531).
     for &target in &resolved {
-        let (lo, hi) = if node_id <= target {
-            (node_id, target)
-        } else {
-            (target, node_id)
-        };
         sqlx::query(
             "INSERT INTO relationship (left_id, right_id, relationship) \
              VALUES ($1, $2, 'finding') \
              ON CONFLICT (left_id, right_id, relationship) DO UPDATE SET left_id = relationship.left_id",
         )
-        .bind(lo)
-        .bind(hi)
+        .bind(node_id)
+        .bind(target)
         .execute(&mut *tx)
         .await?;
     }

@@ -308,7 +308,7 @@
     editing = false;
     related = [];
     detailAreas = [];
-    related = await api.neighbors(item.node_id).catch(() => []);
+    related = (await api.neighbors(item.node_id).catch(() => null))?.items ?? [];
     detailAreas = item.project ? await api.areas(item.project).catch(() => []) : [];
   }
 
@@ -317,7 +317,7 @@
     const u = await api.workItem(detail.wi_number).catch(() => null);
     if (u) {
       detail = u;
-      related = await api.neighbors(u.node_id).catch(() => []);
+      related = (await api.neighbors(u.node_id).catch(() => null))?.items ?? [];
     }
   }
 
@@ -358,13 +358,13 @@
     await api.relate(detail.node_id, target.node_id, relLabel.trim() || "related-to");
     relTarget = "";
     relAdding = false;
-    related = await api.neighbors(detail.node_id).catch(() => []);
+    related = (await api.neighbors(detail.node_id).catch(() => null))?.items ?? [];
   }
 
   async function removeRel(relId: number) {
     if (!detail) return;
     await api.unrelate(relId);
-    related = await api.neighbors(detail.node_id).catch(() => []);
+    related = (await api.neighbors(detail.node_id).catch(() => null))?.items ?? [];
   }
 
   function relatedLabel(n: Neighbor): string {

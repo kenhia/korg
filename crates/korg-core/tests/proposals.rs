@@ -76,11 +76,16 @@ async fn create_proposal_bundles_covers_edges() {
     assert!(r.covered.contains(&a_node));
     assert!(r.covered.contains(&b_node));
 
-    let ns = korg_core::repo::neighbors(&pool, r.row.node_id)
+    let ns = korg_core::repo::neighbors(&pool, r.row.node_id, Default::default())
         .await
         .unwrap();
-    assert_eq!(ns.len(), 2);
-    assert!(ns.iter().all(|n| n.label == "covers"));
+    assert_eq!(ns.total, 2);
+    assert!(!ns.truncated);
+    assert!(ns.items.iter().all(|n| n.label == "covers"));
+    // Semantic orientation (WI #531): the proposal is the edge's left, so its
+    // covered work items read "out" from the proposal.
+    assert!(ns.items.iter().all(|n| n.direction == "out"));
+    assert!(ns.items.iter().all(|n| n.directed));
 }
 
 #[tokio::test]

@@ -153,6 +153,16 @@ export interface Neighbor {
   label: string;
   /** "out" = queried node is the edge's left (label reads queried → neighbor); "in" = reverse. */
   direction: "out" | "in";
+  /** False for registry-undirected labels (related-to): read the edge symmetrically. */
+  directed: boolean;
+}
+
+/** GET /api/nodes/:id/neighbors — bounded, so `truncated` is explicit. */
+export interface NeighborPage {
+  items: Neighbor[];
+  total: number;
+  limit: number;
+  truncated: boolean;
 }
 
 /** /api/projects/:name/plan — edges are [left, right]: left depends_on right. */
@@ -475,8 +485,17 @@ export const api = {
     http<{ id: number }>("POST", "/api/relationships", { left, right, label }),
   unrelate: (id: number) =>
     http<{ deleted: boolean }>("DELETE", `/api/relationships/${id}`),
-  neighbors: (id: number) =>
-    http<Neighbor[]>("GET", `/api/nodes/${id}/neighbors`),
+  neighbors: (id: number, opts?: { label?: string; kind?: string; limit?: number }) => {
+    const p = new URLSearchParams();
+    if (opts?.label) p.set("label", opts.label);
+    if (opts?.kind) p.set("kind", opts.kind);
+    if (opts?.limit !== undefined) p.set("limit", String(opts.limit));
+    const qs = p.toString();
+    return http<NeighborPage>(
+      "GET",
+      `/api/nodes/${id}/neighbors${qs ? `?${qs}` : ""}`,
+    );
+  },
   node: (id: number) => httpMaybe<NodePreview>("GET", `/api/nodes/${id}`),
   plan: (project: string) =>
     http<PlanResponse>(

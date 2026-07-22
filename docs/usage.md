@@ -60,7 +60,7 @@ rooted at `/api`. Responses are JSON.
 | `POST   /api/relationships`            | Create a generalized relationship.   |
 | `DELETE /api/relationships/:id`        | Delete a relationship.               |
 | `GET    /api/nodes/:id`                | Kind-agnostic preview of any node by id (powers find-by-ID + the preview panel); 404 if none. |
-| `GET    /api/nodes/:id/neighbors`      | List a node's related neighbors.     |
+| `GET    /api/nodes/:id/neighbors`      | A node's edges: `{items,total,limit,truncated}`, optional `label`/`kind`/`limit` (see [api.md](api.md#relationships)). |
 | `GET    /api/proposals`                | List sprint proposals (optional `status` filter). |
 | `POST   /api/proposals`                | Propose a sprint: title + summary + covered `work_item_numbers` in one call. |
 | `PATCH  /api/proposals/:node_id`       | Update a proposal (status, rank, pinned, archive). |
@@ -70,6 +70,9 @@ Example:
 ```bash
 curl -s http://localhost:8090/api/work-items | jq
 ```
+
+See [api.md](api.md) for the normative relationship model (label registry,
+direction semantics, edge reads and writes).
 
 ### Response and error contract
 

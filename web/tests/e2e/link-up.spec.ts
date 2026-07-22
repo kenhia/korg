@@ -85,10 +85,15 @@ test("linking two selected items relates them", async ({ page, request }) => {
   await page.getByRole("button", { name: "Link 2 items", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("Linked 2 items");
 
-  // The two items are now related (undirected edge visible from a -> b).
-  const neigh = await request.get(`/api/nodes/${aNode}/neighbors`);
-  const nodes = (await neigh.json()).map((n: { node_id: number }) => n.node_id);
+  // The two items are now related. `related-to` is registry-undirected, so the
+  // edge is visible from either end regardless of which way it was stored.
+  const neigh = await request.get(
+    `/api/nodes/${aNode}/neighbors?label=related-to`,
+  );
+  const page_ = await neigh.json();
+  const nodes = page_.items.map((n: { node_id: number }) => n.node_id);
   expect(nodes).toContain(bNode);
+  expect(page_.items[0].directed).toBe(false);
 });
 
 // WI #87 — a page-level "Show All" checkbox (default off) hides Closed work
