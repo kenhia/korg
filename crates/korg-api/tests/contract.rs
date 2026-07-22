@@ -522,3 +522,98 @@ async fn mutations_return_the_updated_entity() {
     assert_eq!(project["status"], "maintenance");
     assert_eq!(project["name"], "alpha");
 }
+
+/// Sprint 014 — `relate` rejects self-edges (WI #532) and `neighbors` filters
+/// server-side with an exact truncation flag (WI #533).
+#[tokio::test]
+async fn relationships_reject_self_edges_and_neighbors_filters() {
+    let (_c, router) = app().await;
+    let hub = work_item(&router, "hub").await;
+    let dep = work_item(&router, "dependency").await;
+
+    assert_error(
+        req(
+            &router,
+            "POST",
+            "/api/relationships",
+            Some(json!({"left": hub, "right": hub, "label": "depends_on"})),
+        )
+        .await,
+        StatusCode::BAD_REQUEST,
+        "invalid_input",
+        "self-edge",
+    );
+
+    for label in ["depends_on", "related-to"] {
+        let (st, _) = req(
+            &router,
+            "POST",
+            "/api/relationships",
+            Some(json!({"left": hub, "right": dep, "label": label})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{label}");
+    }
+
+    let (st, all) = req(&router, "GET", &format!("/api/nodes/{hub}/neighbors"), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(all["total"], 2);
+    assert_eq!(all["truncated"], false);
+
+    // `directed` tells a reader when to ignore `direction` (D-1).
+    let items = all["items"].as_array().unwrap();
+    let related = items.iter().find(|n| n["label"] == "related-to").unwrap();
+    assert_eq!(related["directed"], false);
+    let depends = items.iter().find(|n| n["label"] == "depends_on").unwrap();
+    assert_eq!(depends["directed"], true);
+
+    let (_st, filtered) = req(
+        &router,
+        "GET",
+        &format!("/api/nodes/{hub}/neighbors?label=depends_on"),
+        None,
+    )
+    .await;
+    assert_eq!(filtered["total"], 1);
+    assert_eq!(filtered["items"][0]["label"], "depends_on");
+
+    let (_st, clipped) = req(
+        &router,
+        "GET",
+        &format!("/api/nodes/{hub}/neighbors?limit=1"),
+        None,
+    )
+    .await;
+    assert_eq!(clipped["items"].as_array().unwrap().len(), 1);
+    assert_eq!(clipped["total"], 2, "total counts every match");
+    assert_eq!(clipped["truncated"], true);
+}
+
+/// The `covers` edge a proposal writes must read proposal -> work item over
+/// REST too — this is the read `start-sprint` walks (WI #531).
+#[tokio::test]
+async fn proposal_covers_edges_read_outward_over_rest() {
+    let (_c, router) = app().await;
+    let wi = work_item(&router, "covered").await;
+    let (_st, proposal) = req(
+        &router,
+        "POST",
+        "/api/proposals",
+        Some(json!({"title":"bundle","summary":"s","work_item_numbers":[wi]})),
+    )
+    .await;
+    let pnode = proposal["node_id"].as_i64().unwrap();
+
+    let (_st, from_proposal) = req(
+        &router,
+        "GET",
+        &format!("/api/nodes/{pnode}/neighbors?label=covers&kind=workitem"),
+        None,
+    )
+    .await;
+    assert_eq!(from_proposal["items"][0]["direction"], "out");
+    assert_eq!(from_proposal["items"][0]["node_id"], wi);
+
+    let (_st, from_item) = req(&router, "GET", &format!("/api/nodes/{wi}/neighbors"), None).await;
+    assert_eq!(from_item["items"][0]["direction"], "in");
+}

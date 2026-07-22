@@ -158,13 +158,18 @@ pub fn tools() -> Vec<Tool> {
             "type":"object","additionalProperties":false,"required":["node_id","read"],
             "properties":{"node_id":id,"read":{"type":"boolean"}}
         })),
-        tool("relate", "Create a DIRECTED relationship edge between any two nodes; the label reads left-to-right (e.g. left depends_on right). Exact duplicates dedup; the reverse orientation is a distinct edge. Both endpoints must exist (isError with code `not_found` otherwise).", json!({
+        tool("relate", "Create a relationship edge between any two nodes. The label reads left-to-right. Known labels and their direction: `covers` (proposal -> work item), `finding` (report -> work item), `depends_on` (dependent -> dependency) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. Any other label is allowed and its direction is caller-defined: korg stores your order faithfully without interpreting it. Exact duplicates dedup. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected).", json!({
             "type":"object","additionalProperties":false,"required":["left","right","label"],
             "properties":{"left":id,"right":id,"label":{"type":"string","minLength":1}}
         })),
-        tool("neighbors", "List the nodes linked to a node (any kind), with labels. Each entry includes `rel_id` (pass to `unrelate`) and `direction`: \"out\" = the queried node is the edge's left (label reads queried->neighbor), \"in\" = the reverse.", json!({
+        tool("neighbors", "List the nodes linked to a node (any kind), with labels. Returns {items, total, limit, truncated}. Each item has `rel_id` (pass to `unrelate`), `direction` (\"out\" = the queried node is the edge's left, so the label reads queried->neighbor; \"in\" = the reverse) and `directed` -- when `directed` is false the label is registry-undirected (e.g. related-to) and you MUST treat the edge as symmetric, ignoring `direction`. Filter server-side with `label` and/or `kind` instead of pulling every edge: e.g. label=\"covers\", kind=\"workitem\" for a proposal's work items. Ordering is neighbor node_id then rel_id.", json!({
             "type":"object","additionalProperties":false,"required":["node_id"],
-            "properties":{"node_id":id}
+            "properties":{
+                "node_id":id,
+                "label":{"type":["string","null"],"description":"Only edges with this relationship label."},
+                "kind":{"type":["string","null"],"description":"Only neighbors of this node kind, e.g. \"workitem\"."},
+                "limit":{"type":"integer","minimum":1,"maximum":500,"default":100,"description":"Cap on returned edges; `truncated` says whether more matched."}
+            }
         })),
         tool("unrelate", "Remove a relationship edge by its id (the `rel_id` from `neighbors`, or the id returned by `relate`). Returns {deleted: bool} — false means there was no such edge.", json!({
             "type":"object","additionalProperties":false,"required":["id"],
@@ -588,6 +593,17 @@ struct NodeIdArgs {
 }
 
 #[derive(Deserialize)]
+struct NeighborsArgs {
+    node_id: i64,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Deserialize)]
 struct DateRangeArgs {
     from: String,
     to: String,
@@ -938,8 +954,18 @@ impl KorgServer {
                 }
             }
             "neighbors" => {
-                let a: NodeIdArgs = parse_args(args)?;
-                match repo::neighbors(&self.pool, a.node_id).await {
+                let a: NeighborsArgs = parse_args(args)?;
+                match repo::neighbors(
+                    &self.pool,
+                    a.node_id,
+                    repo::NeighborQuery {
+                        label: a.label,
+                        kind: a.kind,
+                        limit: a.limit,
+                    },
+                )
+                .await
+                {
                     Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
                     Err(e) => Ok(to_err(e)),
                 }

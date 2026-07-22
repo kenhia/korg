@@ -12,6 +12,8 @@ and a web UI reachable from Windows browsers.
 
 - [docs/setup.md](docs/setup.md) — install, configure, build, and run.
 - [docs/usage.md](docs/usage.md) — web UI, REST API, and MCP endpoint.
+- [docs/api.md](docs/api.md) — normative agent-facing contracts (relationship
+  label registry, direction semantics).
 - [docs/migration.md](docs/migration.md) — import legacy kwi + kcard data.
 
 ## Model

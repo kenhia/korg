@@ -97,7 +97,10 @@ async fn domain_cross_kind_relationships_and_reading_list() {
         .expect("relate card-link");
 
     // The card sees both a work item and a link as neighbors.
-    let mut ns = neighbors(&pool, card).await.expect("neighbors");
+    let mut ns = neighbors(&pool, card, Default::default())
+        .await
+        .expect("neighbors")
+        .items;
     ns.sort_by(|a, b| a.kind.cmp(&b.kind));
     assert_eq!(ns.len(), 2, "card should have two neighbors");
 

@@ -903,8 +903,35 @@ async fn delete_relationship(State(s): State<AppState>, Path(id): Path<i64>) -> 
     Ok(Json(json!({ "deleted": deleted })))
 }
 
-async fn neighbors(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
-    Ok(Json(json!(repo::neighbors(&s.pool, id).await?)))
+#[derive(Deserialize)]
+struct NeighborsQuery {
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+/// A node's edges, optionally filtered by label and neighbor kind (WI #533).
+/// Returns `{items, total, limit, truncated}` — the bound is explicit so a
+/// caller can tell a complete answer from a clipped one.
+async fn neighbors(
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+    Query(q): Query<NeighborsQuery>,
+) -> ApiResult {
+    let page = repo::neighbors(
+        &s.pool,
+        id,
+        repo::NeighborQuery {
+            label: q.label,
+            kind: q.kind,
+            limit: q.limit,
+        },
+    )
+    .await?;
+    Ok(Json(json!(page)))
 }
 
 /// Kind-agnostic preview of any node by its id (WI #260). 404 when no node has

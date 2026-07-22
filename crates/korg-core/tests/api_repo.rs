@@ -134,23 +134,27 @@ async fn relate_idempotent() {
     relate(&pool, a, b, "related-to").await.unwrap();
     relate(&pool, a, b, "related-to").await.unwrap();
 
-    let na = neighbors(&pool, a).await.unwrap();
+    let na = neighbors(&pool, a, Default::default()).await.unwrap().items;
     assert_eq!(na.len(), 1, "exact duplicate relate must not add edges");
     assert_eq!(na[0].node_id, b);
     assert_eq!(na[0].direction, "out", "a is the edge's left");
-    let nb = neighbors(&pool, b).await.unwrap();
+    let nb = neighbors(&pool, b, Default::default()).await.unwrap().items;
     assert_eq!(nb.len(), 1, "the edge is visible from the other end too");
     assert_eq!(nb[0].direction, "in", "b is the edge's right");
 
     relate(&pool, b, a, "related-to").await.unwrap();
     assert_eq!(
-        neighbors(&pool, a).await.unwrap().len(),
+        neighbors(&pool, a, Default::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
         2,
         "reverse orientation is a distinct directed edge"
     );
 
     // A different label between the same pair is a distinct edge.
     relate(&pool, a, b, "scheduled").await.unwrap();
-    let na2 = neighbors(&pool, a).await.unwrap();
+    let na2 = neighbors(&pool, a, Default::default()).await.unwrap().items;
     assert_eq!(na2.len(), 3, "dedup is scoped per (orientation, label)");
 }
