@@ -210,3 +210,52 @@ contract lives" section, including the two things deliberately *not* shared
   that is what the DB column is. The two places the UI needs the union
   (`board[status]`, the edit form) cast at the boundary with a comment. If that
   spreads, the answer is real enums in korg-core, not more casts.
+
+## Deployed
+
+Deployed to `kubsdb` 2026-07-22 (post-merge, from `main` @ `0ea373d`) via
+`/sprint-ship`'s Phase 7. Image `sha256:5fcc9267…`; prior production image
+`sha256:a35cf1bc…` (sprint 015) retained for rollback. Container healthy,
+0 restarts, on the loopback + LAN binding.
+
+No schema change and no response-shape change this sprint, so the reconciliation
+is a straight equality check rather than the sprint-015 style before/after
+interpretation:
+
+| | baseline (pre-deploy) | live after |
+|---|---|---|
+| work items (`archived=all`) | 377 | 377 |
+| cards | 27 | 27 |
+| links | 4 | 4 |
+| proposals | 56 | 56 |
+| reports | 23 | 23 |
+
+**The tool surface was verified by diffing it, not by eyeballing it** — which is
+the point of the sprint. The deployed `tools/list` was fetched over MCP and
+compared field-by-field against the committed
+`crates/korg-mcp/tests/tools_schema.json`: 44 tools, none extra, none missing,
+**zero description or schema differences**. The generated-schema signatures are
+visible live, e.g. `create_work_item.project_id` as `["integer","null"]`,
+`tags` carrying `"default": []`, `list_work_items.limit` carrying
+`"default": 200`, and `update_proposal.pinned` as `["boolean","null"]`.
+
+Also verified live over `https://kubsdb.encke-wahoo.ts.net:5674`: all ten routes
+return 200 (`/`, `/plan`, `/planning`, `/work-items`, `/cards`,
+`/reading-list`, `/topics`, `/history`, `/link-up`, `/daily-reports`);
+`archived=maybe` still 400s, so the tri-state guard survived the shared-struct
+move; `get_proposal` on `korg:556` returns this sprint's four covered items, all
+`resolved`; `scripts/mcp-roundtrip-check.sh` green.
+
+## Filed from this sprint
+
+WI **#574** — "Integration-test the MCP reports trio, starting with
+create_report" (korg, S, open) — attached to **B7** (`korg:559`), which already
+owned the "reports trio" line and now names it concretely. B7's summary also
+carries the note that this sprint's `every_advertised_tool_has_a_handler` is a
+weaker cousin of B7's planned dispatch-completeness test and should be
+superseded by it, plus the pre-existing `slot-schedule.spec.ts` drag failure to
+fix or quarantine when B7 renames that file.
+
+Ken's sizing call (2026-07-22): reports have one regular writer (~1/day) and one
+occasional one, so the live blast radius is small — backlog in B7 rather than
+pulled forward.
