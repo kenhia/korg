@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { dndzone, type DndEvent } from "svelte-dnd-action";
-  import { api, type Proposal } from "$lib/api";
+  import { api, type ProposalRow } from "$lib/api";
+  import type { ProposalStatus } from "$lib/generated/vocab";
+  import { chip, midRank } from "$lib/domain";
   import NodePreview from "$lib/components/NodePreview.svelte";
 
-  type DndItem = { id: number; proposal: Proposal };
+  type DndItem = { id: number; proposal: ProposalRow };
   type Covered = { wi_number: number; title: string };
 
   // WI #565 — the queue spans repos, so scope it to the project you're in.
@@ -30,7 +32,7 @@
   }
 
   let projectFilter = $state(ALL_PROJECTS);
-  let proposalsRaw = $state<Proposal[]>([]);
+  let proposalsRaw = $state<ProposalRow[]>([]);
   let covers = $state<Record<number, Covered[]>>({});
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -108,15 +110,6 @@
     }
   }
 
-  function midRank(prev?: string, next?: string): number {
-    const p = prev !== undefined ? Number(prev) : undefined;
-    const n = next !== undefined ? Number(next) : undefined;
-    if (p !== undefined && n !== undefined) return (p + n) / 2;
-    if (n !== undefined) return n - 1;
-    if (p !== undefined) return p + 1;
-    return 1;
-  }
-
   function considerPinned(e: CustomEvent<DndEvent<DndItem>>) {
     pinnedBuf = e.detail.items;
   }
@@ -146,7 +139,7 @@
     }
   }
 
-  async function togglePin(p: Proposal) {
+  async function togglePin(p: ProposalRow) {
     try {
       await api.updateProposal(p.node_id, { pinned: !p.pinned });
       p.pinned = !p.pinned;
@@ -156,7 +149,7 @@
     }
   }
 
-  async function setStatus(p: Proposal, status: Proposal["status"]) {
+  async function setStatus(p: ProposalRow, status: ProposalStatus) {
     try {
       await api.updateProposal(p.node_id, { status });
       p.status = status;
@@ -167,7 +160,7 @@
     }
   }
 
-  async function copyStart(p: Proposal) {
+  async function copyStart(p: ProposalRow) {
     const text = `/start-sprint korg:${p.node_id}`;
     try {
       // navigator.clipboard requires a secure context (HTTPS or localhost);
@@ -206,7 +199,7 @@
   });
 </script>
 
-{#snippet card(p: Proposal)}
+{#snippet card(p: ProposalRow)}
   <div class="cursor-grab rounded bg-[var(--color-surface-hi)] p-3 active:cursor-grabbing" data-testid={`proposal-${p.node_id}`}>
     <div class="flex items-start justify-between gap-2">
       <div class="text-sm font-medium">{p.title}</div>
@@ -225,7 +218,7 @@
       </div>
     </div>
     {#if p.project}
-      <span class="mt-1 inline-block rounded bg-[var(--color-surface)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-muted)]" data-testid="proposal-project">{p.project}</span>
+      <span class="mt-1 inline-block {chip.project}" data-testid="proposal-project">{p.project}</span>
     {/if}
     <p class="mt-1 text-xs text-[var(--color-muted)]">{p.summary}</p>
     {#if covers[p.node_id]?.length}

@@ -1,14 +1,23 @@
 //! MCP tool implementations backed by `korg-core`.
 //!
 //! Exposes work items, cards, reading-list links, generalized relationships,
-//! and calendar slots to AI agents over the MCP protocol.
+//! topics, and source-linked daily planning to AI agents over MCP.
+//!
+//! Every tool's input schema is **derived** from the struct its handler
+//! deserializes (WI #540). There are no hand-written `json!` schema literals
+//! left: [`tool`] and [`tool2`] take the argument types as type parameters and
+//! ask `schemars` for the schema, so a field added to a shared struct in
+//! `korg-core::ops` reaches `tools/list` with zero hand-edits. The enum lists
+//! inside those schemas come from `korg_core::vocab`, which is why the
+//! `survey_work_items` archived-default lie and the drifted vocabularies the
+//! review found (F-22) cannot recur.
 
 use korg_core::config::KorgConfig;
 use korg_core::error::{ErrorClass, ErrorCode};
+use korg_core::ops;
 use korg_core::repo::{
-    self, create_card, create_link, create_proposal, create_work_item, list_cards, list_links,
-    list_projects, list_work_items, update_work_item, upsert_report, CardPatch, NewCard, NewLink,
-    NewProposal, NewReport, NewWorkItem, ProposalPatch, WorkItemPatch,
+    self, CardPatch, LinkPatch, NewCard, NewLink, NewProposal, NewReport, NewWorkItem,
+    ProjectPatch, ProposalPatch, WorkItemPatch,
 };
 use korg_core::{daily_plan, topics};
 use rmcp::handler::server::ServerHandler;
@@ -17,8 +26,8 @@ use rmcp::model::{
     ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
 };
 use rmcp::service::{RequestContext, RoleServer};
-use rust_decimal::Decimal;
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -37,348 +46,202 @@ impl KorgServer {
     }
 }
 
-// --- tool descriptors -----------------------------------------------------
+// --- schema derivation ------------------------------------------------------
+
+/// `schemars`'s JSON Schema for `T`, normalized into the object rmcp wants.
+///
+/// Normalization drops the artefacts of *how* the schema was produced —
+/// `$schema`, the struct's Rust name as `title`, and the struct's doc comment
+/// as a root `description` (the tool's own description carries that) — and
+/// pins `additionalProperties: false`, which korg's tool surface has always
+/// advertised. `required` is sorted so the output is byte-stable across
+/// compilers.
+fn schema_of<T: JsonSchema>() -> JsonObject {
+    let mut schema = match serde_json::to_value(schemars::schema_for!(T)) {
+        Ok(Value::Object(m)) => m,
+        other => panic!(
+            "schema for {} is not an object: {other:?}",
+            type_name::<T>()
+        ),
+    };
+    for artefact in ["$schema", "title", "description"] {
+        schema.remove(artefact);
+    }
+    schema.insert("type".into(), json!("object"));
+    schema.insert("additionalProperties".into(), json!(false));
+    let properties = schema.entry("properties").or_insert_with(|| json!({}));
+    if let Value::Object(properties) = properties {
+        for field in properties.values_mut() {
+            tidy_default(field);
+        }
+    }
+    if let Some(Value::Array(required)) = schema.get_mut("required") {
+        required.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+    }
+    schema
+}
+
+/// Two corrections to the `default` `schemars` reads off `#[serde(default)]`.
+///
+/// `Option<T>` fields default to `null`, which says nothing an omittable field
+/// doesn't already say — drop it, and let the `schema_with` builder's own
+/// default (page limits, for instance) stand. `Decimal` fields default to the
+/// *string* `"0"` because that is how `rust_decimal` serializes, but the wire
+/// type is a JSON number and the schema must advertise one.
+fn tidy_default(field: &mut Value) {
+    let Some(field) = field.as_object_mut() else {
+        return;
+    };
+    if field.get("default").is_some_and(Value::is_null) {
+        field.remove("default");
+    }
+    if field.get("type") == Some(&json!("number")) {
+        if let Some(numeric) = field
+            .get("default")
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse::<f64>().ok())
+        {
+            // A whole number stays whole: `0`, not `0.0`.
+            let numeric = if numeric.fract() == 0.0 && numeric.abs() < i64::MAX as f64 {
+                json!(numeric as i64)
+            } else {
+                json!(numeric)
+            };
+            field.insert("default".into(), numeric);
+        }
+    }
+}
+
+fn type_name<T>() -> &'static str {
+    std::any::type_name::<T>()
+}
+
+/// Merge an id selector's schema into an operation body's schema.
+///
+/// MCP carries the target id in the same flat argument object as the body,
+/// while REST carries it in the path — so the MCP schema is the union of the
+/// two derived schemas rather than a third hand-written shape.
+fn merge(mut sel: JsonObject, body: JsonObject) -> JsonObject {
+    let props = merged_map(sel.remove("properties"), body.get("properties").cloned());
+    let mut required = merged_list(sel.remove("required"), body.get("required").cloned());
+    required.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+
+    let mut out = sel;
+    out.insert("properties".into(), Value::Object(props));
+    if required.is_empty() {
+        out.remove("required");
+    } else {
+        out.insert("required".into(), Value::Array(required));
+    }
+    out
+}
+
+fn merged_map(a: Option<Value>, b: Option<Value>) -> serde_json::Map<String, Value> {
+    let mut out = serde_json::Map::new();
+    for src in [a, b].into_iter().flatten() {
+        if let Value::Object(m) = src {
+            out.extend(m);
+        }
+    }
+    out
+}
+
+fn merged_list(a: Option<Value>, b: Option<Value>) -> Vec<Value> {
+    let mut out = Vec::new();
+    for src in [a, b].into_iter().flatten() {
+        if let Value::Array(items) = src {
+            for item in items {
+                if !out.contains(&item) {
+                    out.push(item);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A tool whose whole argument object is `A`.
+fn tool<A: JsonSchema>(name: &'static str, desc: &'static str) -> Tool {
+    Tool::new(name, desc, schema_of::<A>())
+}
+
+/// A tool that takes an id selector `S` plus an operation body `B` — the two
+/// halves the handler deserializes from the same object.
+fn tool2<S: JsonSchema, B: JsonSchema>(name: &'static str, desc: &'static str) -> Tool {
+    Tool::new(name, desc, merge(schema_of::<S>(), schema_of::<B>()))
+}
+
+/// Tools that take no arguments at all.
+#[derive(JsonSchema)]
+struct NoArgs {}
+
+// --- tool descriptors -------------------------------------------------------
 
 pub fn tools() -> Vec<Tool> {
-    let tags = json!({"type":"array","items":{"type":"string","minLength":1}});
-    // Every collection read shares these three (WI #534). `archived` is
-    // tri-state: omit for unarchived only, true for archived only, null for both.
-    let archived = json!({"type":["boolean","null"],"default":false,
-        "description":"Omit for unarchived only (the default); true for archived only; null for both."});
-    let limit = json!({"type":"integer","minimum":1,"maximum":500,"default":200});
-    let offset = json!({"type":"integer","minimum":0,"default":0});
-    let id = json!({"type":"integer","format":"int64"});
-    let date = json!({"type":"string","description":"YYYY-MM-DD"});
-
     vec![
-        tool("create_work_item", "Create a work item. Returns the created row (including node_id and the serial wi_number, which are the same number since the 0009 identity migration).", json!({
-            "type":"object","additionalProperties":false,
-            "required":["title","content"],
-            "properties":{
-                "title":{"type":"string","minLength":1},
-                "content":{"type":"string"},
-                "wi_type":{"type":"string","enum":["task","bug","chore","feature","research","tweak","brainstorm"],"default":"task"},
-                "wi_status":{"type":"string","enum":["open","resolved","done","closed"],"default":"open"},
-                "wi_tshirt":{"type":"string","enum":["XS","S","M","L","XL","Huge","Unknown"],"default":"Unknown"},
-                "sprint":{"type":["string","null"]},
-                "details":{"type":["string","null"]},
-                "project_id":id,
-                "area_id":id,
-                "category":{"type":["string","null"]},
-                "tags":tags
-            }
-        })),
-        tool("list_work_items", "List work items as {items, total, limit, offset}, ordered by wi_number. Each row includes `comment_count` -- get_work_item to read the discussion. Pass `project` (name) to scope to one project; omit it for all projects, but prefer survey_work_items for cross-project sweeps because these rows carry full content and details. Archived items are EXCLUDED by default.", json!({
-            "type":"object","additionalProperties":false,
-            "properties":{
-                "project":{"type":["string","null"],"description":"Project name to filter by"},
-                "archived":archived.clone(),
-                "limit":limit.clone(),
-                "offset":offset.clone()
-            }
-        })),
-        tool("survey_work_items", "Slim, paginated work-item listing (wi_number, node_id, project, title, wi_type, wi_status, wi_tshirt, comment_count only -- no content/details). Use this instead of list_work_items for cross-project surveys, which can exceed tool-output limits at instance scale. Returns {items, total, limit, offset}.", json!({
-            "type":"object","additionalProperties":false,
-            "properties":{
-                "project":{"type":["string","null"],"description":"Project name to filter by"},
-                "wi_status":{"type":["string","null"],"description":"Status to filter by, e.g. \"open\""},
-                "archived":{"type":["boolean","null"],"description":"Filter by archived flag; OMIT for both archived and unarchived (there is no default)."},
-                "limit":{"type":"integer","minimum":1,"maximum":500,"default":50},
-                "offset":{"type":"integer","minimum":0,"default":0}
-            }
-        })),
-        tool("get_work_item", "Fetch a single work item by its wi_number (isError with code `not_found` if there is none), with its comments inlined (up to 10; `comments_truncated:true` + `comment_count` signal a longer thread — page the tail via list_comments). Comments often hold the real payload (resolution rationale, decisions), so prefer this over list_work_items when you need the full state of one item.", json!({
-            "type":"object","additionalProperties":false,"required":["wi_number"],
-            "properties":{"wi_number":id}
-        })),
-        tool("update_work_item", "Partially update a work item by its wi_number; returns the updated row (isError with code `not_found` if the wi_number does not exist). Only the fields you pass are changed. Status lifecycle: open -> resolved (implemented; may still need a user test or PR) -> done (agent satisfied; terminal but visible in default lists) -> closed (reserved for Ken; hidden by default -- do not set unless directed). For nullable fields (project_id, details, sprint, area_id, parent, category) pass null to clear or omit to leave unchanged. Moving projects (project_id) clears an area that no longer belongs to the target project unless you pass a valid area_id in the same call.", json!({
-            "type":"object","additionalProperties":false,
-            "required":["wi_number"],
-            "properties":{
-                "wi_number":id,
-                "title":{"type":"string","minLength":1},
-                "content":{"type":"string"},
-                "wi_type":{"type":"string","enum":["task","bug","chore","feature","research","tweak","brainstorm"]},
-                "wi_status":{"type":"string","enum":["open","resolved","done","closed"]},
-                "wi_tshirt":{"type":"string","enum":["XS","S","M","L","XL","Huge","Unknown"]},
-                "sprint":{"type":["string","null"]},
-                "details":{"type":["string","null"]},
-                "project_id":{"type":["integer","null"],"format":"int64","description":"Move to this project (id); null unassigns. Get ids from list_projects."},
-                "area_id":{"type":["integer","null"],"format":"int64"},
-                "parent":{"type":["integer","null"],"format":"int64","description":"Parent work item's wi_number; null clears the parent."},
-                "archived":{"type":"boolean"},
-                "category":{"type":["string","null"]},
-                "tags":tags
-            }
-        })),
-        tool("create_card", "Create a kanban card. Returns the created card row.", json!({
-            "type":"object","additionalProperties":false,"required":["title"],
-            "properties":{
-                "title":{"type":"string","minLength":1},
-                "status":{"type":"string","enum":["Backlog","Research","OnDeck","Active","Done","Cut"],"default":"Backlog"},
-                "description":{"type":"string","default":""},
-                "rank":{"type":"number","default":0},
-                "project_id":id,
-                "category":{"type":["string","null"]},
-                "tags":tags
-            }
-        })),
-        tool("update_card", "Partially update a kanban card by its node_id; returns the updated card (isError with code `not_found` if that node is missing or is not a card). Projects are addressed by `project_id` here and over REST alike (get ids from list_projects) -- REST used to take a project *name* and silently create it. Only the fields you pass are changed (move status/rank, edit title/description, archive, reassign project). For nullable fields (project_id, category) pass null to clear or omit to leave unchanged.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id"],
-            "properties":{
-                "node_id":id,
-                "status":{"type":"string","enum":["Backlog","Research","OnDeck","Active","Done","Cut"]},
-                "rank":{"type":"number"},
-                "title":{"type":"string","minLength":1},
-                "description":{"type":"string"},
-                "archived":{"type":"boolean"},
-                "project_id":{"type":["integer","null"],"format":"int64"},
-                "category":{"type":["string","null"]},
-                "tags":tags
-            }
-        })),
-        tool("list_cards", "List cards as {items, total, limit, offset}, ordered by status, then rank, then node_id. Each row includes `comment_count`. Archived cards are EXCLUDED by default.", json!({
-            "type":"object","additionalProperties":false,
-            "properties":{
-                "status":{"type":["string","null"],"enum":["Backlog","Research","OnDeck","Active","Done","Cut",null]},
-                "project":{"type":["string","null"],"description":"Project name to filter by"},
-                "archived":archived.clone(),
-                "limit":limit.clone(),
-                "offset":offset.clone()
-            }
-        })),
-        tool("list_comments", "List the comments on a node (work item or card), oldest first.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id"],
-            "properties":{"node_id":id}
-        })),
-        tool("add_comment", "Add a comment to a node of any kind. Returns the created comment; isError with code `not_found` if the node does not exist.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id","body"],
-            "properties":{"node_id":id,"body":{"type":"string","minLength":1}}
-        })),
-        tool("delete_comment", "Delete a comment by its id. Returns {deleted: bool} — false means there was no such comment.", json!({
-            "type":"object","additionalProperties":false,"required":["id"],
-            "properties":{"id":id}
-        })),
-        tool("update_comment", "Edit a comment's body by its id (from list_comments). `created` is preserved; `updated` advances.", json!({
-            "type":"object","additionalProperties":false,"required":["id","body"],
-            "properties":{"id":id,"body":{"type":"string","minLength":1}}
-        })),
-        tool("create_link", "Capture a reading-list URL. Returns the created link row.", json!({
-            "type":"object","additionalProperties":false,"required":["url"],
-            "properties":{
-                "url":{"type":"string","minLength":1},
-                "title":{"type":["string","null"]},
-                "project_id":id,
-                "category":{"type":["string","null"]},
-                "tags":tags
-            }
-        })),
-        tool("list_links", "List reading-list links as {items, total, limit, offset}, ordered by node_id. Archived links are EXCLUDED by default.", json!({
-            "type":"object","additionalProperties":false,
-            "properties":{
-                "disposition":{"type":["string","null"],"enum":["Unread","Done","Revisit","Summarized","VaultSaved",null]},
-                "read":{"type":["boolean","null"]},
-                "archived":archived.clone(),
-                "limit":limit.clone(),
-                "offset":offset.clone()
-            }
-        })),
-        tool("update_link", "Update a reading-list link in ONE transaction: disposition, read flag, tags -- any combination. This is how an agent records what it decided about a captured URL (migration 0004's intended workflow). Returns the updated link; isError `not_found` if the node is missing or is not a link; an invalid disposition changes nothing.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id"],
-            "properties":{
-                "node_id":id,
-                "disposition":{"type":"string","enum":["Unread","Done","Revisit","Summarized","VaultSaved"]},
-                "read":{"type":"boolean"},
-                "tags":tags.clone()
-            }
-        })),
-        tool("mark_link_read", "DEPRECATED -- use update_link, which does this plus disposition and tags in one transaction. Marks a reading-list link read or unread; returns the updated link.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id","read"],
-            "properties":{"node_id":id,"read":{"type":"boolean"}}
-        })),
-        tool("relate", "Create a relationship edge between any two nodes. The label reads left-to-right. Known labels and their direction: `covers` (proposal -> work item), `finding` (report -> work item), `depends_on` (dependent -> dependency) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. Any other label is allowed and its direction is caller-defined: korg stores your order faithfully without interpreting it. Exact duplicates dedup. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected).", json!({
-            "type":"object","additionalProperties":false,"required":["left","right","label"],
-            "properties":{"left":id,"right":id,"label":{"type":"string","minLength":1}}
-        })),
-        tool("neighbors", "List the nodes linked to a node (any kind), with labels. Returns {items, total, limit, truncated}. Each item has `rel_id` (pass to `unrelate`), `direction` (\"out\" = the queried node is the edge's left, so the label reads queried->neighbor; \"in\" = the reverse) and `directed` -- when `directed` is false the label is registry-undirected (e.g. related-to) and you MUST treat the edge as symmetric, ignoring `direction`. Filter server-side with `label` and/or `kind` instead of pulling every edge: e.g. label=\"covers\", kind=\"workitem\" for a proposal's work items. Ordering is neighbor node_id then rel_id.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id"],
-            "properties":{
-                "node_id":id,
-                "label":{"type":["string","null"],"description":"Only edges with this relationship label."},
-                "kind":{"type":["string","null"],"description":"Only neighbors of this node kind, e.g. \"workitem\"."},
-                "limit":{"type":"integer","minimum":1,"maximum":500,"default":100,"description":"Cap on returned edges; `truncated` says whether more matched."}
-            }
-        })),
-        tool("unrelate", "Remove a relationship edge by its id (the `rel_id` from `neighbors`, or the id returned by `relate`). Returns {deleted: bool} — false means there was no such edge.", json!({
-            "type":"object","additionalProperties":false,"required":["id"],
-            "properties":{"id":id}
-        })),
-        tool("create_topic", "Create a reusable planning topic. Returns the created topic.", json!({
-            "type":"object","additionalProperties":false,"required":["name"],
-            "properties":{"name":{"type":"string","minLength":1},"description":{"type":["string","null"]},"project_id":id,"category":{"type":["string","null"]},"tags":tags}
-        })),
-        tool("get_topic", "Fetch a topic by node_id, including archived topics. isError with code `not_found` if there is none.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id"],"properties":{"node_id":id}
-        })),
-        tool("list_topics", "List topics as {items, total, limit, offset}, ordered by name. Pass `q` to match name/description. Each row includes `comment_count`. Archived topics are EXCLUDED by default.", json!({
-            "type":"object","additionalProperties":false,
-            "properties":{
-                "q":{"type":["string","null"],"description":"Match against name and description"},
-                "archived":archived.clone(),
-                "limit":limit.clone(),
-                "offset":offset.clone()
-            }
-        })),
-        tool("search_topics", "Alias for list_topics with a `q` filter; same {items, total, limit, offset} shape. Prefer list_topics.", json!({
-            "type":"object","additionalProperties":false,
-            "properties":{
-                "q":{"type":["string","null"]},
-                "archived":archived.clone(),
-                "limit":limit.clone(),
-                "offset":offset.clone()
-            }
-        })),
-        tool("update_topic", "Partially update a topic; returns the updated topic.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id"],
-            "properties":{"node_id":id,"name":{"type":"string","minLength":1},"description":{"type":["string","null"]},"category":{"type":["string","null"]},"tags":tags}
-        })),
-        tool("archive_topic", "Archive or restore a topic; returns the updated topic.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id"],"properties":{"node_id":id,"archived":{"type":"boolean","default":true}}
-        })),
-        tool("list_daily_plan", "List daily plan items in an inclusive date range with snapshots and current source titles.", json!({
-            "type":"object","additionalProperties":false,"required":["from","to"],
-            "properties":{"from":date.clone(),"to":date.clone()}
-        })),
-        tool("create_daily_plan_item", "Plan a work item, card, or topic. Display is resolved and snapshotted server-side. Returns the created item.", json!({
-            "type":"object","additionalProperties":false,"required":["source_node_id","plan_date"],
-            "properties":{"source_node_id":id,"plan_date":date.clone()}
-        })),
-        tool("set_daily_plan_completion", "Complete or uncomplete any daily plan item; timestamp is server-authoritative. Returns the updated item.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id","completed"],
-            "properties":{"node_id":id,"completed":{"type":"boolean"}}
-        })),
-        tool("delete_daily_plan_item", "Delete an item from an open day; past structure is frozen. Returns {deleted: true}.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id"],"properties":{"node_id":id}
-        })),
-        tool("reorder_daily_plan", "Replace the complete order for an open day. Returns the day in its new order.", json!({
-            "type":"object","additionalProperties":false,"required":["plan_date","node_ids"],
-            "properties":{"plan_date":date.clone(),"node_ids":{"type":"array","items":id}}
-        })),
-        tool("move_daily_plan_item", "Move an item to today/future. Open sources transfer; past sources copy and remain unchanged.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id","target_date"],
-            "properties":{"node_id":id,"target_date":date.clone(),"target_position":{"type":"integer","minimum":0,"default":0}}
-        })),
-        tool("daily_plan_history", "Return all complete and incomplete historical items plus completion totals/rate. End must be before local today.", json!({
-            "type":"object","additionalProperties":false,"required":["from","to"],
-            "properties":{"from":date.clone(),"to":date,"source_node_id":id}
-        })),
-        tool("propose_sprint", "Propose a sprint: bundle a title + summary with the work items it covers, in one call. Returns the created proposal plus `covered` -- which of the given wi_numbers actually resolved. Numbers that do not resolve are dropped, so compare `covered` against your request.", json!({
-            "type":"object","additionalProperties":false,
-            "required":["title","summary"],
-            "properties":{
-                "title":{"type":"string","minLength":1},
-                "summary":{"type":"string"},
-                "work_item_numbers":{"type":"array","items":{"type":"integer","format":"int64"},"default":[]},
-                "project_id":id,
-                "rank":{"type":"number","default":0,"description":"Drag-order position; lower sorts first among unpinned proposals."},
-                "pinned":{"type":"boolean","default":false},
-                "category":{"type":["string","null"]},
-                "tags":tags
-            }
-        })),
-        tool("create_report", "Create or replace the daily report for (source, report_date). Same-day re-runs REPLACE both the content and the finding set -- findings you omit are unlinked -- but keep the node_id (links/comments survive). `findings_linked` echoes the wi_numbers that resolved; numbers that do not resolve are dropped, so compare it against your request.", json!({
-            "type":"object","additionalProperties":false,
-            "required":["source","report_date","status","summary","body"],
-            "properties":{
-                "source":{"type":"string","minLength":1,"description":"reporter id, e.g. 'kmon'"},
-                "report_date":{"type":"string","format":"date","description":"YYYY-MM-DD"},
-                "status":{"type":"string","enum":["ok","attention","problem"]},
-                "summary":{"type":"string","minLength":1,"description":"one-liner for the list view"},
-                "body":{"type":"string","description":"full markdown report"},
-                "model":{"type":["string","null"]},
-                "escalated":{"type":"boolean","default":false},
-                "finding_work_items":{"type":"array","items":{"type":"integer","format":"int64"},"default":[]}
-            }
-        })),
-        tool("list_reports", "List daily reports, newest first (summary fields only). Pass `source` to filter.", json!({
-            "type":"object","additionalProperties":false,
-            "properties":{"source":{"type":["string","null"]},"limit":{"type":"integer","default":30}}
-        })),
-        tool("get_report", "Fetch one report by node_id: full body plus linked finding work items. isError with code `not_found` if there is none.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id"],
-            "properties":{"node_id":id}
-        })),
-        tool("list_proposals", "List sprint proposals: pinned first, then rank, then node_id (a stable order -- equal ranks no longer shuffle between calls). Each row carries `covered_count` and `comment_count`; call get_proposal for the covered work items themselves. Filter by `status` and/or `project` (name).", json!({
-            "type":"object","additionalProperties":false,
-            "properties":{
-                "status":{"type":["string","null"],"enum":["proposed","active","done","declined",null]},
-                "project":{"type":["string","null"],"description":"Project name to filter by"}
-            }
-        })),
-        tool("get_proposal", "Fetch one sprint proposal by node_id with everything needed to start it: the proposal fields, `covered` (the work items it covers -- wi_number, node_id, title, wi_status, wi_tshirt, project, comment_count -- ordered by wi_number), and inlined comments (up to 10, with `comments_truncated`). This replaces the old list_proposals + neighbors + list_work_items dance. isError with code `not_found` if there is none.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id"],
-            "properties":{"node_id":id}
-        })),
-        tool("update_proposal", "Partially update a sprint proposal by its node_id; returns the updated proposal (isError with code `not_found` if that node is missing or is not a proposal). Only the fields you pass are changed. Use this for status transitions (proposed -> active -> done/declined), reordering (rank), pinning, or archiving.", json!({
-            "type":"object","additionalProperties":false,"required":["node_id"],
-            "properties":{
-                "node_id":id,
-                "title":{"type":"string","minLength":1},
-                "summary":{"type":"string"},
-                "status":{"type":"string","enum":["proposed","active","done","declined"]},
-                "rank":{"type":"number"},
-                "pinned":{"type":"boolean"},
-                "archived":{"type":"boolean"},
-                "tags":tags
-            }
-        })),
-        tool("list_projects", "List projects, including metadata: status (active|maintenance|inactive|archived), machines (where the working copy lives), deploy_to (where it deploys), category.", empty()),
-        tool("create_project", "Create a project by name (idempotent — returns the existing id if it already exists). Returns its id.", json!({
-            "type":"object","additionalProperties":false,"required":["name"],
-            "properties":{"name":{"type":"string","minLength":1}}
-        })),
-        tool("update_project", "Update a project's metadata by name (the name itself is immutable), returning the updated project: status (active|maintenance|inactive|archived), machines, deploy_to, category, description, gh_repo, cn_path. Omitted fields are unchanged.", json!({
-            "type":"object","additionalProperties":false,"required":["name"],
-            "properties":{
-                "name":{"type":"string","minLength":1},
-                "status":{"type":"string","enum":["active","maintenance","inactive","archived"]},
-                "machines":{"type":"array","items":{"type":"string"}},
-                "deploy_to":{"type":"array","items":{"type":"string"}},
-                "category":{"type":["string","null"]},
-                "description":{"type":["string","null"]},
-                "gh_repo":{"type":["string","null"]},
-                "cn_path":{"type":["string","null"]}
-            }
-        })),
-        tool("list_areas", "List the areas under a project (by project name).", json!({
-            "type":"object","additionalProperties":false,"required":["project"],
-            "properties":{"project":{"type":"string","minLength":1}}
-        })),
-        tool("create_area", "Create an area under a project by name (idempotent — updates the description if it already exists). Returns its id.", json!({
-            "type":"object","additionalProperties":false,"required":["project","name"],
-            "properties":{
-                "project":{"type":"string","minLength":1},
-                "name":{"type":"string","minLength":1},
-                "description":{"type":["string","null"]}
-            }
-        })),
+        tool::<NewWorkItem>("create_work_item", "Create a work item. Returns the created row (including node_id and the serial wi_number, which are the same number since the 0009 identity migration)."),
+        tool::<ops::ListWorkItems>("list_work_items", "List work items as {items, total, limit, offset}, ordered by wi_number. Each row includes `comment_count` -- get_work_item to read the discussion. Pass `project` (name) to scope to one project; omit it for all projects, but prefer survey_work_items for cross-project sweeps because these rows carry full content and details. Archived items are EXCLUDED by default."),
+        tool::<ops::SurveyWorkItems>("survey_work_items", "Slim, paginated work-item listing (wi_number, node_id, project, title, wi_type, wi_status, wi_tshirt, comment_count only -- no content/details). Use this instead of list_work_items for cross-project surveys, which can exceed tool-output limits at instance scale. Returns {items, total, limit, offset}."),
+        tool::<ops::WiNumber>("get_work_item", "Fetch a single work item by its wi_number (isError with code `not_found` if there is none), with its comments inlined (up to 10; `comments_truncated:true` + `comment_count` signal a longer thread — page the tail via list_comments). Comments often hold the real payload (resolution rationale, decisions), so prefer this over list_work_items when you need the full state of one item."),
+        tool2::<ops::WiNumber, WorkItemPatch>("update_work_item", "Partially update a work item by its wi_number; returns the updated row (isError with code `not_found` if the wi_number does not exist). Only the fields you pass are changed. Status lifecycle: open -> resolved (implemented; may still need a user test or PR) -> done (agent satisfied; terminal but visible in default lists) -> closed (reserved for Ken; hidden by default -- do not set unless directed). For nullable fields (project_id, details, sprint, area_id, parent, category) pass null to clear or omit to leave unchanged. Moving projects (project_id) clears an area that no longer belongs to the target project unless you pass a valid area_id in the same call."),
+        tool::<NewCard>("create_card", "Create a kanban card. Returns the created card row."),
+        tool2::<ops::NodeId, CardPatch>("update_card", "Partially update a kanban card by its node_id; returns the updated card (isError with code `not_found` if that node is missing or is not a card). Projects are addressed by `project_id` here and over REST alike (get ids from list_projects) -- REST used to take a project *name* and silently create it. Only the fields you pass are changed (move status/rank, edit title/description, archive, reassign project). For nullable fields (project_id, category) pass null to clear or omit to leave unchanged."),
+        tool::<ops::ListCards>("list_cards", "List cards as {items, total, limit, offset}, ordered by status, then rank, then node_id. Each row includes `comment_count`. Archived cards are EXCLUDED by default."),
+        tool::<ops::NodeId>("list_comments", "List the comments on a node (work item or card), oldest first."),
+        tool2::<ops::NodeId, ops::CommentBody>("add_comment", "Add a comment to a node of any kind. Returns the created comment; isError with code `not_found` if the node does not exist."),
+        tool::<ops::Id>("delete_comment", "Delete a comment by its id. Returns {deleted: bool} — false means there was no such comment."),
+        tool2::<ops::Id, ops::CommentBody>("update_comment", "Edit a comment's body by its id (from list_comments). `created` is preserved; `updated` advances."),
+        tool::<NewLink>("create_link", "Capture a reading-list URL. Returns the created link row."),
+        tool::<ops::ListLinks>("list_links", "List reading-list links as {items, total, limit, offset}, ordered by node_id. Archived links are EXCLUDED by default."),
+        tool2::<ops::NodeId, LinkPatch>("update_link", "Update a reading-list link in ONE transaction: disposition, read flag, tags -- any combination. This is how an agent records what it decided about a captured URL (migration 0004's intended workflow). Returns the updated link; isError `not_found` if the node is missing or is not a link; an invalid disposition changes nothing."),
+        tool::<MarkLinkReadArgs>("mark_link_read", "DEPRECATED -- use update_link, which does this plus disposition and tags in one transaction. Marks a reading-list link read or unread; returns the updated link."),
+        tool::<ops::Relate>("relate", "Create a relationship edge between any two nodes. The label reads left-to-right. Known labels and their direction: `covers` (proposal -> work item), `finding` (report -> work item), `depends_on` (dependent -> dependency) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. Any other label is allowed and its direction is caller-defined: korg stores your order faithfully without interpreting it. Exact duplicates dedup. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected)."),
+        tool2::<ops::NodeId, ops::Neighbors>("neighbors", "List the nodes linked to a node (any kind), with labels. Returns {items, total, limit, truncated}. Each item has `rel_id` (pass to `unrelate`), `direction` (\"out\" = the queried node is the edge's left, so the label reads queried->neighbor; \"in\" = the reverse) and `directed` -- when `directed` is false the label is registry-undirected (e.g. related-to) and you MUST treat the edge as symmetric, ignoring `direction`. Filter server-side with `label` and/or `kind` instead of pulling every edge: e.g. label=\"covers\", kind=\"workitem\" for a proposal's work items. Ordering is neighbor node_id then rel_id."),
+        tool::<ops::Id>("unrelate", "Remove a relationship edge by its id (the `rel_id` from `neighbors`, or the id returned by `relate`). Returns {deleted: bool} — false means there was no such edge."),
+        tool::<topics::NewTopic>("create_topic", "Create a reusable planning topic. Returns the created topic."),
+        tool::<ops::NodeId>("get_topic", "Fetch a topic by node_id, including archived topics. isError with code `not_found` if there is none."),
+        tool::<ops::ListTopics>("list_topics", "List topics as {items, total, limit, offset}, ordered by name. Pass `q` to match name/description. Each row includes `comment_count`. Archived topics are EXCLUDED by default."),
+        tool::<ops::ListTopics>("search_topics", "Alias for list_topics with a `q` filter; same {items, total, limit, offset} shape. Prefer list_topics."),
+        tool2::<ops::NodeId, topics::TopicPatch>("update_topic", "Partially update a topic; returns the updated topic."),
+        tool2::<ops::NodeId, ops::ArchiveTopic>("archive_topic", "Archive or restore a topic; returns the updated topic."),
+        tool::<ops::DateRange>("list_daily_plan", "List daily plan items in an inclusive date range with snapshots and current source titles."),
+        tool::<ops::CreateDailyPlanItem>("create_daily_plan_item", "Plan a work item, card, or topic. Display is resolved and snapshotted server-side. Returns the created item."),
+        tool2::<ops::NodeId, ops::SetCompletion>("set_daily_plan_completion", "Complete or uncomplete any daily plan item; timestamp is server-authoritative. Returns the updated item."),
+        tool::<ops::NodeId>("delete_daily_plan_item", "Delete an item from an open day; past structure is frozen. Returns {deleted: true}."),
+        tool2::<ReorderPlanDate, ops::ReorderDailyPlan>("reorder_daily_plan", "Replace the complete order for an open day. Returns the day in its new order."),
+        tool2::<ops::NodeId, ops::MoveDailyPlanItem>("move_daily_plan_item", "Move an item to today/future. Open sources transfer; past sources copy and remain unchanged."),
+        tool::<ops::HistoryRange>("daily_plan_history", "Return all complete and incomplete historical items plus completion totals/rate. End must be before local today."),
+        tool::<NewProposal>("propose_sprint", "Propose a sprint: bundle a title + summary with the work items it covers, in one call. Returns the created proposal plus `covered` -- which of the given wi_numbers actually resolved. Numbers that do not resolve are dropped, so compare `covered` against your request."),
+        tool::<NewReport>("create_report", "Create or replace the daily report for (source, report_date). Same-day re-runs REPLACE both the content and the finding set -- findings you omit are unlinked -- but keep the node_id (links/comments survive). `findings_linked` echoes the wi_numbers that resolved; numbers that do not resolve are dropped, so compare it against your request."),
+        tool::<ops::ListReports>("list_reports", "List daily reports, newest first (summary fields only). Pass `source` to filter."),
+        tool::<ops::NodeId>("get_report", "Fetch one report by node_id: full body plus linked finding work items. isError with code `not_found` if there is none."),
+        tool::<ops::ListProposals>("list_proposals", "List sprint proposals: pinned first, then rank, then node_id (a stable order -- equal ranks no longer shuffle between calls). Each row carries `covered_count` and `comment_count`; call get_proposal for the covered work items themselves. Filter by `status` and/or `project` (name)."),
+        tool::<ops::NodeId>("get_proposal", "Fetch one sprint proposal by node_id with everything needed to start it: the proposal fields, `covered` (the work items it covers -- wi_number, node_id, title, wi_status, wi_tshirt, project, comment_count -- ordered by wi_number), and inlined comments (up to 10, with `comments_truncated`). This replaces the old list_proposals + neighbors + list_work_items dance. isError with code `not_found` if there is none."),
+        tool2::<ops::NodeId, ProposalPatch>("update_proposal", "Partially update a sprint proposal by its node_id; returns the updated proposal (isError with code `not_found` if that node is missing or is not a proposal). Only the fields you pass are changed. Use this for status transitions (proposed -> active -> done/declined), reordering (rank), pinning, or archiving."),
+        tool::<NoArgs>("list_projects", "List projects, including metadata: status (active|maintenance|inactive|archived), machines (where the working copy lives), deploy_to (where it deploys), category."),
+        tool::<ops::CreateProject>("create_project", "Create a project by name (idempotent — returns the existing id if it already exists). Returns its id."),
+        tool2::<ops::ProjectName, ProjectPatch>("update_project", "Update a project's metadata by name (the name itself is immutable), returning the updated project: status (active|maintenance|inactive|archived), machines, deploy_to, category, description, gh_repo, cn_path. Omitted fields are unchanged."),
+        tool::<ops::ProjectRef>("list_areas", "List the areas under a project (by project name)."),
+        tool::<ops::CreateArea>("create_area", "Create an area under a project by name (idempotent — updates the description if it already exists). Returns its id."),
     ]
 }
 
-fn empty() -> Value {
-    json!({"type":"object","additionalProperties":false,"properties":{}})
+/// `mark_link_read` is the one deprecated tool with no core counterpart worth
+/// sharing — it does what `update_link` does, worse.
+#[derive(serde::Deserialize, JsonSchema)]
+struct MarkLinkReadArgs {
+    node_id: i64,
+    read: bool,
 }
 
-fn tool(name: &'static str, desc: &'static str, schema: Value) -> Tool {
-    Tool::new(name, desc, obj(schema))
+/// `reorder_daily_plan` selects the day rather than a node.
+#[derive(serde::Deserialize, JsonSchema)]
+struct ReorderPlanDate {
+    #[schemars(schema_with = "ops::schema::date")]
+    plan_date: String,
 }
 
-fn obj(v: Value) -> JsonObject {
-    match v {
-        Value::Object(m) => m,
-        _ => panic!("tool schema must be an object"),
-    }
-}
+// --- responses --------------------------------------------------------------
 
 fn ok_json(v: Value) -> Result<CallToolResult, ErrorData> {
     let c = Content::json(v)
@@ -405,10 +268,59 @@ fn err_with_code(message: String, code: ErrorCode) -> CallToolResult {
     .expect("encode error")])
 }
 
+/// A repo result as a tool result: the entity on success, `{message, code}` on
+/// failure. Every tool ends this way, over both `anyhow::Error` (repo) and
+/// `PlanningError` (daily plan) — the two carry the same `code` classification.
+fn respond<T, E>(r: Result<T, E>) -> Result<CallToolResult, ErrorData>
+where
+    T: Serialize,
+    E: ErrorClass + std::fmt::Display,
+{
+    match r {
+        Ok(v) => ok_json(serde_json::to_value(v).map_err(|e| {
+            ErrorData::internal_error(format!("failed to encode response: {e}"), None)
+        })?),
+        Err(e) => Ok(to_err(e)),
+    }
+}
+
+/// A single-item read: `None` becomes an `isError` not-found, never a
+/// successful `null` (D-6).
+fn respond_found<T: Serialize>(
+    r: anyhow::Result<Option<T>>,
+    missing: impl FnOnce() -> String,
+) -> Result<CallToolResult, ErrorData> {
+    match r {
+        Ok(Some(v)) => respond::<T, anyhow::Error>(Ok(v)),
+        Ok(None) => Ok(not_found(missing())),
+        Err(e) => Ok(to_err(e)),
+    }
+}
+
+// --- arguments --------------------------------------------------------------
+
 fn parse_args<T: serde::de::DeserializeOwned>(args: Option<JsonObject>) -> Result<T, ErrorData> {
     let v = Value::Object(args.unwrap_or_default());
     serde_json::from_value(v)
         .map_err(|e| ErrorData::invalid_params(format!("invalid arguments: {e}"), None))
+}
+
+/// Deserialize one argument object into both halves it carries: the id
+/// selector and the operation body. The body is the same type korg-api
+/// deserializes from a request body, so there is exactly one definition of it;
+/// neither half declares `deny_unknown_fields`, so each ignores the other's
+/// keys.
+fn parse_args2<S, B>(args: Option<JsonObject>) -> Result<(S, B), ErrorData>
+where
+    S: serde::de::DeserializeOwned,
+    B: serde::de::DeserializeOwned,
+{
+    let v = Value::Object(args.unwrap_or_default());
+    let invalid =
+        |e: serde_json::Error| ErrorData::invalid_params(format!("invalid arguments: {e}"), None);
+    let selector = serde_json::from_value(v.clone()).map_err(invalid)?;
+    let body = serde_json::from_value(v).map_err(invalid)?;
+    Ok((selector, body))
 }
 
 fn parse_date(s: &str) -> Result<Date, ErrorData> {
@@ -417,1065 +329,291 @@ fn parse_date(s: &str) -> Result<Date, ErrorData> {
         .map_err(|e| ErrorData::invalid_params(format!("invalid date `{s}`: {e}"), None))
 }
 
-/// Deserialize a nullable, optional field into `Option<Option<T>>` so callers can
-/// distinguish "key absent" (leave unchanged) from "key present and null" (clear).
-/// Paired with `#[serde(default)]`: absent -> `None`, `null` -> `Some(None)`,
-/// value -> `Some(Some(v))`.
-fn double_option<'de, T, D>(de: D) -> Result<Option<Option<T>>, D::Error>
-where
-    T: Deserialize<'de>,
-    D: serde::Deserializer<'de>,
-{
-    Deserialize::deserialize(de).map(Some)
-}
-
-// --- argument shapes ------------------------------------------------------
-
-fn default_task() -> String {
-    "task".into()
-}
-fn default_open() -> String {
-    "open".into()
-}
-fn default_unknown() -> String {
-    "Unknown".into()
-}
-fn default_backlog() -> String {
-    "Backlog".into()
-}
-
-#[derive(Deserialize)]
-struct CreateWorkItemArgs {
-    title: String,
-    content: String,
-    #[serde(default = "default_task")]
-    wi_type: String,
-    #[serde(default = "default_open")]
-    wi_status: String,
-    #[serde(default = "default_unknown")]
-    wi_tshirt: String,
-    #[serde(default)]
-    sprint: Option<String>,
-    #[serde(default)]
-    details: Option<String>,
-    #[serde(default)]
-    project_id: Option<i64>,
-    #[serde(default)]
-    area_id: Option<i64>,
-    #[serde(default)]
-    category: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct WiNumberArgs {
-    wi_number: i64,
-}
-
-#[derive(Deserialize)]
-struct UpdateWorkItemArgs {
-    wi_number: i64,
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    content: Option<String>,
-    #[serde(default)]
-    wi_type: Option<String>,
-    #[serde(default)]
-    wi_status: Option<String>,
-    #[serde(default)]
-    wi_tshirt: Option<String>,
-    #[serde(default, deserialize_with = "double_option")]
-    sprint: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
-    details: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
-    project_id: Option<Option<i64>>,
-    #[serde(default, deserialize_with = "double_option")]
-    area_id: Option<Option<i64>>,
-    #[serde(default, deserialize_with = "double_option")]
-    parent: Option<Option<i64>>,
-    #[serde(default)]
-    archived: Option<bool>,
-    #[serde(default, deserialize_with = "double_option")]
-    category: Option<Option<String>>,
-    #[serde(default)]
-    tags: Option<Vec<String>>,
-}
-
-#[derive(Deserialize)]
-struct UpdateCardArgs {
-    node_id: i64,
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    rank: Option<f64>,
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    archived: Option<bool>,
-    #[serde(default, deserialize_with = "double_option")]
-    project_id: Option<Option<i64>>,
-    #[serde(default, deserialize_with = "double_option")]
-    category: Option<Option<String>>,
-    #[serde(default)]
-    tags: Option<Vec<String>>,
-}
-
-#[derive(Deserialize)]
-struct IdArgs {
-    id: i64,
-}
-
-#[derive(Deserialize)]
-struct UpdateCommentArgs {
-    id: i64,
-    body: String,
-}
-
-#[derive(Deserialize)]
-struct UpdateProjectArgs {
-    name: String,
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    machines: Option<Vec<String>>,
-    #[serde(default)]
-    deploy_to: Option<Vec<String>>,
-    #[serde(default)]
-    category: Option<Option<String>>,
-    #[serde(default)]
-    description: Option<Option<String>>,
-    #[serde(default)]
-    gh_repo: Option<Option<String>>,
-    #[serde(default)]
-    cn_path: Option<Option<String>>,
-}
-
-#[derive(Deserialize)]
-struct CreateProjectArgs {
-    name: String,
-}
-
-#[derive(Deserialize)]
-struct ProjectArgs {
-    project: String,
-}
-
-#[derive(Deserialize)]
-struct CreateAreaArgs {
-    project: String,
-    name: String,
-    #[serde(default)]
-    description: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct AddCommentArgs {
-    node_id: i64,
-    body: String,
-}
-
-/// Every collection read shares these. `archived` defaults to `false` (D-3);
-/// pass JSON `null` to get both archived and unarchived.
-fn archived_default() -> Option<bool> {
-    Some(false)
-}
-
-#[derive(Deserialize, Default)]
-struct ListWorkItemsArgs {
-    #[serde(default)]
-    project: Option<String>,
-    #[serde(default = "archived_default")]
-    archived: Option<bool>,
-    #[serde(default)]
-    limit: Option<i64>,
-    #[serde(default)]
-    offset: Option<i64>,
-}
-
-#[derive(Deserialize, Default)]
-struct ListCardsArgs {
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    project: Option<String>,
-    #[serde(default = "archived_default")]
-    archived: Option<bool>,
-    #[serde(default)]
-    limit: Option<i64>,
-    #[serde(default)]
-    offset: Option<i64>,
-}
-
-#[derive(Deserialize, Default)]
-struct ListLinksArgs {
-    #[serde(default)]
-    disposition: Option<String>,
-    #[serde(default)]
-    read: Option<bool>,
-    #[serde(default = "archived_default")]
-    archived: Option<bool>,
-    #[serde(default)]
-    limit: Option<i64>,
-    #[serde(default)]
-    offset: Option<i64>,
-}
-
-#[derive(Deserialize, Default)]
-struct ListTopicsArgs {
-    #[serde(default)]
-    q: Option<String>,
-    #[serde(default = "archived_default")]
-    archived: Option<bool>,
-    #[serde(default)]
-    limit: Option<i64>,
-    #[serde(default)]
-    offset: Option<i64>,
-}
-
-#[derive(Deserialize)]
-struct UpdateLinkArgs {
-    node_id: i64,
-    #[serde(default)]
-    disposition: Option<String>,
-    #[serde(default)]
-    read: Option<bool>,
-    #[serde(default)]
-    tags: Option<Vec<String>>,
-}
-
-fn default_survey_limit() -> i64 {
-    50
-}
-
-#[derive(Deserialize)]
-struct SurveyWorkItemsArgs {
-    #[serde(default)]
-    project: Option<String>,
-    #[serde(default)]
-    wi_status: Option<String>,
-    #[serde(default)]
-    archived: Option<bool>,
-    #[serde(default = "default_survey_limit")]
-    limit: i64,
-    #[serde(default)]
-    offset: i64,
-}
-
-#[derive(Deserialize)]
-struct CreateCardArgs {
-    title: String,
-    #[serde(default = "default_backlog")]
-    status: String,
-    #[serde(default)]
-    description: String,
-    #[serde(default)]
-    rank: f64,
-    #[serde(default)]
-    project_id: Option<i64>,
-    #[serde(default)]
-    category: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct CreateLinkArgs {
-    url: String,
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    project_id: Option<i64>,
-    #[serde(default)]
-    category: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct MarkLinkReadArgs {
-    node_id: i64,
-    read: bool,
-}
-
-#[derive(Deserialize)]
-struct RelateArgs {
-    left: i64,
-    right: i64,
-    label: String,
-}
-
-#[derive(Deserialize)]
-struct NodeIdArgs {
-    node_id: i64,
-}
-
-#[derive(Deserialize)]
-struct NeighborsArgs {
-    node_id: i64,
-    #[serde(default)]
-    label: Option<String>,
-    #[serde(default)]
-    kind: Option<String>,
-    #[serde(default)]
-    limit: Option<i64>,
-}
-
-#[derive(Deserialize)]
-struct DateRangeArgs {
-    from: String,
-    to: String,
-}
-
-#[derive(Deserialize)]
-struct CreateTopicArgs {
-    name: String,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    project_id: Option<i64>,
-    #[serde(default)]
-    category: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct UpdateTopicArgs {
-    node_id: i64,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default, deserialize_with = "double_option")]
-    description: Option<Option<String>>,
-    #[serde(default, deserialize_with = "double_option")]
-    category: Option<Option<String>>,
-    #[serde(default)]
-    tags: Option<Vec<String>>,
-}
-
-#[derive(Deserialize)]
-struct ArchiveTopicArgs {
-    node_id: i64,
-    #[serde(default = "default_true")]
-    archived: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-#[derive(Deserialize)]
-struct CreateDailyPlanItemArgs {
-    source_node_id: i64,
-    plan_date: String,
-}
-
-#[derive(Deserialize)]
-struct CompletionArgs {
-    node_id: i64,
-    completed: bool,
-}
-
-#[derive(Deserialize)]
-struct ReorderDailyPlanArgs {
-    plan_date: String,
-    node_ids: Vec<i64>,
-}
-
-#[derive(Deserialize)]
-struct MoveDailyPlanItemArgs {
-    node_id: i64,
-    target_date: String,
-    #[serde(default)]
-    target_position: i32,
-}
-
-#[derive(Deserialize)]
-struct HistoryArgs {
-    from: String,
-    to: String,
-    #[serde(default)]
-    source_node_id: Option<i64>,
-}
-
-#[derive(Deserialize)]
-struct CreateReportArgs {
-    source: String,
-    report_date: String,
-    status: String,
-    summary: String,
-    body: String,
-    #[serde(default)]
-    model: Option<String>,
-    #[serde(default)]
-    escalated: bool,
-    #[serde(default)]
-    finding_work_items: Vec<i64>,
-}
-
-#[derive(serde::Deserialize)]
-struct ListReportsArgs {
-    #[serde(default)]
-    source: Option<String>,
-    #[serde(default = "default_report_limit")]
-    limit: i64,
-}
-
-fn default_report_limit() -> i64 {
-    30
-}
-
-#[derive(serde::Deserialize)]
-struct GetReportArgs {
-    node_id: i64,
-}
-
-#[derive(serde::Deserialize)]
-struct ProposeSprintArgs {
-    title: String,
-    summary: String,
-    #[serde(default)]
-    work_item_numbers: Vec<i64>,
-    #[serde(default)]
-    project_id: Option<i64>,
-    #[serde(default)]
-    rank: f64,
-    #[serde(default)]
-    pinned: bool,
-    #[serde(default)]
-    category: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-
-#[derive(Deserialize, Default)]
-struct ListProposalsArgs {
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    project: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct UpdateProposalArgs {
-    node_id: i64,
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    summary: Option<String>,
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    rank: Option<f64>,
-    #[serde(default)]
-    pinned: Option<bool>,
-    #[serde(default)]
-    archived: Option<bool>,
-    #[serde(default)]
-    tags: Option<Vec<String>>,
-}
-
-// --- dispatch -------------------------------------------------------------
+// --- dispatch ---------------------------------------------------------------
 
 impl KorgServer {
+    fn context(&self) -> Result<daily_plan::LifecycleContext, ErrorData> {
+        self.config
+            .lifecycle_context()
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))
+    }
+
     pub async fn call(
         &self,
         name: &str,
         args: Option<JsonObject>,
     ) -> Result<CallToolResult, ErrorData> {
+        let pool = &self.pool;
         match name {
+            // --- work items ---
             "create_work_item" => {
-                let a: CreateWorkItemArgs = parse_args(args)?;
-                let new = NewWorkItem {
-                    project_id: a.project_id,
-                    area_id: a.area_id,
-                    wi_type: a.wi_type,
-                    wi_status: a.wi_status,
-                    wi_tshirt: a.wi_tshirt,
-                    sprint: a.sprint,
-                    title: a.title,
-                    content: a.content,
-                    details: a.details,
-                    category: a.category,
-                    tags: a.tags,
-                };
-                match create_work_item(&self.pool, new).await {
-                    Ok(item) => ok_json(serde_json::to_value(item).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let new: NewWorkItem = parse_args(args)?;
+                respond(repo::create_work_item(pool, new).await)
             }
             "list_work_items" => {
-                let a: ListWorkItemsArgs = parse_args(args)?;
-                match list_work_items(
-                    &self.pool,
-                    repo::WorkItemQuery {
-                        project: a.project,
-                        archived: a.archived,
-                        page: repo::PageQuery {
-                            limit: a.limit,
-                            offset: a.offset,
-                        },
-                    },
-                )
-                .await
-                {
-                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let a: ops::ListWorkItems = parse_args(args)?;
+                respond(repo::list_work_items(pool, a.into()).await)
             }
             "survey_work_items" => {
-                let a: SurveyWorkItemsArgs = parse_args(args)?;
-                let limit = a.limit.clamp(1, 500);
-                let offset = a.offset.max(0);
-                match repo::survey_work_items(
-                    &self.pool,
-                    a.project.as_deref(),
-                    a.wi_status.as_deref(),
-                    a.archived,
-                    limit,
-                    offset,
+                let a: ops::SurveyWorkItems = parse_args(args)?;
+                respond(
+                    repo::survey_work_items(
+                        pool,
+                        a.project.as_deref(),
+                        a.wi_status.as_deref(),
+                        a.archived,
+                        a.limit.clamp(1, repo::LIST_LIMIT_MAX),
+                        a.offset.max(0),
+                    )
+                    .await,
                 )
-                .await
-                {
-                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
             }
             "get_work_item" => {
-                let a: WiNumberArgs = parse_args(args)?;
-                match repo::get_work_item_detail(&self.pool, a.wi_number).await {
-                    Ok(Some(v)) => ok_json(serde_json::to_value(v).unwrap()),
-                    Ok(None) => Ok(not_found(format!("no work item #{}", a.wi_number))),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let a: ops::WiNumber = parse_args(args)?;
+                respond_found(repo::get_work_item_detail(pool, a.wi_number).await, || {
+                    format!("no work item #{}", a.wi_number)
+                })
             }
             "update_work_item" => {
-                let a: UpdateWorkItemArgs = parse_args(args)?;
-                let patch = WorkItemPatch {
-                    title: a.title,
-                    content: a.content,
-                    details: a.details,
-                    wi_type: a.wi_type,
-                    wi_status: a.wi_status,
-                    wi_tshirt: a.wi_tshirt,
-                    sprint: a.sprint,
-                    project_id: a.project_id,
-                    area_id: a.area_id,
-                    parent: a.parent,
-                    archived: a.archived,
-                    category: a.category,
-                    tags: a.tags,
-                };
-                match update_work_item(&self.pool, a.wi_number, patch).await {
-                    Ok(item) => ok_json(serde_json::to_value(item).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let (a, patch) = parse_args2::<ops::WiNumber, WorkItemPatch>(args)?;
+                respond(repo::update_work_item(pool, a.wi_number, patch).await)
             }
+
+            // --- cards ---
             "create_card" => {
-                let a: CreateCardArgs = parse_args(args)?;
-                let rank = Decimal::try_from(a.rank)
-                    .map_err(|e| ErrorData::invalid_params(format!("invalid rank: {e}"), None))?;
-                let new = NewCard {
-                    project_id: a.project_id,
-                    category: a.category,
-                    tags: a.tags,
-                    status: a.status,
-                    title: a.title,
-                    description: a.description,
-                    rank,
-                };
-                match create_card(&self.pool, new).await {
-                    Ok(card) => ok_json(serde_json::to_value(card).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let new: NewCard = parse_args(args)?;
+                respond(repo::create_card(pool, new).await)
             }
             "update_card" => {
-                let a: UpdateCardArgs = parse_args(args)?;
-                let rank = match a.rank {
-                    Some(r) => Some(Decimal::try_from(r).map_err(|e| {
-                        ErrorData::invalid_params(format!("invalid rank: {e}"), None)
-                    })?),
-                    None => None,
-                };
-                let patch = CardPatch {
-                    status: a.status,
-                    rank,
-                    title: a.title,
-                    description: a.description,
-                    archived: a.archived,
-                    project_id: a.project_id,
-                    category: a.category,
-                    tags: a.tags,
-                };
-                match repo::update_card(&self.pool, a.node_id, patch).await {
-                    Ok(card) => ok_json(serde_json::to_value(card).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let (a, patch) = parse_args2::<ops::NodeId, CardPatch>(args)?;
+                respond(repo::update_card(pool, a.node_id, patch).await)
             }
             "list_cards" => {
-                let a: ListCardsArgs = parse_args(args)?;
-                match list_cards(
-                    &self.pool,
-                    repo::CardQuery {
-                        status: a.status,
-                        project: a.project,
-                        archived: a.archived,
-                        page: repo::PageQuery {
-                            limit: a.limit,
-                            offset: a.offset,
-                        },
-                    },
-                )
-                .await
-                {
-                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let a: ops::ListCards = parse_args(args)?;
+                respond(repo::list_cards(pool, a.into()).await)
             }
+
+            // --- comments ---
             "list_comments" => {
-                let a: NodeIdArgs = parse_args(args)?;
-                match repo::list_comments(&self.pool, a.node_id).await {
-                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let a: ops::NodeId = parse_args(args)?;
+                respond(repo::list_comments(pool, a.node_id).await)
             }
             "add_comment" => {
-                let a: AddCommentArgs = parse_args(args)?;
-                match repo::add_comment(&self.pool, a.node_id, &a.body).await {
-                    Ok(c) => ok_json(serde_json::to_value(c).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let (a, b) = parse_args2::<ops::NodeId, ops::CommentBody>(args)?;
+                respond(repo::add_comment(pool, a.node_id, &b.body).await)
+            }
+            "update_comment" => {
+                let (a, b) = parse_args2::<ops::Id, ops::CommentBody>(args)?;
+                respond(repo::update_comment(pool, a.id, &b.body).await)
             }
             "delete_comment" => {
-                let a: IdArgs = parse_args(args)?;
-                match repo::delete_comment(&self.pool, a.id).await {
+                let a: ops::Id = parse_args(args)?;
+                match repo::delete_comment(pool, a.id).await {
                     Ok(deleted) => ok_json(json!({ "deleted": deleted })),
                     Err(e) => Ok(to_err(e)),
                 }
             }
-            "update_comment" => {
-                let a: UpdateCommentArgs = parse_args(args)?;
-                match repo::update_comment(&self.pool, a.id, &a.body).await {
-                    Ok(c) => ok_json(serde_json::to_value(c).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
-            }
+
+            // --- reading-list links ---
             "create_link" => {
-                let a: CreateLinkArgs = parse_args(args)?;
-                let new = NewLink {
-                    project_id: a.project_id,
-                    category: a.category,
-                    tags: a.tags,
-                    url: a.url,
-                    title: a.title,
-                };
-                match create_link(&self.pool, new).await {
-                    Ok(link) => ok_json(serde_json::to_value(link).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let new: NewLink = parse_args(args)?;
+                respond(repo::create_link(pool, new).await)
             }
             "list_links" => {
-                let a: ListLinksArgs = parse_args(args)?;
-                match list_links(
-                    &self.pool,
-                    repo::LinkQuery {
-                        disposition: a.disposition,
-                        read: a.read,
-                        archived: a.archived,
-                        page: repo::PageQuery {
-                            limit: a.limit,
-                            offset: a.offset,
-                        },
-                    },
-                )
-                .await
-                {
-                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let a: ops::ListLinks = parse_args(args)?;
+                respond(repo::list_links(pool, a.into()).await)
             }
             "update_link" => {
-                let a: UpdateLinkArgs = parse_args(args)?;
-                match repo::update_link(
-                    &self.pool,
-                    a.node_id,
-                    repo::LinkPatch {
-                        disposition: a.disposition,
-                        read: a.read,
-                        tags: a.tags,
-                    },
-                )
-                .await
-                {
-                    Ok(link) => ok_json(serde_json::to_value(link).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let (a, patch) = parse_args2::<ops::NodeId, LinkPatch>(args)?;
+                respond(repo::update_link(pool, a.node_id, patch).await)
             }
             "mark_link_read" => {
                 let a: MarkLinkReadArgs = parse_args(args)?;
-                match repo::mark_link_read(&self.pool, a.node_id, a.read).await {
-                    Ok(link) => ok_json(serde_json::to_value(link).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                respond(repo::mark_link_read(pool, a.node_id, a.read).await)
             }
+
+            // --- relationships ---
             "relate" => {
-                let a: RelateArgs = parse_args(args)?;
-                match repo::relate(&self.pool, a.left, a.right, &a.label).await {
+                let a: ops::Relate = parse_args(args)?;
+                match repo::relate(pool, a.left, a.right, &a.label).await {
                     Ok(id) => ok_json(json!({ "id": id })),
                     Err(e) => Ok(to_err(e)),
                 }
             }
             "neighbors" => {
-                let a: NeighborsArgs = parse_args(args)?;
-                match repo::neighbors(
-                    &self.pool,
-                    a.node_id,
-                    repo::NeighborQuery {
-                        label: a.label,
-                        kind: a.kind,
-                        limit: a.limit,
-                    },
-                )
-                .await
-                {
-                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let (a, q) = parse_args2::<ops::NodeId, ops::Neighbors>(args)?;
+                respond(repo::neighbors(pool, a.node_id, q.into()).await)
             }
             "unrelate" => {
-                let a: IdArgs = parse_args(args)?;
-                match repo::unrelate(&self.pool, a.id).await {
+                let a: ops::Id = parse_args(args)?;
+                match repo::unrelate(pool, a.id).await {
                     Ok(deleted) => ok_json(json!({ "deleted": deleted })),
                     Err(e) => Ok(to_err(e)),
                 }
             }
+
+            // --- topics ---
             "create_topic" => {
-                let a: CreateTopicArgs = parse_args(args)?;
-                match topics::create_topic(
-                    &self.pool,
-                    topics::NewTopic {
-                        project_id: a.project_id,
-                        category: a.category,
-                        tags: a.tags,
-                        name: a.name,
-                        description: a.description,
-                    },
-                )
-                .await
-                {
-                    Ok(topic) => ok_json(serde_json::to_value(topic).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let new: topics::NewTopic = parse_args(args)?;
+                respond(topics::create_topic(pool, new).await)
             }
             "get_topic" => {
-                let a: NodeIdArgs = parse_args(args)?;
-                match topics::get_topic(&self.pool, a.node_id).await {
-                    Ok(Some(v)) => ok_json(serde_json::to_value(v).unwrap()),
-                    Ok(None) => Ok(not_found(format!("no topic with node_id {}", a.node_id))),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let a: ops::NodeId = parse_args(args)?;
+                respond_found(topics::get_topic(pool, a.node_id).await, || {
+                    format!("no topic with node_id {}", a.node_id)
+                })
             }
+            // search_topics is list_topics with a `q` filter; both names stay
+            // registered, one implementation (WI #534).
             "list_topics" | "search_topics" => {
-                // search_topics is list_topics with a `q` filter; both names
-                // stay registered, one implementation (WI #534).
-                let a: ListTopicsArgs = parse_args(args)?;
-                match topics::list_topics(
-                    &self.pool,
-                    topics::TopicQuery {
-                        q: a.q,
-                        archived: a.archived,
-                        page: repo::PageQuery {
-                            limit: a.limit,
-                            offset: a.offset,
-                        },
-                    },
-                )
-                .await
-                {
-                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let a: ops::ListTopics = parse_args(args)?;
+                respond(topics::list_topics(pool, a.into()).await)
             }
             "update_topic" => {
-                let a: UpdateTopicArgs = parse_args(args)?;
-                match topics::update_topic(
-                    &self.pool,
-                    a.node_id,
-                    topics::TopicPatch {
-                        name: a.name,
-                        description: a.description,
-                        category: a.category,
-                        tags: a.tags,
-                    },
-                )
-                .await
-                {
-                    Ok(topic) => ok_json(serde_json::to_value(topic).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let (a, patch) = parse_args2::<ops::NodeId, topics::TopicPatch>(args)?;
+                respond(topics::update_topic(pool, a.node_id, patch).await)
             }
             "archive_topic" => {
-                let a: ArchiveTopicArgs = parse_args(args)?;
-                match topics::archive_topic(&self.pool, a.node_id, a.archived).await {
-                    Ok(topic) => ok_json(serde_json::to_value(topic).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let (a, b) = parse_args2::<ops::NodeId, ops::ArchiveTopic>(args)?;
+                respond(topics::archive_topic(pool, a.node_id, b.archived).await)
             }
+
+            // --- daily planning ---
             "list_daily_plan" => {
-                let a: DateRangeArgs = parse_args(args)?;
-                let (from, to) = (parse_date(&a.from)?, parse_date(&a.to)?);
-                match daily_plan::list_items(&self.pool, from, to).await {
-                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let a: ops::DateRange = parse_args(args)?;
+                respond(
+                    daily_plan::list_items(pool, parse_date(&a.from)?, parse_date(&a.to)?).await,
+                )
             }
             "create_daily_plan_item" => {
-                let a: CreateDailyPlanItemArgs = parse_args(args)?;
-                let context = self
-                    .config
-                    .lifecycle_context()
-                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-                match daily_plan::create_item(
-                    &self.pool,
-                    a.source_node_id,
-                    parse_date(&a.plan_date)?,
-                    &context,
+                let a: ops::CreateDailyPlanItem = parse_args(args)?;
+                let context = self.context()?;
+                respond(
+                    daily_plan::create_item(
+                        pool,
+                        a.source_node_id,
+                        parse_date(&a.plan_date)?,
+                        &context,
+                    )
+                    .await,
                 )
-                .await
-                {
-                    Ok(item) => ok_json(serde_json::to_value(item).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
             }
             "set_daily_plan_completion" => {
-                let a: CompletionArgs = parse_args(args)?;
-                let context = self
-                    .config
-                    .lifecycle_context()
-                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-                match daily_plan::set_completion(&self.pool, a.node_id, a.completed, &context).await
-                {
-                    Ok(item) => ok_json(serde_json::to_value(item).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let (a, b) = parse_args2::<ops::NodeId, ops::SetCompletion>(args)?;
+                let context = self.context()?;
+                respond(daily_plan::set_completion(pool, a.node_id, b.completed, &context).await)
             }
             "delete_daily_plan_item" => {
-                let a: NodeIdArgs = parse_args(args)?;
-                let context = self
-                    .config
-                    .lifecycle_context()
-                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-                match daily_plan::delete_item(&self.pool, a.node_id, &context).await {
+                let a: ops::NodeId = parse_args(args)?;
+                let context = self.context()?;
+                match daily_plan::delete_item(pool, a.node_id, &context).await {
                     Ok(()) => ok_json(json!({ "deleted": true })),
                     Err(e) => Ok(to_err(e)),
                 }
             }
             "reorder_daily_plan" => {
-                let a: ReorderDailyPlanArgs = parse_args(args)?;
-                let context = self
-                    .config
-                    .lifecycle_context()
-                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-                match daily_plan::reorder_day(
-                    &self.pool,
-                    parse_date(&a.plan_date)?,
-                    &a.node_ids,
-                    &context,
+                let (day, b) = parse_args2::<ReorderPlanDate, ops::ReorderDailyPlan>(args)?;
+                let context = self.context()?;
+                respond(
+                    daily_plan::reorder_day(
+                        pool,
+                        parse_date(&day.plan_date)?,
+                        &b.node_ids,
+                        &context,
+                    )
+                    .await,
                 )
-                .await
-                {
-                    Ok(items) => ok_json(serde_json::to_value(items).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
             }
             "move_daily_plan_item" => {
-                let a: MoveDailyPlanItemArgs = parse_args(args)?;
-                let context = self
-                    .config
-                    .lifecycle_context()
-                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-                match daily_plan::move_item(
-                    &self.pool,
-                    a.node_id,
-                    parse_date(&a.target_date)?,
-                    a.target_position,
-                    &context,
+                let (a, b) = parse_args2::<ops::NodeId, ops::MoveDailyPlanItem>(args)?;
+                let context = self.context()?;
+                respond(
+                    daily_plan::move_item(
+                        pool,
+                        a.node_id,
+                        parse_date(&b.target_date)?,
+                        b.target_position,
+                        &context,
+                    )
+                    .await,
                 )
-                .await
-                {
-                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
             }
             "daily_plan_history" => {
-                let a: HistoryArgs = parse_args(args)?;
-                let context = self
-                    .config
-                    .lifecycle_context()
-                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-                match daily_plan::history(
-                    &self.pool,
-                    parse_date(&a.from)?,
-                    parse_date(&a.to)?,
-                    a.source_node_id,
-                    &context,
+                let a: ops::HistoryRange = parse_args(args)?;
+                let context = self.context()?;
+                respond(
+                    daily_plan::history(
+                        pool,
+                        parse_date(&a.from)?,
+                        parse_date(&a.to)?,
+                        a.source_node_id,
+                        &context,
+                    )
+                    .await,
                 )
-                .await
-                {
-                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
             }
+
+            // --- daily reports ---
             "create_report" => {
-                let a: CreateReportArgs = parse_args(args)?;
-                let fmt = time::macros::format_description!("[year]-[month]-[day]");
-                let report_date = time::Date::parse(&a.report_date, &fmt).map_err(|e| {
-                    ErrorData::invalid_params(format!("invalid report_date: {e}"), None)
-                })?;
-                let new = NewReport {
-                    source: a.source,
-                    report_date,
-                    status: a.status,
-                    summary: a.summary,
-                    body: a.body,
-                    model: a.model,
-                    escalated: a.escalated,
-                    findings: a.finding_work_items,
-                };
-                match upsert_report(&self.pool, new).await {
-                    Ok(r) => ok_json(json!({
-                        "node_id": r.node_id, "replaced": r.replaced,
-                        "findings_linked": r.findings_linked
-                    })),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let new: NewReport = parse_args(args)?;
+                respond(repo::upsert_report(pool, new).await)
             }
             "list_reports" => {
-                let a: ListReportsArgs = parse_args(args)?;
-                match repo::list_reports(&self.pool, a.source.as_deref(), a.limit).await {
-                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let a: ops::ListReports = parse_args(args)?;
+                respond(repo::list_reports(pool, a.source.as_deref(), a.limit).await)
             }
             "get_report" => {
-                let a: GetReportArgs = parse_args(args)?;
-                match repo::get_report(&self.pool, a.node_id).await {
-                    Ok(Some(v)) => ok_json(serde_json::to_value(v).unwrap()),
-                    Ok(None) => Ok(not_found(format!("no report with node_id {}", a.node_id))),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let a: ops::NodeId = parse_args(args)?;
+                respond_found(repo::get_report(pool, a.node_id).await, || {
+                    format!("no report with node_id {}", a.node_id)
+                })
             }
+
+            // --- sprint proposals ---
             "propose_sprint" => {
-                let a: ProposeSprintArgs = parse_args(args)?;
-                let rank = Decimal::try_from(a.rank)
-                    .map_err(|e| ErrorData::invalid_params(format!("invalid rank: {e}"), None))?;
-                let new = NewProposal {
-                    project_id: a.project_id,
-                    category: a.category,
-                    tags: a.tags,
-                    title: a.title,
-                    summary: a.summary,
-                    rank,
-                    pinned: a.pinned,
-                    covers: a.work_item_numbers,
-                };
-                match create_proposal(&self.pool, new).await {
-                    Ok(r) => ok_json(serde_json::to_value(r).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let new: NewProposal = parse_args(args)?;
+                respond(repo::create_proposal(pool, new).await)
             }
             "list_proposals" => {
-                let a: ListProposalsArgs = parse_args(args)?;
-                match repo::list_proposals(
-                    &self.pool,
-                    repo::ProposalQuery {
-                        status: a.status,
-                        project: a.project,
-                    },
-                )
-                .await
-                {
-                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let a: ops::ListProposals = parse_args(args)?;
+                respond(repo::list_proposals(pool, a.into()).await)
             }
             "get_proposal" => {
-                let a: NodeIdArgs = parse_args(args)?;
-                match repo::get_proposal_detail(&self.pool, a.node_id).await {
-                    Ok(Some(v)) => ok_json(serde_json::to_value(v).unwrap()),
-                    Ok(None) => Ok(not_found(format!("no proposal with node_id {}", a.node_id))),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let a: ops::NodeId = parse_args(args)?;
+                respond_found(repo::get_proposal_detail(pool, a.node_id).await, || {
+                    format!("no proposal with node_id {}", a.node_id)
+                })
             }
             "update_proposal" => {
-                let a: UpdateProposalArgs = parse_args(args)?;
-                let rank = match a.rank {
-                    Some(r) => Some(Decimal::try_from(r).map_err(|e| {
-                        ErrorData::invalid_params(format!("invalid rank: {e}"), None)
-                    })?),
-                    None => None,
-                };
-                let patch = ProposalPatch {
-                    title: a.title,
-                    summary: a.summary,
-                    status: a.status,
-                    rank,
-                    pinned: a.pinned,
-                    archived: a.archived,
-                    tags: a.tags,
-                };
-                match repo::update_proposal(&self.pool, a.node_id, patch).await {
-                    Ok(proposal) => ok_json(serde_json::to_value(proposal).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let (a, patch) = parse_args2::<ops::NodeId, ProposalPatch>(args)?;
+                respond(repo::update_proposal(pool, a.node_id, patch).await)
             }
-            "list_projects" => match list_projects(&self.pool).await {
-                Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                Err(e) => Ok(to_err(e)),
-            },
-            "update_project" => {
-                let a: UpdateProjectArgs = parse_args(args)?;
-                let patch = repo::ProjectPatch {
-                    gh_repo: a.gh_repo,
-                    cn_path: a.cn_path,
-                    description: a.description,
-                    status: a.status,
-                    machines: a.machines,
-                    deploy_to: a.deploy_to,
-                    category: a.category,
-                };
-                match repo::update_project_by_name(&self.pool, &a.name, &patch).await {
-                    Ok(project) => ok_json(serde_json::to_value(project).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
-            }
+
+            // --- projects and areas ---
+            "list_projects" => respond(repo::list_projects(pool).await),
             "create_project" => {
-                let a: CreateProjectArgs = parse_args(args)?;
-                match repo::create_project(&self.pool, &a.name).await {
+                let a: ops::CreateProject = parse_args(args)?;
+                match repo::create_project(pool, &a.name).await {
                     Ok(id) => ok_json(json!({ "id": id })),
                     Err(e) => Ok(to_err(e)),
                 }
+            }
+            "update_project" => {
+                let (a, patch) = parse_args2::<ops::ProjectName, ProjectPatch>(args)?;
+                respond(repo::update_project_by_name(pool, &a.name, &patch).await)
             }
             "list_areas" => {
-                let a: ProjectArgs = parse_args(args)?;
-                match repo::list_areas(&self.pool, &a.project).await {
-                    Ok(v) => ok_json(serde_json::to_value(v).unwrap()),
-                    Err(e) => Ok(to_err(e)),
-                }
+                let a: ops::ProjectRef = parse_args(args)?;
+                respond(repo::list_areas(pool, &a.project).await)
             }
             "create_area" => {
-                let a: CreateAreaArgs = parse_args(args)?;
-                match repo::create_area(&self.pool, &a.project, &a.name, a.description.as_deref())
-                    .await
-                {
+                let a: ops::CreateArea = parse_args(args)?;
+                match repo::create_area(pool, &a.project, &a.name, a.description.as_deref()).await {
                     Ok(id) => ok_json(json!({ "id": id })),
                     Err(e) => Ok(to_err(e)),
                 }
             }
+
             other => Err(ErrorData::invalid_params(
                 format!("unknown tool: {other}"),
                 None,

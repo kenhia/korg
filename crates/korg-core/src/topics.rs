@@ -1,31 +1,49 @@
 //! Reusable planning topics backed by first-class nodes.
 
 use anyhow::Result;
-use serde::Serialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
+use ts_rs::TS;
 
 use crate::error::RepoError;
+use crate::ops::{self, schema};
 use crate::repo::{ArchivedFilter, Page, PageQuery};
 
-#[derive(Debug, Clone)]
+/// `create_topic` / `POST /api/topics`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct NewTopic {
+    #[serde(default)]
     pub project_id: Option<i64>,
+    #[serde(default)]
     pub category: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::tags")]
     pub tags: Vec<String>,
+    #[schemars(schema_with = "schema::non_empty")]
     pub name: String,
+    #[serde(default)]
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Default)]
+/// `update_topic` / `PATCH /api/topics/:node_id`.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 pub struct TopicPatch {
+    #[serde(default)]
+    #[schemars(schema_with = "schema::non_empty")]
     pub name: Option<String>,
+    #[serde(default, deserialize_with = "ops::double_option")]
     pub description: Option<Option<String>>,
+    #[serde(default, deserialize_with = "ops::double_option")]
     pub category: Option<Option<String>>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::tags")]
     pub tags: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq, TS)]
+#[ts(export, export_to = "korg.ts")]
 pub struct Topic {
     pub node_id: i64,
     pub name: String,
@@ -39,8 +57,10 @@ pub struct Topic {
     /// generalized past work items: any commentable row says so.
     pub comment_count: i64,
     #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
     pub created: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
     pub updated: OffsetDateTime,
 }
 

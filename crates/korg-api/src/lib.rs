@@ -7,8 +7,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, Method};
 use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
-use rust_decimal::Decimal;
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use time::macros::format_description;
@@ -18,7 +17,11 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
 use korg_core::config::KorgConfig;
-use korg_core::repo::{self, CardPatch, NewCard, NewLink, NewProposal, NewWorkItem, ProposalPatch};
+use korg_core::ops;
+use korg_core::repo::{
+    self, CardPatch, LinkPatch, NewCard, NewLink, NewProposal, NewWorkItem, ProjectPatch,
+    ProposalPatch, WorkItemPatch,
+};
 use korg_core::{daily_plan, topics};
 use korg_mcp::tools::KorgServer;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -201,12 +204,7 @@ async fn list_projects(State(s): State<AppState>) -> ApiResult {
     Ok(Json(json!(repo::list_projects(&s.pool).await?)))
 }
 
-#[derive(Deserialize)]
-struct CreateProject {
-    name: String,
-}
-
-async fn create_project(State(s): State<AppState>, Json(b): Json<CreateProject>) -> ApiResult {
+async fn create_project(State(s): State<AppState>, Json(b): Json<ops::CreateProject>) -> ApiResult {
     let id = repo::create_project(&s.pool, &b.name).await?;
     Ok(Json(json!({ "id": id, "name": b.name })))
 }
@@ -279,153 +277,25 @@ async fn get_work_item(State(s): State<AppState>, Path(wi): Path<i64>) -> ApiRes
     }
 }
 
-#[derive(Deserialize)]
-struct CreateWorkItem {
-    title: String,
-    content: String,
-    #[serde(default = "d_task")]
-    wi_type: String,
-    #[serde(default = "d_open")]
-    wi_status: String,
-    #[serde(default = "d_unknown")]
-    wi_tshirt: String,
-    #[serde(default)]
-    sprint: Option<String>,
-    #[serde(default)]
-    details: Option<String>,
-    #[serde(default)]
-    project_id: Option<i64>,
-    #[serde(default)]
-    area_id: Option<i64>,
-    #[serde(default)]
-    category: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-fn d_task() -> String {
-    "task".into()
-}
-fn d_open() -> String {
-    "open".into()
-}
-fn d_unknown() -> String {
-    "Unknown".into()
-}
-fn d_backlog() -> String {
-    "Backlog".into()
-}
-
-async fn create_work_item(State(s): State<AppState>, Json(b): Json<CreateWorkItem>) -> ApiResult {
-    let r = repo::create_work_item(
-        &s.pool,
-        NewWorkItem {
-            project_id: b.project_id,
-            area_id: b.area_id,
-            wi_type: b.wi_type,
-            wi_status: b.wi_status,
-            wi_tshirt: b.wi_tshirt,
-            sprint: b.sprint,
-            title: b.title,
-            content: b.content,
-            details: b.details,
-            category: b.category,
-            tags: b.tags,
-        },
-    )
-    .await?;
-    Ok(Json(json!(r)))
-}
-
-fn deser_nullable_str<'de, D>(d: D) -> Result<Option<Option<String>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Option::<String>::deserialize(d).map(Some)
-}
-
-fn deser_nullable_i64<'de, D>(d: D) -> Result<Option<Option<i64>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Option::<i64>::deserialize(d).map(Some)
-}
-
-#[derive(Deserialize)]
-struct UpdateWorkItem {
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    content: Option<String>,
-    #[serde(default, deserialize_with = "deser_nullable_str")]
-    details: Option<Option<String>>,
-    #[serde(default)]
-    wi_type: Option<String>,
-    #[serde(default)]
-    wi_status: Option<String>,
-    #[serde(default)]
-    wi_tshirt: Option<String>,
-    #[serde(default, deserialize_with = "deser_nullable_str")]
-    sprint: Option<Option<String>>,
-    #[serde(default, deserialize_with = "deser_nullable_i64")]
-    project_id: Option<Option<i64>>,
-    #[serde(default, deserialize_with = "deser_nullable_i64")]
-    area_id: Option<Option<i64>>,
-    #[serde(default, deserialize_with = "deser_nullable_i64")]
-    parent: Option<Option<i64>>,
-    #[serde(default)]
-    archived: Option<bool>,
-    #[serde(default, deserialize_with = "deser_nullable_str")]
-    category: Option<Option<String>>,
-    #[serde(default)]
-    tags: Option<Vec<String>>,
+async fn create_work_item(State(s): State<AppState>, Json(b): Json<NewWorkItem>) -> ApiResult {
+    Ok(Json(json!(repo::create_work_item(&s.pool, b).await?)))
 }
 
 async fn update_work_item(
     State(s): State<AppState>,
     Path(wi): Path<i64>,
-    Json(b): Json<UpdateWorkItem>,
+    Json(patch): Json<WorkItemPatch>,
 ) -> ApiResult {
-    let item = repo::update_work_item(
-        &s.pool,
-        wi,
-        repo::WorkItemPatch {
-            title: b.title,
-            content: b.content,
-            details: b.details,
-            wi_type: b.wi_type,
-            wi_status: b.wi_status,
-            wi_tshirt: b.wi_tshirt,
-            sprint: b.sprint,
-            project_id: b.project_id,
-            area_id: b.area_id,
-            parent: b.parent,
-            archived: b.archived,
-            category: b.category,
-            tags: b.tags,
-        },
-    )
-    .await?;
-    Ok(Json(json!(item)))
+    Ok(Json(json!(
+        repo::update_work_item(&s.pool, wi, patch).await?
+    )))
 }
 
-#[derive(Deserialize)]
-struct AreasQuery {
-    project: String,
-}
-
-async fn list_areas(State(s): State<AppState>, Query(q): Query<AreasQuery>) -> ApiResult {
+async fn list_areas(State(s): State<AppState>, Query(q): Query<ops::ProjectRef>) -> ApiResult {
     Ok(Json(json!(repo::list_areas(&s.pool, &q.project).await?)))
 }
 
-#[derive(Deserialize)]
-struct CreateArea {
-    project: String,
-    name: String,
-    #[serde(default)]
-    description: Option<String>,
-}
-
-async fn create_area(State(s): State<AppState>, Json(b): Json<CreateArea>) -> ApiResult {
+async fn create_area(State(s): State<AppState>, Json(b): Json<ops::CreateArea>) -> ApiResult {
     let id = repo::create_area(&s.pool, &b.project, &b.name, b.description.as_deref()).await?;
     Ok(Json(json!({ "id": id, "name": b.name })))
 }
@@ -458,163 +328,52 @@ async fn list_cards(State(s): State<AppState>, Query(q): Query<CardsQuery>) -> A
     Ok(Json(json!(page)))
 }
 
-#[derive(Deserialize)]
-struct CreateCard {
-    title: String,
-    #[serde(default = "d_backlog")]
-    status: String,
-    #[serde(default)]
-    description: String,
-    #[serde(default)]
-    rank: f64,
-    #[serde(default)]
-    project_id: Option<i64>,
-    #[serde(default)]
-    category: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-
-async fn create_card(State(s): State<AppState>, Json(b): Json<CreateCard>) -> ApiResult {
-    let rank = Decimal::try_from(b.rank).map_err(|e| ApiError::invalid(format!("rank: {e}")))?;
-    let card = repo::create_card(
-        &s.pool,
-        NewCard {
-            project_id: b.project_id,
-            category: b.category,
-            tags: b.tags,
-            status: b.status,
-            title: b.title,
-            description: b.description,
-            rank,
-        },
-    )
-    .await?;
-    Ok(Json(json!(card)))
-}
-
-#[derive(Deserialize)]
-struct UpdateCard {
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    rank: Option<f64>,
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    archived: Option<bool>,
-    /// Aligned with MCP on `project_id` (WI #537). This used to be a free-text
-    /// project *name* that silently created the project as a side effect of a
-    /// card edit — a surprising write hiding inside an update.
-    #[serde(default, deserialize_with = "deser_nullable_i64")]
-    project_id: Option<Option<i64>>,
-    #[serde(default, deserialize_with = "deser_nullable_str")]
-    category: Option<Option<String>>,
-    #[serde(default)]
-    tags: Option<Vec<String>>,
+async fn create_card(State(s): State<AppState>, Json(b): Json<NewCard>) -> ApiResult {
+    Ok(Json(json!(repo::create_card(&s.pool, b).await?)))
 }
 
 async fn update_card(
     State(s): State<AppState>,
     Path(node_id): Path<i64>,
-    Json(b): Json<UpdateCard>,
+    Json(patch): Json<CardPatch>,
 ) -> ApiResult {
-    let rank = match b.rank {
-        Some(r) => Some(Decimal::try_from(r).map_err(|e| ApiError::invalid(format!("rank: {e}")))?),
-        None => None,
-    };
-    let card = repo::update_card(
-        &s.pool,
-        node_id,
-        CardPatch {
-            status: b.status,
-            rank,
-            title: b.title,
-            description: b.description,
-            archived: b.archived,
-            project_id: b.project_id,
-            category: b.category,
-            tags: b.tags,
-        },
-    )
-    .await?;
-    Ok(Json(json!(card)))
+    Ok(Json(json!(
+        repo::update_card(&s.pool, node_id, patch).await?
+    )))
 }
 
 async fn list_comments(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
     Ok(Json(json!(repo::list_comments(&s.pool, node_id).await?)))
 }
 
-#[derive(Deserialize)]
-struct NewComment {
-    body: String,
-}
-
 async fn add_comment(
     State(s): State<AppState>,
     Path(node_id): Path<i64>,
-    Json(b): Json<NewComment>,
+    Json(b): Json<ops::CommentBody>,
 ) -> ApiResult {
     Ok(Json(json!(
         repo::add_comment(&s.pool, node_id, &b.body).await?
     )))
 }
 
-#[derive(serde::Deserialize)]
-struct UpdateCommentBody {
-    body: String,
-}
-
 async fn update_comment(
     State(s): State<AppState>,
     Path(id): Path<i64>,
-    Json(b): Json<UpdateCommentBody>,
+    Json(b): Json<ops::CommentBody>,
 ) -> ApiResult {
     Ok(Json(json!(
         repo::update_comment(&s.pool, id, &b.body).await?
     )))
 }
 
-#[derive(serde::Deserialize)]
-struct UpdateProjectBody {
-    #[serde(default)]
-    gh_repo: Option<Option<String>>,
-    #[serde(default)]
-    cn_path: Option<Option<String>>,
-    #[serde(default)]
-    description: Option<Option<String>>,
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    machines: Option<Vec<String>>,
-    #[serde(default)]
-    deploy_to: Option<Vec<String>>,
-    #[serde(default)]
-    category: Option<Option<String>>,
-}
-
 async fn update_project(
     State(s): State<AppState>,
     Path(name): Path<String>,
-    Json(b): Json<UpdateProjectBody>,
+    Json(patch): Json<ProjectPatch>,
 ) -> ApiResult {
-    let project = repo::update_project_by_name(
-        &s.pool,
-        &name,
-        &repo::ProjectPatch {
-            gh_repo: b.gh_repo,
-            cn_path: b.cn_path,
-            description: b.description,
-            status: b.status,
-            machines: b.machines,
-            deploy_to: b.deploy_to,
-            category: b.category,
-        },
-    )
-    .await?;
-    Ok(Json(json!(project)))
+    Ok(Json(json!(
+        repo::update_project_by_name(&s.pool, &name, &patch).await?
+    )))
 }
 
 async fn delete_comment(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
@@ -650,60 +409,18 @@ async fn list_links(State(s): State<AppState>, Query(q): Query<LinksQuery>) -> A
     Ok(Json(json!(page)))
 }
 
-#[derive(Deserialize)]
-struct CreateLink {
-    url: String,
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    project_id: Option<i64>,
-    #[serde(default)]
-    category: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-
-async fn create_link(State(s): State<AppState>, Json(b): Json<CreateLink>) -> ApiResult {
-    let link = repo::create_link(
-        &s.pool,
-        NewLink {
-            project_id: b.project_id,
-            category: b.category,
-            tags: b.tags,
-            url: b.url,
-            title: b.title,
-        },
-    )
-    .await?;
-    Ok(Json(json!(link)))
-}
-
-#[derive(Deserialize)]
-struct UpdateLink {
-    #[serde(default)]
-    disposition: Option<String>,
-    #[serde(default)]
-    read: Option<bool>,
-    #[serde(default)]
-    tags: Option<Vec<String>>,
+async fn create_link(State(s): State<AppState>, Json(b): Json<NewLink>) -> ApiResult {
+    Ok(Json(json!(repo::create_link(&s.pool, b).await?)))
 }
 
 async fn update_link(
     State(s): State<AppState>,
     Path(node_id): Path<i64>,
-    Json(b): Json<UpdateLink>,
+    Json(patch): Json<LinkPatch>,
 ) -> ApiResult {
-    let link = repo::update_link(
-        &s.pool,
-        node_id,
-        repo::LinkPatch {
-            disposition: b.disposition,
-            read: b.read,
-            tags: b.tags,
-        },
-    )
-    .await?;
-    Ok(Json(json!(link)))
+    Ok(Json(json!(
+        repo::update_link(&s.pool, node_id, patch).await?
+    )))
 }
 
 // --- topics and daily planning --------------------------------------------
@@ -733,32 +450,8 @@ async fn list_topics(State(s): State<AppState>, Query(q): Query<TopicsQuery>) ->
     Ok(Json(json!(page)))
 }
 
-#[derive(Deserialize)]
-struct CreateTopic {
-    name: String,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    project_id: Option<i64>,
-    #[serde(default)]
-    category: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-
-async fn create_topic(State(s): State<AppState>, Json(b): Json<CreateTopic>) -> ApiResult {
-    let topic = topics::create_topic(
-        &s.pool,
-        topics::NewTopic {
-            project_id: b.project_id,
-            category: b.category,
-            tags: b.tags,
-            name: b.name,
-            description: b.description,
-        },
-    )
-    .await?;
-    Ok(Json(json!(topic)))
+async fn create_topic(State(s): State<AppState>, Json(b): Json<topics::NewTopic>) -> ApiResult {
+    Ok(Json(json!(topics::create_topic(&s.pool, b).await?)))
 }
 
 async fn get_topic(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
@@ -768,77 +461,34 @@ async fn get_topic(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiRe
     }
 }
 
-#[derive(Deserialize)]
-struct UpdateTopic {
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default, deserialize_with = "deser_nullable_str")]
-    description: Option<Option<String>>,
-    #[serde(default, deserialize_with = "deser_nullable_str")]
-    category: Option<Option<String>>,
-    #[serde(default)]
-    tags: Option<Vec<String>>,
-}
-
 async fn update_topic(
     State(s): State<AppState>,
     Path(node_id): Path<i64>,
-    Json(b): Json<UpdateTopic>,
+    Json(patch): Json<topics::TopicPatch>,
 ) -> ApiResult {
-    let topic = topics::update_topic(
-        &s.pool,
-        node_id,
-        topics::TopicPatch {
-            name: b.name,
-            description: b.description,
-            category: b.category,
-            tags: b.tags,
-        },
-    )
-    .await?;
-    Ok(Json(json!(topic)))
-}
-
-#[derive(Deserialize)]
-struct ArchiveTopic {
-    #[serde(default = "default_true")]
-    archived: bool,
-}
-
-fn default_true() -> bool {
-    true
+    Ok(Json(json!(
+        topics::update_topic(&s.pool, node_id, patch).await?
+    )))
 }
 
 async fn archive_topic(
     State(s): State<AppState>,
     Path(node_id): Path<i64>,
-    Json(b): Json<ArchiveTopic>,
+    Json(b): Json<ops::ArchiveTopic>,
 ) -> ApiResult {
     let topic = topics::archive_topic(&s.pool, node_id, b.archived).await?;
     Ok(Json(json!(topic)))
 }
 
-#[derive(Deserialize)]
-struct DateRange {
-    from: String,
-    to: String,
-}
-
-async fn list_daily_plan(State(s): State<AppState>, Query(q): Query<DateRange>) -> ApiResult {
+async fn list_daily_plan(State(s): State<AppState>, Query(q): Query<ops::DateRange>) -> ApiResult {
     Ok(Json(json!(
         daily_plan::list_items(&s.pool, parse_date(&q.from)?, parse_date(&q.to)?,).await?
     )))
 }
 
-#[derive(Deserialize)]
-struct CreateDailyPlanItem {
-    source_node_id: i64,
-    plan_date: String,
-}
-
 async fn create_daily_plan_item(
     State(s): State<AppState>,
-    Json(b): Json<CreateDailyPlanItem>,
+    Json(b): Json<ops::CreateDailyPlanItem>,
 ) -> ApiResult {
     let context = s.config.lifecycle_context()?;
     let item = daily_plan::create_item(
@@ -851,15 +501,10 @@ async fn create_daily_plan_item(
     Ok(Json(json!(item)))
 }
 
-#[derive(Deserialize)]
-struct SetCompletion {
-    completed: bool,
-}
-
 async fn set_daily_plan_completion(
     State(s): State<AppState>,
     Path(node_id): Path<i64>,
-    Json(b): Json<SetCompletion>,
+    Json(b): Json<ops::SetCompletion>,
 ) -> ApiResult {
     let item = daily_plan::set_completion(
         &s.pool,
@@ -876,15 +521,10 @@ async fn delete_daily_plan_item(State(s): State<AppState>, Path(node_id): Path<i
     Ok(Json(json!({ "deleted": true })))
 }
 
-#[derive(Deserialize)]
-struct ReorderDailyPlan {
-    node_ids: Vec<i64>,
-}
-
 async fn reorder_daily_plan(
     State(s): State<AppState>,
     Path(plan_date): Path<String>,
-    Json(b): Json<ReorderDailyPlan>,
+    Json(b): Json<ops::ReorderDailyPlan>,
 ) -> ApiResult {
     let items = daily_plan::reorder_day(
         &s.pool,
@@ -896,17 +536,10 @@ async fn reorder_daily_plan(
     Ok(Json(json!(items)))
 }
 
-#[derive(Deserialize)]
-struct MoveDailyPlanItem {
-    target_date: String,
-    #[serde(default)]
-    target_position: i32,
-}
-
 async fn move_daily_plan_item(
     State(s): State<AppState>,
     Path(node_id): Path<i64>,
-    Json(b): Json<MoveDailyPlanItem>,
+    Json(b): Json<ops::MoveDailyPlanItem>,
 ) -> ApiResult {
     Ok(Json(json!(
         daily_plan::move_item(
@@ -964,17 +597,7 @@ async fn daily_plan_history(State(s): State<AppState>, Query(q): Query<HistoryQu
 
 // --- relationships --------------------------------------------------------
 
-#[derive(Deserialize)]
-struct CreateRelationship {
-    left: i64,
-    right: i64,
-    label: String,
-}
-
-async fn create_relationship(
-    State(s): State<AppState>,
-    Json(b): Json<CreateRelationship>,
-) -> ApiResult {
+async fn create_relationship(State(s): State<AppState>, Json(b): Json<ops::Relate>) -> ApiResult {
     let id = repo::relate(&s.pool, b.left, b.right, &b.label).await?;
     Ok(Json(json!({ "id": id })))
 }
@@ -984,35 +607,15 @@ async fn delete_relationship(State(s): State<AppState>, Path(id): Path<i64>) -> 
     Ok(Json(json!({ "deleted": deleted })))
 }
 
-#[derive(Deserialize)]
-struct NeighborsQuery {
-    #[serde(default)]
-    label: Option<String>,
-    #[serde(default)]
-    kind: Option<String>,
-    #[serde(default)]
-    limit: Option<i64>,
-}
-
 /// A node's edges, optionally filtered by label and neighbor kind (WI #533).
 /// Returns `{items, total, limit, truncated}` — the bound is explicit so a
 /// caller can tell a complete answer from a clipped one.
 async fn neighbors(
     State(s): State<AppState>,
     Path(id): Path<i64>,
-    Query(q): Query<NeighborsQuery>,
+    Query(q): Query<ops::Neighbors>,
 ) -> ApiResult {
-    let page = repo::neighbors(
-        &s.pool,
-        id,
-        repo::NeighborQuery {
-            label: q.label,
-            kind: q.kind,
-            limit: q.limit,
-        },
-    )
-    .await?;
-    Ok(Json(json!(page)))
+    Ok(Json(json!(repo::neighbors(&s.pool, id, q.into()).await?)))
 }
 
 /// Kind-agnostic preview of any node by its id (WI #260). 404 when no node has
@@ -1068,23 +671,11 @@ async fn get_report(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiR
 
 // --- sprint proposals (agent planning) -------------------------------------
 
-#[derive(Deserialize)]
-struct ProposalsQuery {
-    status: Option<String>,
-    project: Option<String>,
-}
-
-async fn list_proposals(State(s): State<AppState>, Query(q): Query<ProposalsQuery>) -> ApiResult {
-    Ok(Json(json!(
-        repo::list_proposals(
-            &s.pool,
-            repo::ProposalQuery {
-                status: q.status,
-                project: q.project,
-            }
-        )
-        .await?
-    )))
+async fn list_proposals(
+    State(s): State<AppState>,
+    Query(q): Query<ops::ListProposals>,
+) -> ApiResult {
+    Ok(Json(json!(repo::list_proposals(&s.pool, q.into()).await?)))
 }
 
 /// The authoritative "what is this sprint" read (WI #536).
@@ -1095,85 +686,18 @@ async fn get_proposal(State(s): State<AppState>, Path(node_id): Path<i64>) -> Ap
     }
 }
 
-#[derive(Deserialize)]
-struct CreateProposal {
-    title: String,
-    summary: String,
-    #[serde(default)]
-    work_item_numbers: Vec<i64>,
-    #[serde(default)]
-    project_id: Option<i64>,
-    #[serde(default)]
-    rank: f64,
-    #[serde(default)]
-    pinned: bool,
-    #[serde(default)]
-    category: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-}
-
-async fn create_proposal(State(s): State<AppState>, Json(b): Json<CreateProposal>) -> ApiResult {
-    let rank = Decimal::try_from(b.rank).map_err(|e| ApiError::invalid(format!("rank: {e}")))?;
-    let r = repo::create_proposal(
-        &s.pool,
-        NewProposal {
-            project_id: b.project_id,
-            category: b.category,
-            tags: b.tags,
-            title: b.title,
-            summary: b.summary,
-            rank,
-            pinned: b.pinned,
-            covers: b.work_item_numbers,
-        },
-    )
-    .await?;
-    Ok(Json(json!(r)))
-}
-
-#[derive(Deserialize)]
-struct UpdateProposal {
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    summary: Option<String>,
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    rank: Option<f64>,
-    #[serde(default)]
-    pinned: Option<bool>,
-    #[serde(default)]
-    archived: Option<bool>,
-    #[serde(default)]
-    tags: Option<Vec<String>>,
+async fn create_proposal(State(s): State<AppState>, Json(b): Json<NewProposal>) -> ApiResult {
+    Ok(Json(json!(repo::create_proposal(&s.pool, b).await?)))
 }
 
 async fn update_proposal(
     State(s): State<AppState>,
     Path(node_id): Path<i64>,
-    Json(b): Json<UpdateProposal>,
+    Json(patch): Json<ProposalPatch>,
 ) -> ApiResult {
-    let rank = match b.rank {
-        Some(r) => Some(Decimal::try_from(r).map_err(|e| ApiError::invalid(format!("rank: {e}")))?),
-        None => None,
-    };
-    let proposal = repo::update_proposal(
-        &s.pool,
-        node_id,
-        ProposalPatch {
-            title: b.title,
-            summary: b.summary,
-            status: b.status,
-            rank,
-            pinned: b.pinned,
-            archived: b.archived,
-            tags: b.tags,
-        },
-    )
-    .await?;
-    Ok(Json(json!(proposal)))
+    Ok(Json(json!(
+        repo::update_proposal(&s.pool, node_id, patch).await?
+    )))
 }
 
 #[cfg(test)]

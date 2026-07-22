@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type Project, type WorkItem } from "$lib/api";
+  import { api, type ProjectRow, type WorkItemRow } from "$lib/api";
+  import { isSatisfied } from "$lib/domain";
 
-  let projects = $state<Project[]>([]);
+  let projects = $state<ProjectRow[]>([]);
   let selected = $state<string>("homelab-ai");
-  let items = $state<WorkItem[]>([]);
+  let items = $state<WorkItemRow[]>([]);
   let edges = $state<[number, number][]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -23,19 +24,19 @@
   });
   const byNumber = $derived(new Map(items.map((w) => [w.wi_number, w])));
 
-  // Terminal statuses: done and closed are finished; resolved is shipped
-  // awaiting human confirmation — all three unblock dependents.
-  const TERMINAL = new Set(["done", "closed", "resolved"]);
-  function isDone(w: WorkItem): boolean {
-    return TERMINAL.has(w.wi_status);
+  // done and closed are finished; resolved is shipped awaiting human
+  // confirmation — all three unblock dependents, which is what `isSatisfied`
+  // means and why it is a broader set than a listing's default filter.
+  function isDone(w: WorkItemRow): boolean {
+    return isSatisfied(w.wi_status);
   }
-  function blockedBy(w: WorkItem): number[] {
+  function blockedBy(w: WorkItemRow): number[] {
     return (depsOf.get(w.wi_number) ?? []).filter((d) => {
       const dep = byNumber.get(d);
       return dep ? !isDone(dep) : false;
     });
   }
-  function isParked(w: WorkItem): boolean {
+  function isParked(w: WorkItemRow): boolean {
     return w.tags.includes("parked");
   }
 

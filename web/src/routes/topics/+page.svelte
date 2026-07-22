@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type Topic } from "$lib/api";
+  import { chip } from "$lib/domain";
 
   let topics = $state<Topic[]>([]);
   let query = $state("");
@@ -198,11 +199,9 @@
                 {topic.description}
               </p>{/if}
             <div class="mt-2 flex flex-wrap gap-1">
-              {#if topic.category}<span
-                  class="rounded bg-violet-950 px-1.5 py-0.5 text-xs text-violet-300"
+              {#if topic.category}<span class={chip.category}
                   >{topic.category}</span
-                >{/if}{#each topic.tags as tag (tag)}<span
-                  class="rounded bg-[var(--color-bg)] px-1.5 py-0.5 text-xs text-[var(--color-muted)]"
+                >{/if}{#each topic.tags as tag (tag)}<span class={chip.tag}
                   >{tag}</span
                 >{/each}
             </div>

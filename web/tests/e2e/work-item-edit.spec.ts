@@ -34,9 +34,13 @@ test("edit, archive, and relate a work item", async ({ page }) => {
   await page.getByRole("button", { name: "Save" }).first().click();
   await expect(page.getByText("resolved", { exact: true }).first()).toBeVisible();
 
-  // Add a relationship A -> B.
+  // Add a relationship A -> B. The label picker offers the registry labels and
+  // a "custom…" escape hatch, because korg accepts any label (WI #542).
   await page.getByRole("button", { name: "+ Add" }).click();
-  await page.getByPlaceholder("label").fill("blocks");
+  const labelPicker = page.getByLabel("Relationship label");
+  await expect(labelPicker).toHaveValue("related-to");
+  await labelPicker.selectOption({ label: "custom…" });
+  await page.getByLabel("Custom relationship label").fill("blocks");
   await page.getByPlaceholder("42").fill(bId);
   await page.getByPlaceholder("42").press("Enter");
   await expect(page.getByText("blocks", { exact: true })).toBeVisible();

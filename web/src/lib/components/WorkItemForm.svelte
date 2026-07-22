@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { api, WI_TYPES, WI_STATUSES, TSHIRTS, type WorkItem } from "$lib/api";
+  import { api, type WorkItemRow } from "$lib/api";
+  import { WI_STATUSES, WI_TSHIRTS, WI_TYPES } from "$lib/generated/vocab";
 
   let {
     projectId,
@@ -11,7 +12,7 @@
   }: {
     projectId: number | undefined;
     areas: { id: number; name: string }[];
-    editItem?: WorkItem | null;
+    editItem?: WorkItemRow | null;
     onSaved: () => void;
     onCancel: () => void;
   } = $props();
@@ -114,7 +115,7 @@
       <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 text-[var(--color-text)] outline-none" bind:value={wiStatus}>{#each WI_STATUSES as s (s)}<option value={s}>{s}</option>{/each}</select>
     </span>
     <span class="flex items-center gap-1">Size
-      <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 text-[var(--color-text)] outline-none" bind:value={wiTshirt}>{#each TSHIRTS as ts (ts)}<option value={ts}>{ts}</option>{/each}</select>
+      <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 text-[var(--color-text)] outline-none" bind:value={wiTshirt}>{#each WI_TSHIRTS as ts (ts)}<option value={ts}>{ts}</option>{/each}</select>
     </span>
     <span class="flex items-center gap-1">Area
       <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 text-[var(--color-text)] outline-none" bind:value={area}>

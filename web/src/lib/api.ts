@@ -1,179 +1,56 @@
 // Typed client for korg-api. In dev, Vite proxies /api -> korg-api; in prod
 // korg-api serves this bundle, so same-origin /api works directly.
+//
+// This file holds fetch wrappers and nothing else (WI #541). Every shape it
+// mentions comes from `./generated/`, which `just gen` derives from korg-core —
+// the ~500 lines of hand-mirrored interfaces that used to live here had already
+// drifted from the server (WorkItemRow statuses typed `string` while CardRow and
+// ProposalRow used unions; create/update shapes narrower than the API actually
+// accepts; a nine-entry WI_TYPES list of which the server rejects six).
 
-export const PROJECT_STATUSES = [
-  "active",
-  "maintenance",
-  "inactive",
-  "archived",
-] as const;
-export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
+import type {
+  AreaRow,
+  CardRow,
+  Comment,
+  DailyPlanItem,
+  History,
+  LinkRow,
+  MoveOutcome,
+  NeighborPage,
+  NodePreview,
+  Page,
+  ProjectRow,
+  ProposalDetail,
+  ProposalRow,
+  ReportFull,
+  ReportRow,
+  Topic,
+  WorkItemDetail,
+  WorkItemRow,
+} from "./generated/korg";
+import type { CardStatus, Disposition, ProposalStatus } from "./generated/vocab";
 
-export interface Project {
-  id: number;
-  name: string;
-  gh_repo: string | null;
-  cn_path: string | null;
-  description: string | null;
-  status: ProjectStatus;
-  machines: string[];
-  deploy_to: string[];
-  category: string | null;
+export type * from "./generated/korg";
+export type * from "./generated/vocab";
+
+/** The plan payload: a project's items plus its `depends_on` edges,
+ *  `[left, right]` = left depends on right. Assembled by the handler rather
+ *  than a core struct, so it is declared here. */
+export interface PlanResponse {
+  items: WorkItemRow[];
+  edges: [number, number][];
 }
 
-/** PATCH /api/projects/:name — everything but the name (WI #246). */
-export interface ProjectPatch {
-  gh_repo?: string | null;
-  cn_path?: string | null;
-  description?: string | null;
-  status?: ProjectStatus;
-  machines?: string[];
-  deploy_to?: string[];
-  category?: string | null;
-}
-
-export interface WorkItem {
-  wi_number: number;
-  node_id: number;
-  project: string | null;
-  area: string | null;
-  wi_type: string;
-  wi_status: string;
-  wi_tshirt: string;
-  sprint: string | null;
-  title: string;
-  content: string;
-  details: string | null;
-  category: string | null;
-  tags: string[];
-  parent: number | null;
-  archived: boolean;
-  comment_count: number;
-  created: string;
-  updated: string;
-}
-
-export const CARD_STATUSES = [
-  "Backlog",
-  "Research",
-  "OnDeck",
-  "Active",
-  "Done",
-  "Cut",
-] as const;
-export type CardStatus = (typeof CARD_STATUSES)[number];
-
-export interface Card {
-  node_id: number;
-  comment_count: number;
-  status: CardStatus;
-  title: string;
-  description: string;
-  rank: string; // Decimal serialized as string
-  project: string | null;
-  category: string | null;
-  tags: string[];
-  archived: boolean;
-  created: string;
-  updated: string;
-}
-
-export const DISPOSITIONS = [
-  "Unread",
-  "Done",
-  "Revisit",
-  "Summarized",
-  "VaultSaved",
-] as const;
-export type Disposition = (typeof DISPOSITIONS)[number];
-
-export interface Link {
-  node_id: number;
-  url: string;
-  title: string | null;
-  read: boolean;
-  disposition: Disposition;
-  category: string | null;
-  tags: string[];
-}
-
-export type DailyPlanSourceKind = "workitem" | "card" | "topic";
-
-export interface Topic {
-  node_id: number;
-  comment_count: number;
-  name: string;
-  description: string | null;
-  project_id: number | null;
-  project: string | null;
-  category: string | null;
-  tags: string[];
-  archived: boolean;
-  created: string;
-  updated: string;
-}
-
-export interface TopicPatch {
-  name?: string;
-  description?: string | null;
-  category?: string | null;
-  tags?: string[];
-}
-
-export interface DailyPlanItem {
-  node_id: number;
-  plan_date: string;
-  position: number;
-  display: string;
-  source_node_id: number;
-  source_kind: DailyPlanSourceKind;
-  source_title: string;
-  completed_at: string | null;
-  created_at: string;
-}
-
-export interface DailyPlanHistory {
-  from: string;
-  to: string;
-  total: number;
-  completed: number;
-  completion_rate: number;
-  items: DailyPlanItem[];
-}
-
-export type HistoryPreset = "week" | "month" | "90days" | "year";
-
-export interface DailyPlanMoveOutcome {
-  node_id: number;
-  copied: boolean;
-}
-
-export interface Neighbor {
-  rel_id: number;
-  node_id: number;
-  kind: string;
-  label: string;
-  /** "out" = queried node is the edge's left (label reads queried → neighbor); "in" = reverse. */
-  direction: "out" | "in";
-  /** False for registry-undirected labels (related-to): read the edge symmetrically. */
-  directed: boolean;
-}
-
-/** The envelope every collection read returns (WI #534). `total` is the full
- *  filtered count before limit/offset. */
-export interface Page<T> {
-  items: T[];
-  total: number;
-  limit: number;
-  offset: number;
-}
-
-/** Shared collection-read params. `archived` omitted = unarchived only. */
+/** Shared collection-read params. `archived` omitted = unarchived only (D-3).
+ *  A query string cannot carry JSON `null`, so REST spells the tri-state as
+ *  these three words — see the note in korg-core's `ops` module. */
 export interface ListParams {
   archived?: "true" | "false" | "all";
   limit?: number;
   offset?: number;
 }
+
+export type HistoryPreset = "week" | "month" | "90days" | "year";
 
 function listQuery(
   params: Record<string, string | number | boolean | undefined>,
@@ -186,96 +63,15 @@ function listQuery(
   return qs ? `?${qs}` : "";
 }
 
-/** GET /api/nodes/:id/neighbors — bounded, so `truncated` is explicit. */
-export interface NeighborPage {
-  items: Neighbor[];
-  total: number;
-  limit: number;
-  truncated: boolean;
-}
-
-/** /api/projects/:name/plan — edges are [left, right]: left depends_on right. */
-export interface PlanResponse {
-  items: WorkItem[];
-  edges: [number, number][];
-}
-
-/** One label/value metadata row in a node preview. */
-export interface NodeField {
-  label: string;
-  value: string;
-}
-
-/**
- * Kind-agnostic preview of any node (WI #260). `wi_number` is set only for
- * work items (it equals node_id) — the UI navigates to those instead of
- * previewing. `body`/`details` are markdown.
- */
-export interface NodePreview {
-  node_id: number;
-  kind: string;
-  wi_number: number | null;
-  title: string;
-  project: string | null;
-  tags: string[];
-  archived: boolean;
-  badges: string[];
-  fields: NodeField[];
-  body: string | null;
-  body_label: string | null;
-  details: string | null;
-  created: string;
-  updated: string;
-}
-
-export const PROPOSAL_STATUSES = [
-  "proposed",
-  "active",
-  "done",
-  "declined",
-] as const;
-export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
-
-export interface Proposal {
-  node_id: number;
-  comment_count: number;
-  covered_count: number;
-  title: string;
-  summary: string;
-  status: ProposalStatus;
-  rank: string; // Decimal serialized as string
-  pinned: boolean;
-  project: string | null;
-  category: string | null;
-  tags: string[];
-  archived: boolean;
-  created: string;
-  updated: string;
-}
-
-export const WI_TYPES = [
-  "task",
-  "bug",
-  "idea",
-  "research",
-  "tweak",
-  "issue",
-  "feature",
-  "epic",
-  "story",
-] as const;
-// Canonical lifecycle (WI #285): open → resolved (implemented, may need a
-// user test / PR) → done (agent satisfied; terminal but listed by default)
-// → closed (Ken only; hidden by default). The server rejects other values.
-export const WI_STATUSES = ["open", "resolved", "done", "closed"] as const;
-export const TSHIRTS = ["XS", "S", "M", "L", "XL", "Huge", "Unknown"] as const;
-
-export interface Comment {
-  id: number;
-  node_id: number;
-  body: string;
-  created: string;
-  updated: string;
+async function failure(method: string, path: string, res: Response) {
+  let detail = res.statusText;
+  try {
+    const j = await res.json();
+    if (j && typeof j.error === "string") detail = j.error;
+  } catch {
+    /* ignore */
+  }
+  return new Error(`${method} ${path} failed: ${detail}`);
 }
 
 async function http<T>(
@@ -289,16 +85,7 @@ async function http<T>(
       body !== undefined ? { "content-type": "application/json" } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const j = await res.json();
-      if (j && typeof j.error === "string") detail = j.error;
-    } catch {
-      /* ignore */
-    }
-    throw new Error(`${method} ${path} failed: ${detail}`);
-  }
+  if (!res.ok) throw await failure(method, path, res);
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
@@ -309,78 +96,40 @@ async function http<T>(
 async function httpMaybe<T>(method: string, path: string): Promise<T | null> {
   const res = await fetch(path, { method });
   if (res.status === 404) return null;
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const j = await res.json();
-      if (j && typeof j.error === "string") detail = j.error;
-    } catch {
-      /* ignore */
-    }
-    throw new Error(`${method} ${path} failed: ${detail}`);
-  }
+  if (!res.ok) throw await failure(method, path, res);
   return (await res.json()) as T;
 }
 
-/** GET /api/work-items/:wi and GET /api/proposals/:id inline capped comments
- *  (WI #535/#536) — same two-level contract as the MCP tools. */
-export interface WorkItemDetail extends WorkItem {
-  comments: Comment[];
-  comments_truncated: boolean;
-}
-
-export interface CoveredRef {
-  wi_number: number;
-  node_id: number;
-  title: string;
-  wi_status: string;
-  wi_tshirt: string;
-  project: string | null;
-  comment_count: number;
-}
-
-export interface ProposalDetail extends Proposal {
-  covered: CoveredRef[];
-  comments: Comment[];
-  comments_truncated: boolean;
-}
-
-export interface ReportRow {
-  node_id: number;
-  source: string;
-  report_date: string;
-  status: "ok" | "attention" | "problem";
-  summary: string;
-  model: string | null;
-  escalated: boolean;
-  updated: string;
-}
-
-export interface ReportFull extends ReportRow {
-  body: string;
-  findings: { wi_number: number; title: string; wi_status: string }[];
-}
+/** Patch bodies are partial by construction: every field is "leave unchanged"
+ *  when omitted. The server's patch structs say the same thing with `Option`. */
+type Patch<T> = Partial<T>;
 
 export const api = {
   // daily reports
   reports: (source?: string) =>
-    http<ReportRow[]>(
-      "GET",
-      source
-        ? `/api/reports?source=${encodeURIComponent(source)}`
-        : "/api/reports",
-    ),
+    http<ReportRow[]>("GET", `/api/reports${listQuery({ source })}`),
   report: (node_id: number) =>
     http<ReportFull>("GET", `/api/reports/${node_id}`),
 
   // projects
-  projects: () => http<Project[]>("GET", "/api/projects"),
+  projects: () => http<ProjectRow[]>("GET", "/api/projects"),
   recentProject: () =>
     http<{ project: string | null }>("GET", "/api/projects/recent"),
   createProject: (name: string) =>
     http<{ id: number; name: string }>("POST", "/api/projects", { name }),
-  updateProject: (name: string, patch: ProjectPatch) =>
-    http<Project>(
+  updateProject: (
+    name: string,
+    patch: Patch<{
+      gh_repo: string | null;
+      cn_path: string | null;
+      description: string | null;
+      status: string;
+      machines: string[];
+      deploy_to: string[];
+      category: string | null;
+    }>,
+  ) =>
+    http<ProjectRow>(
       "PATCH",
       `/api/projects/${encodeURIComponent(name)}`,
       patch,
@@ -388,7 +137,7 @@ export const api = {
 
   // work items
   workItems: (project?: string, params: ListParams = {}) =>
-    http<Page<WorkItem>>(
+    http<Page<WorkItemRow>>(
       "GET",
       `/api/work-items${listQuery({ project, ...params, limit: params.limit ?? 500 })}`,
     ),
@@ -404,11 +153,10 @@ export const api = {
     details?: string;
     area_id?: number;
     project_id?: number;
-  }) =>
-    http<WorkItem>("POST", "/api/work-items", b),
+  }) => http<WorkItemRow>("POST", "/api/work-items", b),
   updateWorkItem: (
     wi: number,
-    patch: Partial<{
+    patch: Patch<{
       title: string;
       content: string;
       details: string | null;
@@ -420,11 +168,12 @@ export const api = {
       area_id: number | null;
       parent: number | null;
       archived: boolean;
+      category: string | null;
       tags: string[];
     }>,
-  ) => http<WorkItem>("PATCH", `/api/work-items/${wi}`, patch),
+  ) => http<WorkItemRow>("PATCH", `/api/work-items/${wi}`, patch),
   areas: (project: string) =>
-    http<{ id: number; name: string }[]>(
+    http<AreaRow[]>(
       "GET",
       `/api/areas?project=${encodeURIComponent(project)}`,
     ),
@@ -437,15 +186,15 @@ export const api = {
 
   // cards
   cards: (params: ListParams & { status?: string; project?: string } = {}) =>
-    http<Page<Card>>(
+    http<Page<CardRow>>(
       "GET",
       `/api/cards${listQuery({ ...params, limit: params.limit ?? 500 })}`,
     ),
   createCard: (b: { title: string; status?: CardStatus; rank?: number }) =>
-    http<Card>("POST", "/api/cards", b),
+    http<CardRow>("POST", "/api/cards", b),
   updateCard: (
     node_id: number,
-    patch: Partial<{
+    patch: Patch<{
       status: CardStatus;
       rank: number;
       title: string;
@@ -455,7 +204,9 @@ export const api = {
       category: string | null;
       tags: string[];
     }>,
-  ) => http<Card>("PATCH", `/api/cards/${node_id}`, patch),
+  ) => http<CardRow>("PATCH", `/api/cards/${node_id}`, patch),
+
+  // comments
   nodeComments: (node_id: number) =>
     http<Comment[]>("GET", `/api/nodes/${node_id}/comments`),
   addComment: (node_id: number, body: string) =>
@@ -467,17 +218,17 @@ export const api = {
 
   // reading-list links
   links: (params: ListParams & { disposition?: string; read?: boolean } = {}) =>
-    http<Page<Link>>(
+    http<Page<LinkRow>>(
       "GET",
       `/api/links${listQuery({ ...params, limit: params.limit ?? 500 })}`,
     ),
   createLink: (b: { url: string; title?: string; tags?: string[] }) =>
-    http<Link>("POST", "/api/links", b),
+    http<LinkRow>("POST", "/api/links", b),
   /** One transactional update — disposition, read and tags together (WI #538). */
   updateLink: (
     node_id: number,
-    patch: Partial<{ disposition: Disposition; read: boolean; tags: string[] }>,
-  ) => http<Link>("PATCH", `/api/links/${node_id}`, patch),
+    patch: Patch<{ disposition: Disposition; read: boolean; tags: string[] }>,
+  ) => http<LinkRow>("PATCH", `/api/links/${node_id}`, patch),
 
   // topics
   topics: (query?: string, params: ListParams = {}) =>
@@ -493,24 +244,28 @@ export const api = {
     category?: string;
     tags?: string[];
   }) => http<Topic>("POST", "/api/topics", body),
-  updateTopic: (node_id: number, patch: TopicPatch) =>
-    http<Topic>("PATCH", `/api/topics/${node_id}`, patch),
+  updateTopic: (
+    node_id: number,
+    patch: Patch<{
+      name: string;
+      description: string | null;
+      category: string | null;
+      tags: string[];
+    }>,
+  ) => http<Topic>("PATCH", `/api/topics/${node_id}`, patch),
   archiveTopic: (node_id: number, archived = true) =>
     http<Topic>("POST", `/api/topics/${node_id}/archive`, { archived }),
 
   // daily planning
   dailyPlan: (from: string, to: string) =>
-    http<DailyPlanItem[]>(
-      "GET",
-      `/api/daily-plan?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
-    ),
+    http<DailyPlanItem[]>("GET", `/api/daily-plan${listQuery({ from, to })}`),
   createDailyPlanItem: (source_node_id: number, plan_date: string) =>
-    http<{ node_id: number }>("POST", "/api/daily-plan", {
+    http<DailyPlanItem>("POST", "/api/daily-plan", {
       source_node_id,
       plan_date,
     }),
   setDailyPlanCompletion: (node_id: number, completed: boolean) =>
-    http<{ ok: true }>("PATCH", `/api/daily-plan/${node_id}/completion`, {
+    http<DailyPlanItem>("PATCH", `/api/daily-plan/${node_id}/completion`, {
       completed,
     }),
   deleteDailyPlanItem: (node_id: number) =>
@@ -520,41 +275,29 @@ export const api = {
     target_date: string,
     target_position = 0,
   ) =>
-    http<DailyPlanMoveOutcome>("POST", `/api/daily-plan/${node_id}/move`, {
+    http<MoveOutcome>("POST", `/api/daily-plan/${node_id}/move`, {
       target_date,
       target_position,
     }),
-  reorderDailyPlan: (plan_date: string, node_ids: number[]) =>
-    http<{ ok: true }>(
-      "PUT",
-      `/api/daily-plan/${encodeURIComponent(plan_date)}/order`,
-      {
-        node_ids,
-      },
+  dailyPlanHistory: (preset: HistoryPreset, source_node_id?: number) =>
+    http<History>(
+      "GET",
+      `/api/daily-plan/history${listQuery({ preset, source_node_id })}`,
     ),
-  dailyPlanHistory: (preset: HistoryPreset, source_node_id?: number) => {
-    const params = new URLSearchParams({ preset });
-    if (source_node_id !== undefined)
-      params.set("source_node_id", String(source_node_id));
-    return http<DailyPlanHistory>("GET", `/api/daily-plan/history?${params}`);
-  },
 
   // relationships
   relate: (left: number, right: number, label: string) =>
     http<{ id: number }>("POST", "/api/relationships", { left, right, label }),
   unrelate: (id: number) =>
     http<{ deleted: boolean }>("DELETE", `/api/relationships/${id}`),
-  neighbors: (id: number, opts?: { label?: string; kind?: string; limit?: number }) => {
-    const p = new URLSearchParams();
-    if (opts?.label) p.set("label", opts.label);
-    if (opts?.kind) p.set("kind", opts.kind);
-    if (opts?.limit !== undefined) p.set("limit", String(opts.limit));
-    const qs = p.toString();
-    return http<NeighborPage>(
+  neighbors: (
+    id: number,
+    opts: { label?: string; kind?: string; limit?: number } = {},
+  ) =>
+    http<NeighborPage>(
       "GET",
-      `/api/nodes/${id}/neighbors${qs ? `?${qs}` : ""}`,
-    );
-  },
+      `/api/nodes/${id}/neighbors${listQuery({ ...opts })}`,
+    ),
   node: (id: number) => httpMaybe<NodePreview>("GET", `/api/nodes/${id}`),
   plan: (project: string) =>
     http<PlanResponse>(
@@ -564,22 +307,12 @@ export const api = {
 
   // sprint proposals (agent planning)
   proposals: (status?: ProposalStatus, project?: string) =>
-    http<Proposal[]>("GET", `/api/proposals${listQuery({ status, project })}`),
+    http<ProposalRow[]>("GET", `/api/proposals${listQuery({ status, project })}`),
   proposal: (node_id: number) =>
     httpMaybe<ProposalDetail>("GET", `/api/proposals/${node_id}`),
-  createProposal: (b: {
-    title: string;
-    summary: string;
-    work_item_numbers?: number[];
-    project_id?: number;
-    rank?: number;
-    pinned?: boolean;
-    tags?: string[];
-  }) =>
-    http<Proposal & { covered: number[] }>("POST", "/api/proposals", b),
   updateProposal: (
     node_id: number,
-    patch: Partial<{
+    patch: Patch<{
       title: string;
       summary: string;
       status: ProposalStatus;
@@ -588,5 +321,5 @@ export const api = {
       archived: boolean;
       tags: string[];
     }>,
-  ) => http<Proposal>("PATCH", `/api/proposals/${node_id}`, patch),
+  ) => http<ProposalRow>("PATCH", `/api/proposals/${node_id}`, patch),
 };

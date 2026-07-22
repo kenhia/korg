@@ -2,10 +2,11 @@
   import { onMount } from "svelte";
   import {
     api,
-    type DailyPlanHistory,
+    type History,
     type DailyPlanItem,
     type HistoryPreset,
   } from "$lib/api";
+  import { kindLabel } from "$lib/domain";
 
   const presets: { value: HistoryPreset; label: string }[] = [
     { value: "week", label: "Week" },
@@ -14,7 +15,7 @@
     { value: "year", label: "Year" },
   ];
   let preset = $state<HistoryPreset>("month");
-  let history = $state<DailyPlanHistory | null>(null);
+  let history = $state<History | null>(null);
   let allItems = $state<DailyPlanItem[]>([]);
   let sourceNodeId = $state("");
   let loading = $state(true);
@@ -34,9 +35,6 @@
     ].sort((a, b) => a.label.localeCompare(b.label)),
   );
 
-  function kindLabel(kind: DailyPlanItem["source_kind"]): string {
-    return kind === "workitem" ? "WI" : kind === "card" ? "Card" : "Topic";
-  }
   async function load() {
     loading = true;
     error = null;

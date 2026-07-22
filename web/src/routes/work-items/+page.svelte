@@ -2,14 +2,23 @@
   import { onMount, tick } from "svelte";
   import {
     api,
-    WI_TYPES,
-    WI_STATUSES,
-    TSHIRTS,
-    PROJECT_STATUSES,
-    type Project,
-    type WorkItem,
+    type ProjectRow,
+    type WorkItemRow,
     type Neighbor,
   } from "$lib/api";
+  import {
+    PROJECT_STATUSES,
+    WI_STATUSES,
+    WI_TSHIRTS,
+    WI_TYPES,
+  } from "$lib/generated/vocab";
+  import {
+    DEFAULT_RELATIONSHIP_LABEL,
+    KNOWN_RELATIONSHIP_LABELS,
+    chip,
+    isHiddenByDefault,
+    relationshipReads,
+  } from "$lib/domain";
   import { renderMarkdown } from "$lib/markdown";
   import MultiSelectFilter from "$lib/components/MultiSelectFilter.svelte";
   import WorkItemForm from "$lib/components/WorkItemForm.svelte";
@@ -37,13 +46,13 @@
     }
   }
 
-  let projects = $state<Project[]>([]);
+  let projects = $state<ProjectRow[]>([]);
   let current = $state<string>(ALL);
-  let items = $state<WorkItem[]>([]);
+  let items = $state<WorkItemRow[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
 
-  let detail = $state<WorkItem | null>(null);
+  let detail = $state<WorkItemRow | null>(null);
   let cursor = $state<number | null>(null);
   let related = $state<Neighbor[]>([]);
   let currentAreas = $state<{ id: number; name: string }[]>([]);
@@ -58,7 +67,7 @@
   let areaName = $state("");
   let areaDesc = $state("");
   let showAllProjects = $state(false);
-  let editProject = $state<Project | null>(null);
+  let editProject = $state<ProjectRow | null>(null);
   let eStatus = $state<string>("active");
   let eMachines = $state("");
   let eDeploy = $state("");
@@ -82,7 +91,7 @@
     return `hsl(${h % 360} 55% 62%)`;
   }
 
-  function openEditProject(p: Project) {
+  function openEditProject(p: ProjectRow) {
     editProject = p;
     eStatus = p.status;
     eMachines = p.machines.join(", ");
@@ -116,7 +125,16 @@
   // relationships
   let relAdding = $state(false);
   let relTarget = $state("");
-  let relLabel = $state("related-to");
+  let relLabel = $state<string>(DEFAULT_RELATIONSHIP_LABEL);
+  // The registry names the labels korg interprets; any other label is legal,
+  // so the picker keeps a custom escape hatch rather than only offering these.
+  const CUSTOM_LABEL = "\u0000custom";
+  let relCustom = $state("");
+  const relLabelValue = $derived(
+    relLabel === CUSTOM_LABEL
+      ? relCustom.trim() || DEFAULT_RELATIONSHIP_LABEL
+      : relLabel,
+  );
 
   // WI #260 — find any node by id. A work item resolves to a navigate +
   // highlight (jump to its project, flash the row); any other kind opens the
@@ -148,10 +166,10 @@
     if (!quickEdit) quickEditKeep = new Set();
   }
 
-  async function quickUpdate(item: WorkItem, patch: Partial<{ wi_type: string; wi_status: string; wi_tshirt: string }>) {
+  async function quickUpdate(item: WorkItemRow, patch: Partial<{ wi_type: string; wi_status: string; wi_tshirt: string }>) {
     await api.updateWorkItem(item.wi_number, patch);
     Object.assign(item, patch);
-    if (patch.wi_status === "closed") {
+    if (patch.wi_status !== undefined && isHiddenByDefault(patch.wi_status)) {
       quickEditKeep = new Set(quickEditKeep).add(item.wi_number);
     }
   }
@@ -160,7 +178,7 @@
   // selected (currentAreas is that project's areas). Viewing "All projects"
   // keeps area read-only in Quick Edit rather than fetching every row's
   // own project's areas just for this.
-  async function quickUpdateArea(item: WorkItem, areaName: string) {
+  async function quickUpdateArea(item: WorkItemRow, areaName: string) {
     const area = currentAreas.find((a) => a.name === areaName);
     await api.updateWorkItem(item.wi_number, { area_id: area ? area.id : null });
     item.area = area ? area.name : null;
@@ -181,7 +199,7 @@
   const statusOptions = $derived(distinct(items.map((i) => i.wi_status)));
   const sizeOptions = $derived(
     distinct(items.map((i) => i.wi_tshirt)).sort(
-      (a, b) => TSHIRTS.indexOf(a as never) - TSHIRTS.indexOf(b as never),
+      (a, b) => WI_TSHIRTS.indexOf(a as never) - WI_TSHIRTS.indexOf(b as never),
     ),
   );
   const areaOptions = $derived(distinct(items.map((i) => i.area)));
@@ -193,7 +211,7 @@
 
   function resetFilters() {
     fTypes = new Set(typeOptions);
-    fStatuses = new Set(statusOptions.filter((s) => s !== "closed"));
+    fStatuses = new Set(statusOptions.filter((s) => !isHiddenByDefault(s)));
     fSizes = new Set(sizeOptions);
     fAreas = new Set(areaOptions);
     fSprints = new Set(sprintOptions());
@@ -307,7 +325,7 @@
     await loadItems();
   }
 
-  async function open(item: WorkItem) {
+  async function open(item: WorkItemRow) {
     detail = item;
     cursor = item.wi_number;
     editing = false;
@@ -360,7 +378,7 @@
       error = `No work item #${wn}`;
       return;
     }
-    await api.relate(detail.node_id, target.node_id, relLabel.trim() || "related-to");
+    await api.relate(detail.node_id, target.node_id, relLabelValue);
     relTarget = "";
     relAdding = false;
     related = (await api.neighbors(detail.node_id).catch(() => null))?.items ?? [];
@@ -414,7 +432,7 @@
 
   const modified = $derived({
     types: fTypes.size !== typeOptions.length,
-    statuses: fStatuses.size !== statusOptions.filter((s) => s !== "closed").length,
+    statuses: fStatuses.size !== statusOptions.filter((s) => !isHiddenByDefault(s)).length,
     sizes: fSizes.size !== sizeOptions.length,
     areas: fAreas.size !== areaOptions.length,
     sprints: fSprints.size !== sprintOptions().length,
@@ -694,7 +712,7 @@
                     onclick={(e) => e.stopPropagation()}
                     onchange={(e) => quickUpdate(item, { wi_tshirt: e.currentTarget.value })}
                   >
-                    {#each TSHIRTS as t (t)}<option value={t}>{t}</option>{/each}
+                    {#each WI_TSHIRTS as t (t)}<option value={t}>{t}</option>{/each}
                   </select>
                 {:else}
                   {item.wi_tshirt}
@@ -712,7 +730,7 @@
   </div>
 {/snippet}
 
-{#snippet detailView(item: WorkItem)}
+{#snippet detailView(item: WorkItemRow)}
   <!-- The route is wide for the list table; cap the single-item view so long prose stays readable. -->
   <article class="max-w-5xl space-y-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
     <div class="flex items-center justify-between">
@@ -756,7 +774,7 @@
 
       {#if item.tags.length > 0}
         <div class="flex flex-wrap gap-1">
-          {#each item.tags as tag (tag)}<span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs text-[var(--color-muted)]">#{tag}</span>{/each}
+          {#each item.tags as tag (tag)}<span class={chip.tag}>#{tag}</span>{/each}
         </div>
       {/if}
 
@@ -782,7 +800,13 @@
       </div>
       {#if relAdding}
         <div class="mb-2 flex flex-wrap items-center gap-2 text-sm">
-          <input class="w-24 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none" placeholder="label" bind:value={relLabel} />
+          <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none" aria-label="Relationship label" title={relationshipReads(relLabelValue) ?? "caller-defined direction"} bind:value={relLabel}>
+            {#each KNOWN_RELATIONSHIP_LABELS as spec (spec.label)}<option value={spec.label}>{spec.label}</option>{/each}
+            <option value={CUSTOM_LABEL}>custom…</option>
+          </select>
+          {#if relLabel === CUSTOM_LABEL}
+            <input class="w-24 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none" placeholder="label" aria-label="Custom relationship label" bind:value={relCustom} />
+          {/if}
           <span class="text-xs text-[var(--color-muted)]">→ work item #</span>
           <input class="w-20 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none" placeholder="42" bind:value={relTarget} onkeydown={(e) => e.key === "Enter" && addRel()} />
           <button class="rounded bg-[var(--color-accent-soft)] px-2 py-1 text-xs hover:bg-[var(--color-accent)]" onclick={addRel}>Add</button>
@@ -792,7 +816,7 @@
         <ul class="space-y-1 text-sm">
           {#each related as n (n.rel_id)}
             <li class="flex items-center gap-2">
-              <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs text-[var(--color-muted)]">{n.label}</span>
+              <span class={chip.tag} title={relationshipReads(n.label) ?? "caller-defined direction"}>{n.label}</span>
               <span>{relatedLabel(n)}</span>
               <button class="ml-auto rounded px-1 text-xs text-[var(--color-muted)] hover:text-red-400" aria-label="Remove" title="Remove" onclick={() => removeRel(n.rel_id)}>✕</button>
             </li>
