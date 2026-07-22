@@ -87,7 +87,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/proposals", get(list_proposals).post(create_proposal))
         .route("/api/reports", get(list_reports))
         .route("/api/reports/:node_id", get(get_report))
-        .route("/api/proposals/:node_id", patch(update_proposal))
+        .route(
+            "/api/proposals/:node_id",
+            get(get_proposal).patch(update_proposal),
+        )
         .with_state(state);
 
     let api = api.route_service("/mcp", mcp);
@@ -169,6 +172,20 @@ fn parse_date(s: &str) -> Result<Date, ApiError> {
     Date::parse(s, &fmt).map_err(|e| ApiError::invalid(format!("invalid date `{s}`: {e}")))
 }
 
+/// `archived` is tri-state across every collection read (D-3): absent means
+/// `false` — the deliberate default change — `true` means archived only, and
+/// `all` means both. Anything else is a 400 rather than a silent reinterpretation.
+fn parse_archived(raw: Option<&str>) -> Result<Option<bool>, ApiError> {
+    match raw {
+        None | Some("false") => Ok(Some(false)),
+        Some("true") => Ok(Some(true)),
+        Some("all") => Ok(None),
+        Some(other) => Err(ApiError::invalid(format!(
+            "invalid archived '{other}' — expected one of: true, false, all"
+        ))),
+    }
+}
+
 /// 404 with a `not_found` code (D-6).
 fn not_found(msg: String) -> ApiError {
     ApiError(korg_core::error::RepoError::NotFound(msg).into())
@@ -205,14 +222,25 @@ async fn recent_project(State(s): State<AppState>) -> ApiResult {
 #[derive(Deserialize)]
 struct WorkItemsQuery {
     project: Option<String>,
+    archived: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
 }
 
 async fn list_work_items(State(s): State<AppState>, Query(q): Query<WorkItemsQuery>) -> ApiResult {
-    let items = match q.project {
-        Some(p) => repo::list_work_items_by_project(&s.pool, &p).await?,
-        None => repo::list_work_items(&s.pool).await?,
-    };
-    Ok(Json(json!(items)))
+    let page = repo::list_work_items(
+        &s.pool,
+        repo::WorkItemQuery {
+            project: q.project,
+            archived: parse_archived(q.archived.as_deref())?,
+            page: repo::PageQuery {
+                limit: q.limit,
+                offset: q.offset,
+            },
+        },
+    )
+    .await?;
+    Ok(Json(json!(page)))
 }
 
 #[derive(Deserialize)]
@@ -241,9 +269,12 @@ async fn survey_work_items(State(s): State<AppState>, Query(q): Query<SurveyQuer
 
 /// Missing work item is a 404, not `200 null` (D-6) — a typo'd number must
 /// not read as "exists, but empty".
+/// Returns the same shape as the MCP `get_work_item` tool (WI #535): the row
+/// plus capped inline comments. They were the same operation under one name
+/// with two shapes; the UI's separate comments fetch is now redundant on load.
 async fn get_work_item(State(s): State<AppState>, Path(wi): Path<i64>) -> ApiResult {
-    match repo::get_work_item(&s.pool, wi).await? {
-        Some(item) => Ok(Json(json!(item))),
+    match repo::get_work_item_detail(&s.pool, wi).await? {
+        Some(detail) => Ok(Json(json!(detail))),
         None => Err(not_found(format!("no work item #{wi}"))),
     }
 }
@@ -343,6 +374,8 @@ struct UpdateWorkItem {
     parent: Option<Option<i64>>,
     #[serde(default)]
     archived: Option<bool>,
+    #[serde(default, deserialize_with = "deser_nullable_str")]
+    category: Option<Option<String>>,
     #[serde(default)]
     tags: Option<Vec<String>>,
 }
@@ -367,7 +400,7 @@ async fn update_work_item(
             area_id: b.area_id,
             parent: b.parent,
             archived: b.archived,
-            category: None,
+            category: b.category,
             tags: b.tags,
         },
     )
@@ -399,8 +432,30 @@ async fn create_area(State(s): State<AppState>, Json(b): Json<CreateArea>) -> Ap
 
 // --- cards ----------------------------------------------------------------
 
-async fn list_cards(State(s): State<AppState>) -> ApiResult {
-    Ok(Json(json!(repo::list_cards(&s.pool).await?)))
+#[derive(Deserialize)]
+struct CardsQuery {
+    status: Option<String>,
+    project: Option<String>,
+    archived: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+async fn list_cards(State(s): State<AppState>, Query(q): Query<CardsQuery>) -> ApiResult {
+    let page = repo::list_cards(
+        &s.pool,
+        repo::CardQuery {
+            status: q.status,
+            project: q.project,
+            archived: parse_archived(q.archived.as_deref())?,
+            page: repo::PageQuery {
+                limit: q.limit,
+                offset: q.offset,
+            },
+        },
+    )
+    .await?;
+    Ok(Json(json!(page)))
 }
 
 #[derive(Deserialize)]
@@ -450,8 +505,11 @@ struct UpdateCard {
     description: Option<String>,
     #[serde(default)]
     archived: Option<bool>,
-    #[serde(default, deserialize_with = "deser_nullable_str")]
-    project: Option<Option<String>>,
+    /// Aligned with MCP on `project_id` (WI #537). This used to be a free-text
+    /// project *name* that silently created the project as a side effect of a
+    /// card edit — a surprising write hiding inside an update.
+    #[serde(default, deserialize_with = "deser_nullable_i64")]
+    project_id: Option<Option<i64>>,
     #[serde(default, deserialize_with = "deser_nullable_str")]
     category: Option<Option<String>>,
     #[serde(default)]
@@ -467,14 +525,6 @@ async fn update_card(
         Some(r) => Some(Decimal::try_from(r).map_err(|e| ApiError::invalid(format!("rank: {e}")))?),
         None => None,
     };
-    // Resolve a free-text project name to a project id (creating it if needed).
-    let project_id: Option<Option<i64>> = match &b.project {
-        Some(Some(name)) if !name.trim().is_empty() => {
-            Some(Some(repo::create_project(&s.pool, name.trim()).await?))
-        }
-        Some(_) => Some(None),
-        None => None,
-    };
     let card = repo::update_card(
         &s.pool,
         node_id,
@@ -484,7 +534,7 @@ async fn update_card(
             title: b.title,
             description: b.description,
             archived: b.archived,
-            project_id,
+            project_id: b.project_id,
             category: b.category,
             tags: b.tags,
         },
@@ -574,8 +624,30 @@ async fn delete_comment(State(s): State<AppState>, Path(id): Path<i64>) -> ApiRe
 
 // --- links (reading list) -------------------------------------------------
 
-async fn list_links(State(s): State<AppState>) -> ApiResult {
-    Ok(Json(json!(repo::list_links(&s.pool).await?)))
+#[derive(Deserialize)]
+struct LinksQuery {
+    disposition: Option<String>,
+    read: Option<bool>,
+    archived: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+async fn list_links(State(s): State<AppState>, Query(q): Query<LinksQuery>) -> ApiResult {
+    let page = repo::list_links(
+        &s.pool,
+        repo::LinkQuery {
+            disposition: q.disposition,
+            read: q.read,
+            archived: parse_archived(q.archived.as_deref())?,
+            page: repo::PageQuery {
+                limit: q.limit,
+                offset: q.offset,
+            },
+        },
+    )
+    .await?;
+    Ok(Json(json!(page)))
 }
 
 #[derive(Deserialize)]
@@ -621,19 +693,17 @@ async fn update_link(
     Path(node_id): Path<i64>,
     Json(b): Json<UpdateLink>,
 ) -> ApiResult {
-    if let Some(d) = &b.disposition {
-        repo::set_link_disposition(&s.pool, node_id, d).await?;
-    }
-    if let Some(r) = b.read {
-        repo::mark_link_read(&s.pool, node_id, r).await?;
-    }
-    if let Some(t) = &b.tags {
-        repo::set_node_tags(&s.pool, node_id, t).await?;
-    }
-    match repo::get_link(&s.pool, node_id).await? {
-        Some(link) => Ok(Json(json!(link))),
-        None => Err(not_found(format!("no link with node_id {node_id}"))),
-    }
+    let link = repo::update_link(
+        &s.pool,
+        node_id,
+        repo::LinkPatch {
+            disposition: b.disposition,
+            read: b.read,
+            tags: b.tags,
+        },
+    )
+    .await?;
+    Ok(Json(json!(link)))
 }
 
 // --- topics and daily planning --------------------------------------------
@@ -642,14 +712,25 @@ async fn update_link(
 struct TopicsQuery {
     #[serde(default)]
     q: Option<String>,
+    archived: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
 }
 
 async fn list_topics(State(s): State<AppState>, Query(q): Query<TopicsQuery>) -> ApiResult {
-    let rows = match q.q {
-        Some(query) => topics::search_topics(&s.pool, &query).await?,
-        None => topics::list_topics(&s.pool).await?,
-    };
-    Ok(Json(json!(rows)))
+    let page = topics::list_topics(
+        &s.pool,
+        topics::TopicQuery {
+            q: q.q,
+            archived: parse_archived(q.archived.as_deref())?,
+            page: repo::PageQuery {
+                limit: q.limit,
+                offset: q.offset,
+            },
+        },
+    )
+    .await?;
+    Ok(Json(json!(page)))
 }
 
 #[derive(Deserialize)]
@@ -947,7 +1028,19 @@ async fn get_node(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
 /// ([left, right] = left depends on right). Frontier/blocked computation
 /// happens client-side — the full item set is already in the payload.
 async fn project_plan(State(s): State<AppState>, Path(name): Path<String>) -> ApiResult {
-    let items = repo::list_work_items_by_project(&s.pool, &name).await?;
+    let items = repo::list_work_items(
+        &s.pool,
+        repo::WorkItemQuery {
+            project: Some(name.clone()),
+            archived: None,
+            page: repo::PageQuery {
+                limit: Some(repo::LIST_LIMIT_MAX),
+                offset: None,
+            },
+        },
+    )
+    .await?
+    .items;
     let edges = repo::project_edges(&s.pool, &name, "depends_on").await?;
     Ok(Json(json!({ "items": items, "edges": edges })))
 }
@@ -978,12 +1071,28 @@ async fn get_report(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiR
 #[derive(Deserialize)]
 struct ProposalsQuery {
     status: Option<String>,
+    project: Option<String>,
 }
 
 async fn list_proposals(State(s): State<AppState>, Query(q): Query<ProposalsQuery>) -> ApiResult {
     Ok(Json(json!(
-        repo::list_proposals(&s.pool, q.status.as_deref()).await?
+        repo::list_proposals(
+            &s.pool,
+            repo::ProposalQuery {
+                status: q.status,
+                project: q.project,
+            }
+        )
+        .await?
     )))
+}
+
+/// The authoritative "what is this sprint" read (WI #536).
+async fn get_proposal(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
+    match repo::get_proposal_detail(&s.pool, node_id).await? {
+        Some(detail) => Ok(Json(json!(detail))),
+        None => Err(not_found(format!("no proposal with node_id {node_id}"))),
+    }
 }
 
 #[derive(Deserialize)]

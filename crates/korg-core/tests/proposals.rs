@@ -111,7 +111,7 @@ async fn list_proposals_pinned_first_then_rank_and_status_filter() {
     .await
     .unwrap();
 
-    let all = list_proposals(&pool, None).await.unwrap();
+    let all = list_proposals(&pool, Default::default()).await.unwrap();
     let order: Vec<i64> = all.iter().map(|p| p.node_id).collect();
     assert_eq!(
         order,
@@ -133,10 +133,26 @@ async fn list_proposals_pinned_first_then_rank_and_status_filter() {
     )
     .await
     .unwrap();
-    let active = list_proposals(&pool, Some("active")).await.unwrap();
+    let active = list_proposals(
+        &pool,
+        korg_core::repo::ProposalQuery {
+            status: Some("active".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(active.len(), 1);
     assert_eq!(active[0].node_id, low.row.node_id);
-    let still_proposed = list_proposals(&pool, Some("proposed")).await.unwrap();
+    let still_proposed = list_proposals(
+        &pool,
+        korg_core::repo::ProposalQuery {
+            status: Some("proposed".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(
         still_proposed.len(),
         2,
@@ -163,7 +179,7 @@ async fn update_proposal_patches_only_given_fields() {
     .await
     .unwrap();
 
-    let got = list_proposals(&pool, None).await.unwrap();
+    let got = list_proposals(&pool, Default::default()).await.unwrap();
     let got = &got[0];
     assert_eq!(got.title, "draft", "untouched field preserved");
     assert_eq!(got.summary, "updated summary");

@@ -66,7 +66,10 @@ async fn reads_roundtrip_work_items_cards_projects() {
     .await
     .expect("create card");
 
-    let items = list_work_items(&pool).await.expect("list wi");
+    let items = list_work_items(&pool, Default::default())
+        .await
+        .expect("list wi")
+        .items;
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].wi_number, wi.wi_number);
     assert_eq!(items[0].title, "Build korg-mcp");
@@ -82,7 +85,10 @@ async fn reads_roundtrip_work_items_cards_projects() {
         .expect("get missing")
         .is_none());
 
-    let cards = list_cards(&pool).await.expect("list cards");
+    let cards = list_cards(&pool, Default::default())
+        .await
+        .expect("list cards")
+        .items;
     assert_eq!(cards.len(), 1);
     assert_eq!(cards[0].status, "Backlog");
 

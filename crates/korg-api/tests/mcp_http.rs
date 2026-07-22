@@ -95,7 +95,7 @@ async fn mcp_http_end_to_end() {
     .await;
     assert_eq!(st, StatusCode::OK);
     let tools = tl["result"]["tools"].as_array().expect("tools array");
-    assert_eq!(tools.len(), 42, "expected 42 tools, got {}", tools.len());
+    assert_eq!(tools.len(), 44, "expected 44 tools, got {}", tools.len());
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     assert!(names.contains(&"create_work_item"));
     assert!(names.contains(&"list_work_items"));
@@ -152,9 +152,10 @@ async fn mcp_http_end_to_end() {
     )
     .await;
     assert_eq!(st, StatusCode::OK);
-    let items = tool_payload(&listed);
-    let items = items.as_array().expect("work items array");
+    let page = tool_payload(&listed);
+    let items = page["items"].as_array().expect("work items array");
     assert_eq!(items.len(), 1);
+    assert_eq!(page["total"], 1);
     assert_eq!(items[0]["title"], "via http mcp");
 
     // 5. an unknown tool yields a clean tool error (isError), not a transport crash.

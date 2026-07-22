@@ -14,7 +14,7 @@
     loading = true;
     error = null;
     try {
-      links = await api.links();
+      links = (await api.links()).items;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {

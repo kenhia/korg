@@ -232,7 +232,12 @@
   }
 
   async function loadItems() {
-    items = await api.workItems(current === ALL ? undefined : current);
+    // The rail filters archived client-side behind a toggle, so ask for both.
+    items = (
+      await api.workItems(current === ALL ? undefined : current, {
+        archived: "all",
+      })
+    ).items;
     currentAreas = current === ALL ? [] : await api.areas(current).catch(() => []);
     forceShow = new Set();
     resetFilters();

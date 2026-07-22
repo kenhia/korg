@@ -617,3 +617,302 @@ async fn proposal_covers_edges_read_outward_over_rest() {
     let (_st, from_item) = req(&router, "GET", &format!("/api/nodes/{wi}/neighbors"), None).await;
     assert_eq!(from_item["items"][0]["direction"], "in");
 }
+
+/// Sprint 015 — the §4.3 collection contract: every list is enveloped, bounded,
+/// filtered, and excludes archived rows by default (WI #534, D-3).
+#[tokio::test]
+async fn collection_reads_are_enveloped_bounded_and_filtered() {
+    let (_c, router) = app().await;
+    for i in 0..3 {
+        work_item(&router, &format!("item {i}")).await;
+    }
+    let archived = work_item(&router, "archived one").await;
+    req(
+        &router,
+        "PATCH",
+        &format!("/api/work-items/{archived}"),
+        Some(json!({"archived": true})),
+    )
+    .await;
+
+    // Default: envelope, documented page size, archived excluded.
+    let (st, page) = req(&router, "GET", "/api/work-items", None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page["total"], 3, "archived excluded by default");
+    assert_eq!(page["limit"], 200);
+    assert_eq!(page["offset"], 0);
+    assert_eq!(page["items"].as_array().unwrap().len(), 3);
+
+    // …but still reachable.
+    let (_st, all) = req(&router, "GET", "/api/work-items?archived=all", None).await;
+    assert_eq!(all["total"], 4);
+    let (_st, only) = req(&router, "GET", "/api/work-items?archived=true", None).await;
+    assert_eq!(only["total"], 1);
+    assert_eq!(only["items"][0]["wi_number"], archived);
+
+    // A bad tri-state value is a 400, not a silent reinterpretation.
+    assert_error(
+        req(&router, "GET", "/api/work-items?archived=maybe", None).await,
+        StatusCode::BAD_REQUEST,
+        "invalid_input",
+        "archived=maybe",
+    );
+
+    // total counts every match; limit/offset page through it.
+    let (_st, first) = req(&router, "GET", "/api/work-items?limit=2", None).await;
+    assert_eq!(first["items"].as_array().unwrap().len(), 2);
+    assert_eq!(first["total"], 3, "total is the full filtered count");
+    let (_st, second) = req(&router, "GET", "/api/work-items?limit=2&offset=2", None).await;
+    assert_eq!(second["items"].as_array().unwrap().len(), 1);
+    assert_ne!(
+        first["items"][0]["wi_number"],
+        second["items"][0]["wi_number"]
+    );
+
+    // Cards and links filter server-side too.
+    req(
+        &router,
+        "POST",
+        "/api/cards",
+        Some(json!({"title":"backlog card","status":"Backlog"})),
+    )
+    .await;
+    req(
+        &router,
+        "POST",
+        "/api/cards",
+        Some(json!({"title":"active card","status":"Active"})),
+    )
+    .await;
+    let (_st, active) = req(&router, "GET", "/api/cards?status=Active", None).await;
+    assert_eq!(active["total"], 1);
+    assert_eq!(active["items"][0]["title"], "active card");
+    assert_error(
+        req(&router, "GET", "/api/cards?status=Bogus", None).await,
+        StatusCode::BAD_REQUEST,
+        "invalid_input",
+        "unknown card status filter",
+    );
+
+    let (_st, link) = req(
+        &router,
+        "POST",
+        "/api/links",
+        Some(json!({"url":"https://example.com"})),
+    )
+    .await;
+    let lnode = link["node_id"].as_i64().unwrap();
+    req(
+        &router,
+        "PATCH",
+        &format!("/api/links/{lnode}"),
+        Some(json!({"disposition":"Revisit"})),
+    )
+    .await;
+    let (_st, revisit) = req(&router, "GET", "/api/links?disposition=Revisit", None).await;
+    assert_eq!(revisit["total"], 1);
+    let (_st, unread) = req(&router, "GET", "/api/links?disposition=Unread", None).await;
+    assert_eq!(unread["total"], 0);
+}
+
+/// WI #535 — the two-level read contract past work items: every commentable
+/// row carries an exact `comment_count`, and the REST detail read matches the
+/// MCP tool's shape instead of being a bare row.
+#[tokio::test]
+async fn commentable_rows_signal_discussion_and_detail_inlines_it() {
+    let (_c, router) = app().await;
+    let wi = work_item(&router, "discussed").await;
+    let (_st, card) = req(&router, "POST", "/api/cards", Some(json!({"title":"c"}))).await;
+    let (_st, topic) = req(&router, "POST", "/api/topics", Some(json!({"name":"t"}))).await;
+    let (_st, proposal) = req(
+        &router,
+        "POST",
+        "/api/proposals",
+        Some(json!({"title":"p","summary":"s","work_item_numbers":[wi]})),
+    )
+    .await;
+
+    for node in [
+        wi,
+        card["node_id"].as_i64().unwrap(),
+        topic["node_id"].as_i64().unwrap(),
+        proposal["node_id"].as_i64().unwrap(),
+    ] {
+        req(
+            &router,
+            "POST",
+            &format!("/api/nodes/{node}/comments"),
+            Some(json!({"body":"a note"})),
+        )
+        .await;
+    }
+
+    let (_st, cards) = req(&router, "GET", "/api/cards", None).await;
+    assert_eq!(cards["items"][0]["comment_count"], 1);
+    let (_st, topics) = req(&router, "GET", "/api/topics", None).await;
+    assert_eq!(topics["items"][0]["comment_count"], 1);
+    let (_st, proposals) = req(&router, "GET", "/api/proposals", None).await;
+    assert_eq!(proposals[0]["comment_count"], 1);
+    assert_eq!(
+        proposals[0]["covered_count"], 1,
+        "covers signal without a join"
+    );
+
+    // REST get_work_item now returns the detail shape (same as MCP).
+    let (st, detail) = req(&router, "GET", &format!("/api/work-items/{wi}"), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(detail["comment_count"], 1);
+    assert_eq!(detail["comments"].as_array().unwrap().len(), 1);
+    assert_eq!(detail["comments_truncated"], false);
+
+    // REST can patch category now (it was hardcoded to None).
+    let (st, patched) = req(
+        &router,
+        "PATCH",
+        &format!("/api/work-items/{wi}"),
+        Some(json!({"category":"ops"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(patched["category"], "ops");
+}
+
+/// WI #536 — `get_proposal` answers "what is this sprint" in one call, which is
+/// what the Planning page and start-sprint used three for.
+#[tokio::test]
+async fn get_proposal_returns_covered_refs_and_comments() {
+    let (_c, router) = app().await;
+    let a = work_item(&router, "first").await;
+    let b = work_item(&router, "second").await;
+    let (_st, proposal) = req(
+        &router,
+        "POST",
+        "/api/proposals",
+        Some(json!({"title":"bundle","summary":"s","work_item_numbers":[b, a]})),
+    )
+    .await;
+    let pnode = proposal["node_id"].as_i64().unwrap();
+    req(
+        &router,
+        "POST",
+        &format!("/api/nodes/{pnode}/comments"),
+        Some(json!({"body":"why this bundle"})),
+    )
+    .await;
+
+    let (st, detail) = req(&router, "GET", &format!("/api/proposals/{pnode}"), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(detail["title"], "bundle");
+    let covered = detail["covered"].as_array().unwrap();
+    assert_eq!(covered.len(), 2);
+    assert_eq!(covered[0]["wi_number"], a, "ordered by wi_number");
+    assert_eq!(covered[1]["wi_number"], b);
+    assert_eq!(covered[0]["title"], "first");
+    assert_eq!(covered[0]["wi_status"], "open");
+    assert_eq!(covered[0]["comment_count"], 0);
+    assert_eq!(detail["comments"].as_array().unwrap().len(), 1);
+    assert_eq!(detail["covered_count"], 2);
+
+    // A proposal covering nothing is empty, not an error.
+    let (_st, bare) = req(
+        &router,
+        "POST",
+        "/api/proposals",
+        Some(json!({"title":"empty","summary":"s"})),
+    )
+    .await;
+    let (st, bare_detail) = req(
+        &router,
+        "GET",
+        &format!("/api/proposals/{}", bare["node_id"].as_i64().unwrap()),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(bare_detail["covered"].as_array().unwrap().is_empty());
+
+    assert_error(
+        req(&router, "GET", "/api/proposals/999999", None).await,
+        StatusCode::NOT_FOUND,
+        "not_found",
+        "missing proposal",
+    );
+}
+
+/// WI #538 — one transaction, so an invalid disposition cannot leave tags
+/// applied behind it; and WI #565 — proposals filter by project.
+#[tokio::test]
+async fn link_update_is_atomic_and_proposals_filter_by_project() {
+    let (_c, router) = app().await;
+    let (_st, link) = req(
+        &router,
+        "POST",
+        "/api/links",
+        Some(json!({"url":"https://example.com","title":"Ex"})),
+    )
+    .await;
+    let lnode = link["node_id"].as_i64().unwrap();
+
+    assert_error(
+        req(
+            &router,
+            "PATCH",
+            &format!("/api/links/{lnode}"),
+            Some(json!({"disposition":"Someday","tags":["applied"]})),
+        )
+        .await,
+        StatusCode::BAD_REQUEST,
+        "invalid_input",
+        "invalid disposition",
+    );
+    let (_st, after) = req(&router, "GET", "/api/links", None).await;
+    assert_eq!(
+        after["items"][0]["disposition"], "Unread",
+        "nothing changed"
+    );
+    assert!(
+        after["items"][0]["tags"].as_array().unwrap().is_empty(),
+        "the valid half of a rejected patch must not land"
+    );
+
+    // The whole patch applies together.
+    let (st, updated) = req(
+        &router,
+        "PATCH",
+        &format!("/api/links/{lnode}"),
+        Some(json!({"disposition":"Summarized","read":true,"tags":["ai"]})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(updated["disposition"], "Summarized");
+    assert_eq!(updated["read"], true);
+    assert_eq!(updated["tags"][0], "ai");
+
+    // Proposals by project (WI #565).
+    let (_st, alpha) = req(
+        &router,
+        "POST",
+        "/api/projects",
+        Some(json!({"name":"alpha"})),
+    )
+    .await;
+    req(
+        &router,
+        "POST",
+        "/api/proposals",
+        Some(json!({"title":"in alpha","summary":"s","project_id": alpha["id"]})),
+    )
+    .await;
+    req(
+        &router,
+        "POST",
+        "/api/proposals",
+        Some(json!({"title":"unassigned","summary":"s"})),
+    )
+    .await;
+    let (_st, all) = req(&router, "GET", "/api/proposals", None).await;
+    assert_eq!(all.as_array().unwrap().len(), 2);
+    let (_st, scoped) = req(&router, "GET", "/api/proposals?project=alpha", None).await;
+    assert_eq!(scoped.as_array().unwrap().len(), 1);
+    assert_eq!(scoped[0]["title"], "in alpha");
+}

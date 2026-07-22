@@ -116,7 +116,10 @@ async fn domain_cross_kind_relationships_and_reading_list() {
     assert_eq!(link_n.label, "references");
 
     // Reading list round-trips.
-    let links = list_links(&pool).await.expect("list links");
+    let links = list_links(&pool, Default::default())
+        .await
+        .expect("list links")
+        .items;
     assert_eq!(links.len(), 1);
     assert_eq!(links[0].url, "https://example.com/typed-nodes");
     assert_eq!(links[0].title.as_deref(), Some("Typed nodes"));

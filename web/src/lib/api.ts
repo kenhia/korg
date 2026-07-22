@@ -65,6 +65,7 @@ export type CardStatus = (typeof CARD_STATUSES)[number];
 
 export interface Card {
   node_id: number;
+  comment_count: number;
   status: CardStatus;
   title: string;
   description: string;
@@ -100,6 +101,7 @@ export type DailyPlanSourceKind = "workitem" | "card" | "topic";
 
 export interface Topic {
   node_id: number;
+  comment_count: number;
   name: string;
   description: string | null;
   project_id: number | null;
@@ -157,6 +159,33 @@ export interface Neighbor {
   directed: boolean;
 }
 
+/** The envelope every collection read returns (WI #534). `total` is the full
+ *  filtered count before limit/offset. */
+export interface Page<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** Shared collection-read params. `archived` omitted = unarchived only. */
+export interface ListParams {
+  archived?: "true" | "false" | "all";
+  limit?: number;
+  offset?: number;
+}
+
+function listQuery(
+  params: Record<string, string | number | boolean | undefined>,
+): string {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== "") p.set(k, String(v));
+  }
+  const qs = p.toString();
+  return qs ? `?${qs}` : "";
+}
+
 /** GET /api/nodes/:id/neighbors — bounded, so `truncated` is explicit. */
 export interface NeighborPage {
   items: Neighbor[];
@@ -209,6 +238,8 @@ export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 
 export interface Proposal {
   node_id: number;
+  comment_count: number;
+  covered_count: number;
   title: string;
   summary: string;
   status: ProposalStatus;
@@ -291,6 +322,29 @@ async function httpMaybe<T>(method: string, path: string): Promise<T | null> {
   return (await res.json()) as T;
 }
 
+/** GET /api/work-items/:wi and GET /api/proposals/:id inline capped comments
+ *  (WI #535/#536) — same two-level contract as the MCP tools. */
+export interface WorkItemDetail extends WorkItem {
+  comments: Comment[];
+  comments_truncated: boolean;
+}
+
+export interface CoveredRef {
+  wi_number: number;
+  node_id: number;
+  title: string;
+  wi_status: string;
+  wi_tshirt: string;
+  project: string | null;
+  comment_count: number;
+}
+
+export interface ProposalDetail extends Proposal {
+  covered: CoveredRef[];
+  comments: Comment[];
+  comments_truncated: boolean;
+}
+
 export interface ReportRow {
   node_id: number;
   source: string;
@@ -333,15 +387,13 @@ export const api = {
     ),
 
   // work items
-  workItems: (project?: string) =>
-    http<WorkItem[]>(
+  workItems: (project?: string, params: ListParams = {}) =>
+    http<Page<WorkItem>>(
       "GET",
-      project
-        ? `/api/work-items?project=${encodeURIComponent(project)}`
-        : "/api/work-items",
+      `/api/work-items${listQuery({ project, ...params, limit: params.limit ?? 500 })}`,
     ),
   workItem: (wi: number) =>
-    httpMaybe<WorkItem>("GET", `/api/work-items/${wi}`),
+    httpMaybe<WorkItemDetail>("GET", `/api/work-items/${wi}`),
   createWorkItem: (b: {
     title: string;
     content: string;
@@ -384,7 +436,11 @@ export const api = {
     }),
 
   // cards
-  cards: () => http<Card[]>("GET", "/api/cards"),
+  cards: (params: ListParams & { status?: string; project?: string } = {}) =>
+    http<Page<Card>>(
+      "GET",
+      `/api/cards${listQuery({ ...params, limit: params.limit ?? 500 })}`,
+    ),
   createCard: (b: { title: string; status?: CardStatus; rank?: number }) =>
     http<Card>("POST", "/api/cards", b),
   updateCard: (
@@ -395,7 +451,7 @@ export const api = {
       title: string;
       description: string;
       archived: boolean;
-      project: string | null;
+      project_id: number | null;
       category: string | null;
       tags: string[];
     }>,
@@ -410,21 +466,24 @@ export const api = {
     http<{ deleted: boolean }>("DELETE", `/api/comments/${id}`),
 
   // reading-list links
-  links: () => http<Link[]>("GET", "/api/links"),
+  links: (params: ListParams & { disposition?: string; read?: boolean } = {}) =>
+    http<Page<Link>>(
+      "GET",
+      `/api/links${listQuery({ ...params, limit: params.limit ?? 500 })}`,
+    ),
   createLink: (b: { url: string; title?: string; tags?: string[] }) =>
     http<Link>("POST", "/api/links", b),
+  /** One transactional update — disposition, read and tags together (WI #538). */
   updateLink: (
     node_id: number,
     patch: Partial<{ disposition: Disposition; read: boolean; tags: string[] }>,
   ) => http<Link>("PATCH", `/api/links/${node_id}`, patch),
 
   // topics
-  topics: (query?: string) =>
-    http<Topic[]>(
+  topics: (query?: string, params: ListParams = {}) =>
+    http<Page<Topic>>(
       "GET",
-      query === undefined
-        ? "/api/topics"
-        : `/api/topics?q=${encodeURIComponent(query)}`,
+      `/api/topics${listQuery({ q: query, ...params, limit: params.limit ?? 500 })}`,
     ),
   topic: (node_id: number) => httpMaybe<Topic>("GET", `/api/topics/${node_id}`),
   createTopic: (body: {
@@ -504,11 +563,10 @@ export const api = {
     ),
 
   // sprint proposals (agent planning)
-  proposals: (status?: ProposalStatus) =>
-    http<Proposal[]>(
-      "GET",
-      status ? `/api/proposals?status=${status}` : "/api/proposals",
-    ),
+  proposals: (status?: ProposalStatus, project?: string) =>
+    http<Proposal[]>("GET", `/api/proposals${listQuery({ status, project })}`),
+  proposal: (node_id: number) =>
+    httpMaybe<ProposalDetail>("GET", `/api/proposals/${node_id}`),
   createProposal: (b: {
     title: string;
     summary: string;

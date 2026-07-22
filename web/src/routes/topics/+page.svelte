@@ -15,7 +15,8 @@
     loading = true;
     error = null;
     try {
-      topics = await api.topics(query.trim() === "" ? undefined : query.trim());
+      topics = (await api.topics(query.trim() === "" ? undefined : query.trim()))
+        .items;
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {

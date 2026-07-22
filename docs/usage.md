@@ -32,23 +32,23 @@ rooted at `/api`. Responses are JSON.
 | `GET    /api/projects`                 | List projects.                       |
 | `POST   /api/projects`                 | Create a project.                    |
 | `GET    /api/projects/recent`          | Most recently used project.          |
-| `GET    /api/work-items`               | List work items (optional filters).  |
+| `GET    /api/work-items`               | List work items: `{items,total,limit,offset}`; filters `project`, `archived`, `limit`, `offset`. |
 | `POST   /api/work-items`               | Create a work item.                  |
 | `GET    /api/work-items/survey`        | Slim, paginated work-item projection (no content/details) for cross-project surveys. |
-| `GET    /api/work-items/:wi_number`    | Fetch a work item by serial number.  |
+| `GET    /api/work-items/:wi_number`    | Fetch a work item with inlined comments (same shape as the MCP tool). |
 | `PATCH  /api/work-items/:wi_number`    | Update a work item.                  |
 | `GET    /api/areas`                    | List areas.                          |
 | `POST   /api/areas`                    | Create an area.                      |
-| `GET    /api/cards`                    | List cards.                          |
+| `GET    /api/cards`                    | List cards (enveloped); filters `status`, `project`, `archived`. |
 | `POST   /api/cards`                    | Create a card.                       |
 | `PATCH  /api/cards/:node_id`           | Update a card.                       |
 | `GET    /api/nodes/:node_id/comments`  | List a node's comments (work item or card). |
 | `POST   /api/nodes/:node_id/comments`  | Add a comment to a node.             |
 | `DELETE /api/comments/:id`             | Delete a comment.                    |
-| `GET    /api/links`                    | List reading-list links.             |
+| `GET    /api/links`                    | List links (enveloped); filters `disposition`, `read`, `archived`. |
 | `POST   /api/links`                    | Create a link.                       |
 | `PATCH  /api/links/:node_id`           | Update a link.                       |
-| `GET/POST /api/topics`                 | List/search (`?q=`) or create topics. |
+| `GET/POST /api/topics`                 | List/search (`?q=`, enveloped) or create topics. |
 | `GET/PATCH /api/topics/:node_id`       | Fetch or update a topic.             |
 | `POST /api/topics/:node_id/archive`    | Archive or restore a topic.          |
 | `GET/POST /api/daily-plan`             | List an inclusive range or plan a source node. |
@@ -61,8 +61,9 @@ rooted at `/api`. Responses are JSON.
 | `DELETE /api/relationships/:id`        | Delete a relationship.               |
 | `GET    /api/nodes/:id`                | Kind-agnostic preview of any node by id (powers find-by-ID + the preview panel); 404 if none. |
 | `GET    /api/nodes/:id/neighbors`      | A node's edges: `{items,total,limit,truncated}`, optional `label`/`kind`/`limit` (see [api.md](api.md#relationships)). |
-| `GET    /api/proposals`                | List sprint proposals (optional `status` filter). |
+| `GET    /api/proposals`                | List sprint proposals (filters `status`, `project`). |
 | `POST   /api/proposals`                | Propose a sprint: title + summary + covered `work_item_numbers` in one call. |
+| `GET    /api/proposals/:node_id`       | Proposal detail: covered work items + comments. |
 | `PATCH  /api/proposals/:node_id`       | Update a proposal (status, rank, pinned, archive). |
 
 Example:
@@ -71,8 +72,9 @@ Example:
 curl -s http://localhost:8090/api/work-items | jq
 ```
 
-See [api.md](api.md) for the normative relationship model (label registry,
-direction semantics, edge reads and writes).
+See [api.md](api.md) for the normative contracts: the collection-read
+envelope and filters, the two-level read contract, and the relationship label
+registry with its direction semantics.
 
 ### Response and error contract
 

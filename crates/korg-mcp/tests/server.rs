@@ -63,7 +63,7 @@ async fn mcp_surface_end_to_end() {
     let server = server(pool);
 
     // Tool descriptors are stable.
-    assert_eq!(tools().len(), 42, "expected 42 tools");
+    assert_eq!(tools().len(), 44, "expected 44 tools");
 
     // Create a work item.
     let wi = body(
@@ -86,8 +86,9 @@ async fn mcp_surface_end_to_end() {
             .await
             .unwrap(),
     );
-    assert_eq!(items.as_array().unwrap().len(), 1);
-    assert_eq!(items[0]["title"], "Ship korg-mcp");
+    assert_eq!(items["items"].as_array().unwrap().len(), 1);
+    assert_eq!(items["total"], 1);
+    assert_eq!(items["items"][0]["title"], "Ship korg-mcp");
 
     // Capture a reading-list URL.
     let link = body(
@@ -126,7 +127,7 @@ async fn mcp_surface_end_to_end() {
 
     // Reading list reflects the link.
     let links = body(&server.call("list_links", args(json!({}))).await.unwrap());
-    assert_eq!(links.as_array().unwrap().len(), 1);
+    assert_eq!(links["items"].as_array().unwrap().len(), 1);
 
     // Topics and daily planning round-trip with server-derived display.
     let topic = body(
@@ -345,7 +346,7 @@ async fn mcp_coverage_gaps_end_to_end() {
     assert_eq!(upd["node_id"], json!(card_node));
     assert_eq!(upd["status"], "Active");
     let cards = body(&server.call("list_cards", args(json!({}))).await.unwrap());
-    let c = &cards.as_array().unwrap()[0];
+    let c = &cards["items"].as_array().unwrap()[0];
     assert_eq!(c["status"], "Active", "card status moved");
     assert_eq!(c["title"], "shipped", "card title edited");
 
@@ -504,7 +505,12 @@ async fn list_work_items_filters_by_project() {
             .await
             .unwrap(),
     );
-    assert_eq!(all.as_array().unwrap().len(), 3, "unfiltered returns all");
+    assert_eq!(
+        all["items"].as_array().unwrap().len(),
+        3,
+        "unfiltered returns all"
+    );
+    assert_eq!(all["total"], 3);
 
     // Filtered by project name: only alpha's two items.
     let only_alpha = body(
@@ -513,7 +519,7 @@ async fn list_work_items_filters_by_project() {
             .await
             .unwrap(),
     );
-    let arr = only_alpha.as_array().unwrap();
+    let arr = only_alpha["items"].as_array().unwrap();
     assert_eq!(
         arr.len(),
         2,
@@ -532,10 +538,11 @@ async fn list_work_items_filters_by_project() {
             .unwrap(),
     );
     assert_eq!(
-        none.as_array().unwrap().len(),
+        none["items"].as_array().unwrap().len(),
         0,
         "unknown project yields none"
     );
+    assert_eq!(none["total"], 0);
 }
 
 /// Sprint 004 — agent planning: `propose_sprint` bundles a proposal + its
@@ -861,4 +868,197 @@ async fn typed_errors_carry_codes_and_never_lie_about_success() {
             .unwrap(),
     );
     assert_eq!(gone["deleted"], false, "no such edge");
+}
+
+/// WI #537 — the schema is part of the contract, so drift between what a tool
+/// *advertises* and what it *does* is a bug. This is the pre-B4 stopgap: B4
+/// generates the schemas and makes it structural.
+#[test]
+fn advertised_defaults_match_server_behaviour() {
+    let tools = tools();
+    let schema_of = |name: &str| {
+        tools
+            .iter()
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("no tool named {name}"))
+            .input_schema
+            .clone()
+    };
+
+    // The shared collection-read params must agree with korg-core's constants
+    // everywhere they appear.
+    for name in ["list_work_items", "list_cards", "list_links", "list_topics"] {
+        let schema = schema_of(name);
+        let props = schema["properties"].as_object().expect("properties");
+        assert_eq!(
+            props["archived"]["default"], false,
+            "{name}: archived default must match korg_core::repo::archived_default()"
+        );
+        assert_eq!(
+            props["limit"]["default"],
+            korg_core::repo::LIST_LIMIT_DEFAULT,
+            "{name}: limit default"
+        );
+        assert_eq!(
+            props["limit"]["maximum"],
+            korg_core::repo::LIST_LIMIT_MAX,
+            "{name}: limit ceiling"
+        );
+        assert_eq!(props["offset"]["default"], 0, "{name}: offset default");
+    }
+
+    // survey_work_items is the one that lied (F-11): it advertised
+    // `default: false` while the server treated omitted as *both*. It must now
+    // advertise no default at all.
+    let survey = schema_of("survey_work_items");
+    assert!(
+        survey["properties"]["archived"].get("default").is_none(),
+        "survey_work_items must not advertise an archived default it doesn't apply"
+    );
+
+    // neighbors' bound must match the core constants too (sprint 014).
+    let neighbors = schema_of("neighbors");
+    assert_eq!(
+        neighbors["properties"]["limit"]["default"],
+        korg_core::repo::NEIGHBOR_LIMIT_DEFAULT
+    );
+    assert_eq!(
+        neighbors["properties"]["limit"]["maximum"],
+        korg_core::repo::NEIGHBOR_LIMIT_MAX
+    );
+}
+
+/// Sprint 015 over MCP: envelopes, the archived default and how to escape it,
+/// get_proposal, and the transactional update_link.
+#[tokio::test]
+async fn collection_contracts_and_new_tools_over_mcp() {
+    let (_c, pool) = fresh_korg().await;
+    let server = server(pool);
+
+    let mut numbers = vec![];
+    for i in 0..3 {
+        let wi = body(
+            &server
+                .call(
+                    "create_work_item",
+                    args(json!({"title": format!("item {i}"), "content":"c"})),
+                )
+                .await
+                .unwrap(),
+        );
+        numbers.push(wi["wi_number"].as_i64().unwrap());
+    }
+    server
+        .call(
+            "update_work_item",
+            args(json!({"wi_number": numbers[2], "archived": true})),
+        )
+        .await
+        .unwrap();
+
+    // Archived excluded by default…
+    let page = body(
+        &server
+            .call("list_work_items", args(json!({})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(page["total"], 2, "archived excluded by default");
+    assert_eq!(page["limit"], 200);
+
+    // …and an explicit null means both (the documented escape hatch).
+    let all = body(
+        &server
+            .call("list_work_items", args(json!({"archived": null})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(all["total"], 3);
+
+    let clipped = body(
+        &server
+            .call("list_work_items", args(json!({"limit": 1})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(clipped["items"].as_array().unwrap().len(), 1);
+    assert_eq!(clipped["total"], 2, "total is the full filtered count");
+
+    // get_proposal: one call replaces list_proposals + neighbors + list_work_items.
+    let proposal = body(
+        &server
+            .call(
+                "propose_sprint",
+                args(json!({
+                    "title":"bundle","summary":"s",
+                    "work_item_numbers":[numbers[1], numbers[0]]
+                })),
+            )
+            .await
+            .unwrap(),
+    );
+    let pnode = proposal["node_id"].as_i64().unwrap();
+    let detail = body(
+        &server
+            .call("get_proposal", args(json!({"node_id": pnode})))
+            .await
+            .unwrap(),
+    );
+    let covered = detail["covered"].as_array().unwrap();
+    assert_eq!(covered.len(), 2);
+    assert_eq!(covered[0]["wi_number"], numbers[0], "ordered by wi_number");
+    assert_eq!(covered[0]["title"], "item 0");
+    assert_eq!(detail["covered_count"], 2);
+
+    let missing = server
+        .call("get_proposal", args(json!({"node_id": 999999})))
+        .await
+        .unwrap();
+    assert_eq!(missing.is_error, Some(true), "missing proposal is isError");
+
+    // list_proposals rows carry covered_count without a second call.
+    let proposals = body(
+        &server
+            .call("list_proposals", args(json!({})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(proposals[0]["covered_count"], 2);
+
+    // update_link: disposition, read and tags in one transaction — the 0004
+    // workflow agents could not reach before (only mark_link_read existed).
+    let link = body(
+        &server
+            .call("create_link", args(json!({"url":"https://example.com"})))
+            .await
+            .unwrap(),
+    );
+    let lnode = link["node_id"].as_i64().unwrap();
+    let updated = body(
+        &server
+            .call(
+                "update_link",
+                args(json!({"node_id": lnode, "disposition":"Summarized",
+                            "read": true, "tags":["ai"]})),
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(updated["disposition"], "Summarized");
+    assert_eq!(updated["read"], true);
+    assert_eq!(updated["tags"][0], "ai");
+
+    let bad = server
+        .call(
+            "update_link",
+            args(json!({"node_id": lnode, "disposition":"Someday", "tags":["nope"]})),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bad.is_error, Some(true));
+    let after = body(&server.call("list_links", args(json!({}))).await.unwrap());
+    assert_eq!(
+        after["items"][0]["tags"][0], "ai",
+        "a rejected patch changes nothing, not even its valid half"
+    );
 }

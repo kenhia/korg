@@ -53,6 +53,84 @@ where
         .ok_or_else(|| RepoError::NotFound(format!("no node with id {node_id}")).into())
 }
 
+// --- collection reads: the envelope every list returns ----------------------
+
+/// The shape every collection read returns (WI #534, D-3). `total` is the full
+/// filtered count *before* `limit`/`offset`, so a caller can page without
+/// guessing and can tell a complete answer from a clipped one.
+///
+/// Unbounded list reads were the review's context bomb: `list_work_items`
+/// returned every row with full content, which is why `survey_work_items` had
+/// to exist at all.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Page<T> {
+    pub items: Vec<T>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+impl<T> Page<T> {
+    /// Assemble a page from an already-executed query.
+    pub fn from_parts(items: Vec<T>, total: i64, limit: i64, offset: i64) -> Self {
+        Self::new(items, total, limit, offset)
+    }
+
+    fn new(items: Vec<T>, total: i64, limit: i64, offset: i64) -> Self {
+        Self {
+            items,
+            total,
+            limit,
+            offset,
+        }
+    }
+}
+
+/// Default page size for collection reads. Generous enough that one project's
+/// work items stay a single call (D-10), finite enough to bound the payload.
+pub const LIST_LIMIT_DEFAULT: i64 = 200;
+/// Hard ceiling a caller may request.
+pub const LIST_LIMIT_MAX: i64 = 500;
+
+/// Pagination knobs shared by every collection read. Defaults are applied in
+/// [`PageQuery::resolve`], not here, so `None` means "use the documented
+/// default" rather than "no limit".
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PageQuery {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+impl PageQuery {
+    /// Clamped (limit, offset), for callers outside this module.
+    pub fn resolve_public(&self) -> (i64, i64) {
+        self.resolve()
+    }
+
+    /// Clamped (limit, offset) — callers can't escape the ceiling or go negative.
+    fn resolve(&self) -> (i64, i64) {
+        (
+            self.limit
+                .unwrap_or(LIST_LIMIT_DEFAULT)
+                .clamp(1, LIST_LIMIT_MAX),
+            self.offset.unwrap_or(0).max(0),
+        )
+    }
+}
+
+/// `archived` filter shared by every collection read: `Some(false)` hides
+/// archived rows, `Some(true)` shows only them, `None` means both.
+///
+/// The default is `Some(false)` (D-3) and it is declared **once**, here, so
+/// core and both transports cannot drift apart on it. Ask for `None`
+/// explicitly to see everything.
+pub type ArchivedFilter = Option<bool>;
+
+/// The archived default every collection read starts from.
+pub fn archived_default() -> ArchivedFilter {
+    Some(false)
+}
+
 // --- work items -----------------------------------------------------------
 
 #[derive(Debug, Clone)]
@@ -231,11 +309,54 @@ const LINK_SELECT: &str =
             n.category, n.tags \
      FROM link l JOIN node n ON n.id = l.node_id";
 
-pub async fn list_links(pool: &PgPool) -> Result<Vec<LinkRow>> {
-    let rows = sqlx::query_as::<_, LinkRow>(&format!("{LINK_SELECT} ORDER BY l.node_id"))
-        .fetch_all(pool)
-        .await?;
-    Ok(rows)
+#[derive(Debug, Clone)]
+pub struct LinkQuery {
+    pub disposition: Option<String>,
+    pub read: Option<bool>,
+    pub archived: ArchivedFilter,
+    pub page: PageQuery,
+}
+
+impl Default for LinkQuery {
+    fn default() -> Self {
+        Self {
+            disposition: None,
+            read: None,
+            archived: archived_default(),
+            page: PageQuery::default(),
+        }
+    }
+}
+
+/// Reading-list links, enveloped and bounded (WI #534). Without this the read
+/// returned the entire capture history forever.
+pub async fn list_links(pool: &PgPool, query: LinkQuery) -> Result<Page<LinkRow>> {
+    if let Some(d) = &query.disposition {
+        validate_status(d, &LINK_DISPOSITIONS, "link disposition")?;
+    }
+    let (limit, offset) = query.page.resolve();
+    const WHERE: &str = "WHERE ($1::text IS NULL OR l.disposition::text = $1) \
+           AND ($2::bool IS NULL OR l.read = $2) \
+           AND ($3::bool IS NULL OR n.archived = $3)";
+    let items = sqlx::query_as::<_, LinkRow>(&format!(
+        "{LINK_SELECT} {WHERE} ORDER BY l.node_id LIMIT $4 OFFSET $5"
+    ))
+    .bind(query.disposition.as_deref())
+    .bind(query.read)
+    .bind(query.archived)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    let total: i64 = sqlx::query_scalar(&format!(
+        "SELECT count(*) FROM link l JOIN node n ON n.id = l.node_id {WHERE}"
+    ))
+    .bind(query.disposition.as_deref())
+    .bind(query.read)
+    .bind(query.archived)
+    .fetch_one(pool)
+    .await?;
+    Ok(Page::new(items, total, limit, offset))
 }
 
 pub async fn get_link(pool: &PgPool, node_id: i64) -> Result<Option<LinkRow>> {
@@ -245,6 +366,50 @@ pub async fn get_link(pool: &PgPool, node_id: i64) -> Result<Option<LinkRow>> {
             .fetch_optional(pool)
             .await?,
     )
+}
+
+/// Everything `update_link` can change in one transaction. `None` leaves a
+/// field alone.
+#[derive(Debug, Clone, Default)]
+pub struct LinkPatch {
+    pub disposition: Option<String>,
+    pub read: Option<bool>,
+    pub tags: Option<Vec<String>>,
+}
+
+/// One transactional link update (WI #538). The REST handler used to make up
+/// to three independent repo calls, so a mid-sequence failure left a partial
+/// write and an error that didn't say which parts landed. Validation happens
+/// before the transaction opens, so an invalid disposition changes nothing.
+pub async fn update_link(pool: &PgPool, node_id: i64, patch: LinkPatch) -> Result<LinkRow> {
+    if let Some(d) = &patch.disposition {
+        validate_status(d, &LINK_DISPOSITIONS, "link disposition")?;
+    }
+    let mut tx = pool.begin().await?;
+    require_kind(&mut *tx, node_id, "link", "link").await?;
+    if let Some(d) = &patch.disposition {
+        sqlx::query("UPDATE link SET disposition = $2::link_disposition WHERE node_id = $1")
+            .bind(node_id)
+            .bind(d)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(read) = patch.read {
+        sqlx::query("UPDATE link SET read = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(read)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(tags) = &patch.tags {
+        sqlx::query("UPDATE node SET tags = $2 WHERE id = $1")
+            .bind(node_id)
+            .bind(tags)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    reread_link(pool, node_id).await
 }
 
 pub async fn set_link_disposition(
@@ -714,11 +879,55 @@ const WORKITEM_SELECT: &str = "SELECT w.wi_number, w.node_id, \
      LEFT JOIN area a ON a.id = w.area_id \
      LEFT JOIN workitem pw ON pw.node_id = w.parent_node_id";
 
-pub async fn list_work_items(pool: &PgPool) -> Result<Vec<WorkItemRow>> {
-    let sql = format!("{WORKITEM_SELECT} ORDER BY w.wi_number");
-    Ok(sqlx::query_as::<_, WorkItemRow>(&sql)
+/// Filters for a work-item listing. `project` is a name, matching the other
+/// project-keyed surfaces.
+#[derive(Debug, Clone)]
+pub struct WorkItemQuery {
+    pub project: Option<String>,
+    pub archived: ArchivedFilter,
+    pub page: PageQuery,
+}
+
+impl Default for WorkItemQuery {
+    fn default() -> Self {
+        Self {
+            project: None,
+            archived: archived_default(),
+            page: PageQuery::default(),
+        }
+    }
+}
+
+/// Full work-item rows for one project (or all), enveloped and bounded
+/// (WI #534). Kept alongside `survey_work_items` per D-10: one project's items
+/// with content stay a single call; cross-project callers want the survey.
+pub async fn list_work_items(pool: &PgPool, query: WorkItemQuery) -> Result<Page<WorkItemRow>> {
+    let (limit, offset) = query.page.resolve();
+    let sql = format!(
+        "{WORKITEM_SELECT} \
+         WHERE ($1::text IS NULL OR pj.name = $1) \
+           AND ($2::bool IS NULL OR n.archived = $2) \
+         ORDER BY w.wi_number \
+         LIMIT $3 OFFSET $4"
+    );
+    let items = sqlx::query_as::<_, WorkItemRow>(&sql)
+        .bind(query.project.as_deref())
+        .bind(query.archived)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(pool)
-        .await?)
+        .await?;
+    let total: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM workitem w JOIN node n ON n.id = w.node_id \
+         LEFT JOIN project pj ON pj.id = n.project_id \
+         WHERE ($1::text IS NULL OR pj.name = $1) \
+           AND ($2::bool IS NULL OR n.archived = $2)",
+    )
+    .bind(query.project.as_deref())
+    .bind(query.archived)
+    .fetch_one(pool)
+    .await?;
+    Ok(Page::new(items, total, limit, offset))
 }
 
 pub async fn get_work_item(pool: &PgPool, wi_number: i64) -> Result<Option<WorkItemRow>> {
@@ -872,6 +1081,8 @@ pub struct CardRow {
     pub category: Option<String>,
     pub tags: Vec<String>,
     pub archived: bool,
+    /// Comments on this card (WI #535).
+    pub comment_count: i64,
     #[serde(with = "time::serde::rfc3339")]
     pub created: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -880,17 +1091,62 @@ pub struct CardRow {
 
 const CARD_SELECT: &str =
     "SELECT c.node_id, c.status::text AS status, c.title, c.description, c.rank, \
-            pj.name AS project, n.category, n.tags, n.archived, n.created, n.updated \
+            pj.name AS project, n.category, n.tags, n.archived, \
+            (SELECT count(*) FROM comment cm WHERE cm.node_id = c.node_id) AS comment_count, \
+            n.created, n.updated \
      FROM card c \
      JOIN node n ON n.id = c.node_id \
      LEFT JOIN project pj ON pj.id = n.project_id";
 
-pub async fn list_cards(pool: &PgPool) -> Result<Vec<CardRow>> {
-    let rows =
-        sqlx::query_as::<_, CardRow>(&format!("{CARD_SELECT} ORDER BY c.status, c.rank ASC"))
-            .fetch_all(pool)
-            .await?;
-    Ok(rows)
+#[derive(Debug, Clone)]
+pub struct CardQuery {
+    pub status: Option<String>,
+    pub project: Option<String>,
+    pub archived: ArchivedFilter,
+    pub page: PageQuery,
+}
+
+impl Default for CardQuery {
+    fn default() -> Self {
+        Self {
+            status: None,
+            project: None,
+            archived: archived_default(),
+            page: PageQuery::default(),
+        }
+    }
+}
+
+/// Cards, enveloped and bounded (WI #534). Ordering gains a `node_id`
+/// tie-breaker (F-19) so equal-rank cards don't shuffle between calls.
+pub async fn list_cards(pool: &PgPool, query: CardQuery) -> Result<Page<CardRow>> {
+    if let Some(status) = &query.status {
+        validate_status(status, &CARD_STATUSES, "card status")?;
+    }
+    let (limit, offset) = query.page.resolve();
+    const WHERE: &str = "WHERE ($1::text IS NULL OR c.status::text = $1) \
+           AND ($2::text IS NULL OR pj.name = $2) \
+           AND ($3::bool IS NULL OR n.archived = $3)";
+    let items = sqlx::query_as::<_, CardRow>(&format!(
+        "{CARD_SELECT} {WHERE} ORDER BY c.status, c.rank ASC, c.node_id ASC LIMIT $4 OFFSET $5"
+    ))
+    .bind(query.status.as_deref())
+    .bind(query.project.as_deref())
+    .bind(query.archived)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    let total: i64 = sqlx::query_scalar(&format!(
+        "SELECT count(*) FROM card c JOIN node n ON n.id = c.node_id \
+         LEFT JOIN project pj ON pj.id = n.project_id {WHERE}"
+    ))
+    .bind(query.status.as_deref())
+    .bind(query.project.as_deref())
+    .bind(query.archived)
+    .fetch_one(pool)
+    .await?;
+    Ok(Page::new(items, total, limit, offset))
 }
 
 pub async fn get_card(pool: &PgPool, node_id: i64) -> Result<Option<CardRow>> {
@@ -1328,6 +1584,11 @@ pub struct ProposalRow {
     pub category: Option<String>,
     pub tags: Vec<String>,
     pub archived: bool,
+    /// Comments on this proposal (WI #535).
+    pub comment_count: i64,
+    /// How many work items this proposal covers (WI #536) — the signal that
+    /// saves the Planning page a `neighbors` call per row just to show chips.
+    pub covered_count: i64,
     #[serde(with = "time::serde::rfc3339")]
     pub created: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -1336,22 +1597,109 @@ pub struct ProposalRow {
 
 const PROPOSAL_SELECT: &str =
     "SELECT p.node_id, p.title, p.summary, p.status::text AS status, p.rank, p.pinned, \
-            pj.name AS project, n.category, n.tags, n.archived, n.created, n.updated \
+            pj.name AS project, n.category, n.tags, n.archived, \
+            (SELECT count(*) FROM comment cm WHERE cm.node_id = p.node_id) AS comment_count, \
+            (SELECT count(*) FROM relationship r JOIN node wn ON wn.id = r.right_id \
+              WHERE r.left_id = p.node_id AND r.relationship = 'covers' \
+                AND wn.kind = 'workitem') AS covered_count, \
+            n.created, n.updated \
      FROM sprint_proposal p \
      JOIN node n ON n.id = p.node_id \
      LEFT JOIN project pj ON pj.id = n.project_id";
 
+#[derive(Debug, Clone, Default)]
+pub struct ProposalQuery {
+    pub status: Option<String>,
+    /// Project name (WI #565) — the queue spans repos, so "show me korg's
+    /// sprints" is the common ask.
+    pub project: Option<String>,
+}
+
 /// List proposals ordered pinned-first, then by rank — the drag-order a user
-/// or agent leaves them in. `status` optionally filters (e.g. "proposed").
-pub async fn list_proposals(pool: &PgPool, status: Option<&str>) -> Result<Vec<ProposalRow>> {
+/// or agent leaves them in — with a `node_id` tie-breaker so equal ranks stop
+/// shuffling between calls (F-19).
+pub async fn list_proposals(pool: &PgPool, query: ProposalQuery) -> Result<Vec<ProposalRow>> {
+    if let Some(status) = &query.status {
+        validate_status(status, &PROPOSAL_STATUSES, "proposal status")?;
+    }
     let rows = sqlx::query_as::<_, ProposalRow>(&format!(
         "{PROPOSAL_SELECT} WHERE ($1::text IS NULL OR p.status::text = $1) \
-         ORDER BY p.pinned DESC, p.rank ASC"
+           AND ($2::text IS NULL OR pj.name = $2) \
+         ORDER BY p.pinned DESC, p.rank ASC, p.node_id ASC"
     ))
-    .bind(status)
+    .bind(query.status.as_deref())
+    .bind(query.project.as_deref())
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+/// A covered work item as a proposal's detail read reports it — enough to
+/// decide and to render, without a second call per item (§4.3).
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq)]
+pub struct CoveredRef {
+    pub wi_number: i64,
+    pub node_id: i64,
+    pub title: String,
+    pub wi_status: String,
+    pub wi_tshirt: String,
+    pub project: Option<String>,
+    pub comment_count: i64,
+}
+
+/// A proposal plus what it covers and its discussion (WI #536). This is the
+/// authoritative "what is this sprint" read: before it, the Planning page
+/// fetched every proposal, every work item, then called `neighbors` once per
+/// proposal and joined client-side, and `start-sprint` did the same dance over
+/// MCP in three tools.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProposalDetail {
+    #[serde(flatten)]
+    pub proposal: ProposalRow,
+    /// Covered work items, ordered by wi_number.
+    pub covered: Vec<CoveredRef>,
+    pub comments: Vec<Comment>,
+    pub comments_truncated: bool,
+}
+
+/// `get_proposal` — the proposal, its covered work items, and capped comments.
+/// `None` if no proposal has that node id (the transports turn that into
+/// 404 / isError per D-6).
+pub async fn get_proposal_detail(pool: &PgPool, node_id: i64) -> Result<Option<ProposalDetail>> {
+    let Some(proposal) = get_proposal(pool, node_id).await? else {
+        return Ok(None);
+    };
+    // Reads the `covers` edge in its semantic orientation (proposal -> work
+    // item), which sprint 014 made trustworthy.
+    let covered = sqlx::query_as::<_, CoveredRef>(
+        "SELECT w.wi_number, w.node_id, w.title, w.wi_status, w.wi_tshirt, \
+                pj.name AS project, \
+                (SELECT count(*) FROM comment c WHERE c.node_id = w.node_id) AS comment_count \
+         FROM relationship r \
+         JOIN workitem w ON w.node_id = r.right_id \
+         JOIN node n ON n.id = w.node_id \
+         LEFT JOIN project pj ON pj.id = n.project_id \
+         WHERE r.left_id = $1 AND r.relationship = 'covers' \
+         ORDER BY w.wi_number",
+    )
+    .bind(node_id)
+    .fetch_all(pool)
+    .await?;
+    let comments = sqlx::query_as::<_, Comment>(
+        "SELECT id, node_id, body, created, updated FROM comment \
+         WHERE node_id = $1 ORDER BY created LIMIT $2",
+    )
+    .bind(node_id)
+    .bind(WORKITEM_COMMENT_CAP)
+    .fetch_all(pool)
+    .await?;
+    let comments_truncated = proposal.comment_count > WORKITEM_COMMENT_CAP;
+    Ok(Some(ProposalDetail {
+        proposal,
+        covered,
+        comments,
+        comments_truncated,
+    }))
 }
 
 pub async fn get_proposal(pool: &PgPool, node_id: i64) -> Result<Option<ProposalRow>> {
@@ -1829,6 +2177,8 @@ pub struct ReportRow {
     pub summary: String,
     pub model: Option<String>,
     pub escalated: bool,
+    /// Comments on this report (WI #535).
+    pub comment_count: i64,
     #[serde(with = "time::serde::rfc3339")]
     pub updated: OffsetDateTime,
 }
@@ -1841,7 +2191,9 @@ pub async fn list_reports(
 ) -> Result<Vec<ReportRow>> {
     let rows = sqlx::query_as::<_, ReportRow>(
         "SELECT r.node_id, r.source, r.report_date, r.status, r.summary, r.model, \
-                r.escalated, n.updated \
+                r.escalated, \
+                (SELECT count(*) FROM comment cm WHERE cm.node_id = r.node_id) AS comment_count, \
+                n.updated \
          FROM report r JOIN node n ON n.id = r.node_id \
          WHERE ($1::text IS NULL OR r.source = $1) \
          ORDER BY r.report_date DESC, r.source ASC LIMIT $2",
@@ -1872,7 +2224,9 @@ pub struct ReportFull {
 pub async fn get_report(pool: &PgPool, node_id: i64) -> Result<Option<ReportFull>> {
     let Some(r) = sqlx::query(
         "SELECT r.node_id, r.source, r.report_date, r.status, r.summary, r.model, \
-                r.escalated, r.body, n.updated \
+                r.escalated, r.body, \
+                (SELECT count(*) FROM comment cm WHERE cm.node_id = r.node_id) AS comment_count, \
+                n.updated \
          FROM report r JOIN node n ON n.id = r.node_id WHERE r.node_id = $1",
     )
     .bind(node_id)
@@ -1903,6 +2257,7 @@ pub async fn get_report(pool: &PgPool, node_id: i64) -> Result<Option<ReportFull
             summary: r.get("summary"),
             model: r.get("model"),
             escalated: r.get("escalated"),
+            comment_count: r.get("comment_count"),
             updated: r.get("updated"),
         },
         body: r.get("body"),

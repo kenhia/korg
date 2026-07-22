@@ -52,7 +52,7 @@ installed; point an MCP client at the URL:
 http://<host>:8090/mcp
 ```
 
-It exposes 42 tools for work items, cards, reading-list links, generalized
+It exposes 44 tools for work items, cards, reading-list links, generalized
 cross-kind relationships, topics, and source-linked daily planning, backed directly by
 `korg-core`.
 
