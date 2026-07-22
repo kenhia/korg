@@ -262,6 +262,25 @@ async function http<T>(
   return (await res.json()) as T;
 }
 
+// Single-item reads answer 404 for "no such thing" (D-6). Callers that treat
+// absence as a normal outcome (find-by-ID, refresh-after-edit) use this and
+// get null; every other failure still throws.
+async function httpMaybe<T>(method: string, path: string): Promise<T | null> {
+  const res = await fetch(path, { method });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const j = await res.json();
+      if (j && typeof j.error === "string") detail = j.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(`${method} ${path} failed: ${detail}`);
+  }
+  return (await res.json()) as T;
+}
+
 export interface ReportRow {
   node_id: number;
   source: string;
@@ -297,7 +316,7 @@ export const api = {
   createProject: (name: string) =>
     http<{ id: number; name: string }>("POST", "/api/projects", { name }),
   updateProject: (name: string, patch: ProjectPatch) =>
-    http<{ ok: boolean }>(
+    http<Project>(
       "PATCH",
       `/api/projects/${encodeURIComponent(name)}`,
       patch,
@@ -312,7 +331,7 @@ export const api = {
         : "/api/work-items",
     ),
   workItem: (wi: number) =>
-    http<WorkItem | null>("GET", `/api/work-items/${wi}`),
+    httpMaybe<WorkItem>("GET", `/api/work-items/${wi}`),
   createWorkItem: (b: {
     title: string;
     content: string;
@@ -324,7 +343,7 @@ export const api = {
     area_id?: number;
     project_id?: number;
   }) =>
-    http<{ node_id: number; wi_number: number }>("POST", "/api/work-items", b),
+    http<WorkItem>("POST", "/api/work-items", b),
   updateWorkItem: (
     wi: number,
     patch: Partial<{
@@ -341,7 +360,7 @@ export const api = {
       archived: boolean;
       tags: string[];
     }>,
-  ) => http<{ ok: true }>("PATCH", `/api/work-items/${wi}`, patch),
+  ) => http<WorkItem>("PATCH", `/api/work-items/${wi}`, patch),
   areas: (project: string) =>
     http<{ id: number; name: string }[]>(
       "GET",
@@ -357,7 +376,7 @@ export const api = {
   // cards
   cards: () => http<Card[]>("GET", "/api/cards"),
   createCard: (b: { title: string; status?: CardStatus; rank?: number }) =>
-    http<{ node_id: number }>("POST", "/api/cards", b),
+    http<Card>("POST", "/api/cards", b),
   updateCard: (
     node_id: number,
     patch: Partial<{
@@ -370,7 +389,7 @@ export const api = {
       category: string | null;
       tags: string[];
     }>,
-  ) => http<{ ok: true }>("PATCH", `/api/cards/${node_id}`, patch),
+  ) => http<Card>("PATCH", `/api/cards/${node_id}`, patch),
   nodeComments: (node_id: number) =>
     http<Comment[]>("GET", `/api/nodes/${node_id}/comments`),
   addComment: (node_id: number, body: string) =>
@@ -378,16 +397,16 @@ export const api = {
   updateComment: (id: number, body: string) =>
     http<Comment>("PATCH", `/api/comments/${id}`, { body }),
   deleteComment: (id: number) =>
-    http<{ ok: true }>("DELETE", `/api/comments/${id}`),
+    http<{ deleted: boolean }>("DELETE", `/api/comments/${id}`),
 
   // reading-list links
   links: () => http<Link[]>("GET", "/api/links"),
   createLink: (b: { url: string; title?: string; tags?: string[] }) =>
-    http<{ node_id: number }>("POST", "/api/links", b),
+    http<Link>("POST", "/api/links", b),
   updateLink: (
     node_id: number,
     patch: Partial<{ disposition: Disposition; read: boolean; tags: string[] }>,
-  ) => http<{ ok: true }>("PATCH", `/api/links/${node_id}`, patch),
+  ) => http<Link>("PATCH", `/api/links/${node_id}`, patch),
 
   // topics
   topics: (query?: string) =>
@@ -397,19 +416,18 @@ export const api = {
         ? "/api/topics"
         : `/api/topics?q=${encodeURIComponent(query)}`,
     ),
-  topic: (node_id: number) =>
-    http<Topic | null>("GET", `/api/topics/${node_id}`),
+  topic: (node_id: number) => httpMaybe<Topic>("GET", `/api/topics/${node_id}`),
   createTopic: (body: {
     name: string;
     description?: string;
     project_id?: number;
     category?: string;
     tags?: string[];
-  }) => http<{ node_id: number }>("POST", "/api/topics", body),
+  }) => http<Topic>("POST", "/api/topics", body),
   updateTopic: (node_id: number, patch: TopicPatch) =>
-    http<{ ok: true }>("PATCH", `/api/topics/${node_id}`, patch),
+    http<Topic>("PATCH", `/api/topics/${node_id}`, patch),
   archiveTopic: (node_id: number, archived = true) =>
-    http<{ ok: true }>("POST", `/api/topics/${node_id}/archive`, { archived }),
+    http<Topic>("POST", `/api/topics/${node_id}/archive`, { archived }),
 
   // daily planning
   dailyPlan: (from: string, to: string) =>
@@ -427,7 +445,7 @@ export const api = {
       completed,
     }),
   deleteDailyPlanItem: (node_id: number) =>
-    http<{ ok: true }>("DELETE", `/api/daily-plan/${node_id}`),
+    http<{ deleted: boolean }>("DELETE", `/api/daily-plan/${node_id}`),
   moveDailyPlanItem: (
     node_id: number,
     target_date: string,
@@ -456,10 +474,10 @@ export const api = {
   relate: (left: number, right: number, label: string) =>
     http<{ id: number }>("POST", "/api/relationships", { left, right, label }),
   unrelate: (id: number) =>
-    http<{ ok: true }>("DELETE", `/api/relationships/${id}`),
+    http<{ deleted: boolean }>("DELETE", `/api/relationships/${id}`),
   neighbors: (id: number) =>
     http<Neighbor[]>("GET", `/api/nodes/${id}/neighbors`),
-  node: (id: number) => http<NodePreview | null>("GET", `/api/nodes/${id}`),
+  node: (id: number) => httpMaybe<NodePreview>("GET", `/api/nodes/${id}`),
   plan: (project: string) =>
     http<PlanResponse>(
       "GET",
@@ -481,7 +499,7 @@ export const api = {
     pinned?: boolean;
     tags?: string[];
   }) =>
-    http<{ node_id: number; covered: number[] }>("POST", "/api/proposals", b),
+    http<Proposal & { covered: number[] }>("POST", "/api/proposals", b),
   updateProposal: (
     node_id: number,
     patch: Partial<{
@@ -493,5 +511,5 @@ export const api = {
       archived: boolean;
       tags: string[];
     }>,
-  ) => http<{ ok: true }>("PATCH", `/api/proposals/${node_id}`, patch),
+  ) => http<Proposal>("PATCH", `/api/proposals/${node_id}`, patch),
 };

@@ -526,10 +526,10 @@ async fn node_preview_end_to_end() {
     assert_eq!(cnode["title"], "A card");
     assert_eq!(cnode["body"], "desc");
 
-    // Unknown id resolves to null (200), so the UI can say "not found".
-    let (st, none) = req(&router, "GET", "/api/nodes/999999", None).await;
-    assert_eq!(st, StatusCode::OK);
-    assert!(none.is_null());
+    // Unknown id is a 404 with a typed code (D-6), not `200 null`.
+    let (st, body) = req(&router, "GET", "/api/nodes/999999", None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    assert_eq!(body["code"], "not_found");
 }
 
 // WI #289 — typed domain errors map to 4xx, not 500 (agents key off status).

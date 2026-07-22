@@ -166,7 +166,12 @@ fn cors_layer() -> CorsLayer {
 
 fn parse_date(s: &str) -> Result<Date, ApiError> {
     let fmt = format_description!("[year]-[month]-[day]");
-    Date::parse(s, &fmt).map_err(|e| ApiError(anyhow::anyhow!("invalid date `{s}`: {e}")))
+    Date::parse(s, &fmt).map_err(|e| ApiError::invalid(format!("invalid date `{s}`: {e}")))
+}
+
+/// 404 with a `not_found` code (D-6).
+fn not_found(msg: String) -> ApiError {
+    ApiError(korg_core::error::RepoError::NotFound(msg).into())
 }
 
 async fn health() -> Json<Value> {
@@ -234,8 +239,13 @@ async fn survey_work_items(State(s): State<AppState>, Query(q): Query<SurveyQuer
     Ok(Json(json!(survey)))
 }
 
+/// Missing work item is a 404, not `200 null` (D-6) — a typo'd number must
+/// not read as "exists, but empty".
 async fn get_work_item(State(s): State<AppState>, Path(wi): Path<i64>) -> ApiResult {
-    Ok(Json(json!(repo::get_work_item(&s.pool, wi).await?)))
+    match repo::get_work_item(&s.pool, wi).await? {
+        Some(item) => Ok(Json(json!(item))),
+        None => Err(not_found(format!("no work item #{wi}"))),
+    }
 }
 
 #[derive(Deserialize)]
@@ -292,9 +302,7 @@ async fn create_work_item(State(s): State<AppState>, Json(b): Json<CreateWorkIte
         },
     )
     .await?;
-    Ok(Json(
-        json!({ "node_id": r.node_id, "wi_number": r.wi_number }),
-    ))
+    Ok(Json(json!(r)))
 }
 
 fn deser_nullable_str<'de, D>(d: D) -> Result<Option<Option<String>>, D::Error>
@@ -344,7 +352,7 @@ async fn update_work_item(
     Path(wi): Path<i64>,
     Json(b): Json<UpdateWorkItem>,
 ) -> ApiResult {
-    repo::update_work_item(
+    let item = repo::update_work_item(
         &s.pool,
         wi,
         repo::WorkItemPatch {
@@ -364,7 +372,7 @@ async fn update_work_item(
         },
     )
     .await?;
-    Ok(Json(json!({ "ok": true })))
+    Ok(Json(json!(item)))
 }
 
 #[derive(Deserialize)]
@@ -413,8 +421,8 @@ struct CreateCard {
 }
 
 async fn create_card(State(s): State<AppState>, Json(b): Json<CreateCard>) -> ApiResult {
-    let rank = Decimal::try_from(b.rank).map_err(|e| ApiError(anyhow::anyhow!("rank: {e}")))?;
-    let node_id = repo::create_card(
+    let rank = Decimal::try_from(b.rank).map_err(|e| ApiError::invalid(format!("rank: {e}")))?;
+    let card = repo::create_card(
         &s.pool,
         NewCard {
             project_id: b.project_id,
@@ -427,7 +435,7 @@ async fn create_card(State(s): State<AppState>, Json(b): Json<CreateCard>) -> Ap
         },
     )
     .await?;
-    Ok(Json(json!({ "node_id": node_id })))
+    Ok(Json(json!(card)))
 }
 
 #[derive(Deserialize)]
@@ -456,7 +464,7 @@ async fn update_card(
     Json(b): Json<UpdateCard>,
 ) -> ApiResult {
     let rank = match b.rank {
-        Some(r) => Some(Decimal::try_from(r).map_err(|e| ApiError(anyhow::anyhow!("rank: {e}")))?),
+        Some(r) => Some(Decimal::try_from(r).map_err(|e| ApiError::invalid(format!("rank: {e}")))?),
         None => None,
     };
     // Resolve a free-text project name to a project id (creating it if needed).
@@ -467,7 +475,7 @@ async fn update_card(
         Some(_) => Some(None),
         None => None,
     };
-    repo::update_card(
+    let card = repo::update_card(
         &s.pool,
         node_id,
         CardPatch {
@@ -482,7 +490,7 @@ async fn update_card(
         },
     )
     .await?;
-    Ok(Json(json!({ "ok": true })))
+    Ok(Json(json!(card)))
 }
 
 async fn list_comments(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
@@ -542,7 +550,7 @@ async fn update_project(
     Path(name): Path<String>,
     Json(b): Json<UpdateProjectBody>,
 ) -> ApiResult {
-    repo::update_project_by_name(
+    let project = repo::update_project_by_name(
         &s.pool,
         &name,
         &repo::ProjectPatch {
@@ -556,12 +564,12 @@ async fn update_project(
         },
     )
     .await?;
-    Ok(Json(json!({ "ok": true })))
+    Ok(Json(json!(project)))
 }
 
 async fn delete_comment(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
-    repo::delete_comment(&s.pool, id).await?;
-    Ok(Json(json!({ "ok": true })))
+    let deleted = repo::delete_comment(&s.pool, id).await?;
+    Ok(Json(json!({ "deleted": deleted })))
 }
 
 // --- links (reading list) -------------------------------------------------
@@ -584,7 +592,7 @@ struct CreateLink {
 }
 
 async fn create_link(State(s): State<AppState>, Json(b): Json<CreateLink>) -> ApiResult {
-    let node_id = repo::create_link(
+    let link = repo::create_link(
         &s.pool,
         NewLink {
             project_id: b.project_id,
@@ -595,7 +603,7 @@ async fn create_link(State(s): State<AppState>, Json(b): Json<CreateLink>) -> Ap
         },
     )
     .await?;
-    Ok(Json(json!({ "node_id": node_id })))
+    Ok(Json(json!(link)))
 }
 
 #[derive(Deserialize)]
@@ -622,7 +630,10 @@ async fn update_link(
     if let Some(t) = &b.tags {
         repo::set_node_tags(&s.pool, node_id, t).await?;
     }
-    Ok(Json(json!({ "ok": true })))
+    match repo::get_link(&s.pool, node_id).await? {
+        Some(link) => Ok(Json(json!(link))),
+        None => Err(not_found(format!("no link with node_id {node_id}"))),
+    }
 }
 
 // --- topics and daily planning --------------------------------------------
@@ -655,7 +666,7 @@ struct CreateTopic {
 }
 
 async fn create_topic(State(s): State<AppState>, Json(b): Json<CreateTopic>) -> ApiResult {
-    let node_id = topics::create_topic(
+    let topic = topics::create_topic(
         &s.pool,
         topics::NewTopic {
             project_id: b.project_id,
@@ -666,11 +677,14 @@ async fn create_topic(State(s): State<AppState>, Json(b): Json<CreateTopic>) -> 
         },
     )
     .await?;
-    Ok(Json(json!({ "node_id": node_id })))
+    Ok(Json(json!(topic)))
 }
 
 async fn get_topic(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
-    Ok(Json(json!(topics::get_topic(&s.pool, node_id).await?)))
+    match topics::get_topic(&s.pool, node_id).await? {
+        Some(topic) => Ok(Json(json!(topic))),
+        None => Err(not_found(format!("no topic with node_id {node_id}"))),
+    }
 }
 
 #[derive(Deserialize)]
@@ -690,7 +704,7 @@ async fn update_topic(
     Path(node_id): Path<i64>,
     Json(b): Json<UpdateTopic>,
 ) -> ApiResult {
-    topics::update_topic(
+    let topic = topics::update_topic(
         &s.pool,
         node_id,
         topics::TopicPatch {
@@ -701,7 +715,7 @@ async fn update_topic(
         },
     )
     .await?;
-    Ok(Json(json!({ "ok": true })))
+    Ok(Json(json!(topic)))
 }
 
 #[derive(Deserialize)]
@@ -719,8 +733,8 @@ async fn archive_topic(
     Path(node_id): Path<i64>,
     Json(b): Json<ArchiveTopic>,
 ) -> ApiResult {
-    topics::archive_topic(&s.pool, node_id, b.archived).await?;
-    Ok(Json(json!({ "ok": true })))
+    let topic = topics::archive_topic(&s.pool, node_id, b.archived).await?;
+    Ok(Json(json!(topic)))
 }
 
 #[derive(Deserialize)]
@@ -746,14 +760,14 @@ async fn create_daily_plan_item(
     Json(b): Json<CreateDailyPlanItem>,
 ) -> ApiResult {
     let context = s.config.lifecycle_context()?;
-    let node_id = daily_plan::create_item(
+    let item = daily_plan::create_item(
         &s.pool,
         b.source_node_id,
         parse_date(&b.plan_date)?,
         &context,
     )
     .await?;
-    Ok(Json(json!({ "node_id": node_id })))
+    Ok(Json(json!(item)))
 }
 
 #[derive(Deserialize)]
@@ -766,19 +780,19 @@ async fn set_daily_plan_completion(
     Path(node_id): Path<i64>,
     Json(b): Json<SetCompletion>,
 ) -> ApiResult {
-    daily_plan::set_completion(
+    let item = daily_plan::set_completion(
         &s.pool,
         node_id,
         b.completed,
         &s.config.lifecycle_context()?,
     )
     .await?;
-    Ok(Json(json!({ "ok": true })))
+    Ok(Json(json!(item)))
 }
 
 async fn delete_daily_plan_item(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
     daily_plan::delete_item(&s.pool, node_id, &s.config.lifecycle_context()?).await?;
-    Ok(Json(json!({ "ok": true })))
+    Ok(Json(json!({ "deleted": true })))
 }
 
 #[derive(Deserialize)]
@@ -791,14 +805,14 @@ async fn reorder_daily_plan(
     Path(plan_date): Path<String>,
     Json(b): Json<ReorderDailyPlan>,
 ) -> ApiResult {
-    daily_plan::reorder_day(
+    let items = daily_plan::reorder_day(
         &s.pool,
         parse_date(&plan_date)?,
         &b.node_ids,
         &s.config.lifecycle_context()?,
     )
     .await?;
-    Ok(Json(json!({ "ok": true })))
+    Ok(Json(json!(items)))
 }
 
 #[derive(Deserialize)]
@@ -846,7 +860,7 @@ async fn daily_plan_history(State(s): State<AppState>, Query(q): Query<HistoryQu
                 "month" => 30,
                 "90days" => 90,
                 "year" => 365,
-                _ => return Err(ApiError(anyhow::anyhow!("invalid history preset"))),
+                _ => return Err(ApiError::invalid("invalid history preset")),
             };
             let to = context.today - Duration::days(1);
             (to - Duration::days(days - 1), to)
@@ -855,10 +869,10 @@ async fn daily_plan_history(State(s): State<AppState>, Query(q): Query<HistoryQu
             let from = q
                 .from
                 .as_deref()
-                .ok_or_else(|| ApiError(anyhow::anyhow!("from is required without preset")))?;
+                .ok_or_else(|| ApiError::invalid("from is required without preset"))?;
             let to =
                 q.to.as_deref()
-                    .ok_or_else(|| ApiError(anyhow::anyhow!("to is required without preset")))?;
+                    .ok_or_else(|| ApiError::invalid("to is required without preset"))?;
             (parse_date(from)?, parse_date(to)?)
         }
     };
@@ -885,18 +899,21 @@ async fn create_relationship(
 }
 
 async fn delete_relationship(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
-    repo::unrelate(&s.pool, id).await?;
-    Ok(Json(json!({ "ok": true })))
+    let deleted = repo::unrelate(&s.pool, id).await?;
+    Ok(Json(json!({ "deleted": deleted })))
 }
 
 async fn neighbors(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
     Ok(Json(json!(repo::neighbors(&s.pool, id).await?)))
 }
 
-/// Kind-agnostic preview of any node by its id (WI #260). Returns `null` when
-/// no node has that id, so the find-by-ID box can say "not found" cleanly.
+/// Kind-agnostic preview of any node by its id (WI #260). 404 when no node has
+/// that id (D-6) — the find-by-ID box branches on the status.
 async fn get_node(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
-    Ok(Json(json!(repo::get_node_preview(&s.pool, id).await?)))
+    match repo::get_node_preview(&s.pool, id).await? {
+        Some(preview) => Ok(Json(json!(preview))),
+        None => Err(not_found(format!("no node with id {id}"))),
+    }
 }
 
 /// Plan view payload: a project's work items plus its `depends_on` edges
@@ -925,9 +942,7 @@ async fn list_reports(State(s): State<AppState>, Query(q): Query<ReportsQuery>) 
 async fn get_report(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
     match repo::get_report(&s.pool, node_id).await? {
         Some(r) => Ok(Json(json!(r))),
-        None => Err(ApiError(anyhow::anyhow!(
-            "no report with node_id {node_id}"
-        ))),
+        None => Err(not_found(format!("no report with node_id {node_id}"))),
     }
 }
 
@@ -963,7 +978,7 @@ struct CreateProposal {
 }
 
 async fn create_proposal(State(s): State<AppState>, Json(b): Json<CreateProposal>) -> ApiResult {
-    let rank = Decimal::try_from(b.rank).map_err(|e| ApiError(anyhow::anyhow!("rank: {e}")))?;
+    let rank = Decimal::try_from(b.rank).map_err(|e| ApiError::invalid(format!("rank: {e}")))?;
     let r = repo::create_proposal(
         &s.pool,
         NewProposal {
@@ -978,7 +993,7 @@ async fn create_proposal(State(s): State<AppState>, Json(b): Json<CreateProposal
         },
     )
     .await?;
-    Ok(Json(json!({ "node_id": r.node_id, "covered": r.covered })))
+    Ok(Json(json!(r)))
 }
 
 #[derive(Deserialize)]
@@ -1005,10 +1020,10 @@ async fn update_proposal(
     Json(b): Json<UpdateProposal>,
 ) -> ApiResult {
     let rank = match b.rank {
-        Some(r) => Some(Decimal::try_from(r).map_err(|e| ApiError(anyhow::anyhow!("rank: {e}")))?),
+        Some(r) => Some(Decimal::try_from(r).map_err(|e| ApiError::invalid(format!("rank: {e}")))?),
         None => None,
     };
-    repo::update_proposal(
+    let proposal = repo::update_proposal(
         &s.pool,
         node_id,
         ProposalPatch {
@@ -1022,7 +1037,7 @@ async fn update_proposal(
         },
     )
     .await?;
-    Ok(Json(json!({ "ok": true })))
+    Ok(Json(json!(proposal)))
 }
 
 #[cfg(test)]

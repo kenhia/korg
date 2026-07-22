@@ -122,7 +122,7 @@ pub async fn create_item(
     source_node_id: i64,
     plan_date: Date,
     context: &LifecycleContext,
-) -> Result<i64> {
+) -> Result<DailyPlanItem> {
     if plan_date < context.today {
         return Err(PlanningError::TargetPast);
     }
@@ -151,7 +151,24 @@ pub async fn create_item(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok(node_id)
+    reread(pool, node_id).await
+}
+
+/// One planned item by node id — the read every mutation acknowledges with
+/// (WI #525).
+pub async fn get_item(pool: &PgPool, node_id: i64) -> Result<Option<DailyPlanItem>> {
+    Ok(
+        sqlx::query_as::<_, DailyPlanItem>(&format!("{SELECT_ITEMS} WHERE d.node_id = $1"))
+            .bind(node_id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+async fn reread(pool: &PgPool, node_id: i64) -> Result<DailyPlanItem> {
+    get_item(pool, node_id)
+        .await?
+        .ok_or(PlanningError::ItemNotFound(node_id))
 }
 
 pub async fn list_items(pool: &PgPool, from: Date, to: Date) -> Result<Vec<DailyPlanItem>> {
@@ -172,7 +189,7 @@ pub async fn set_completion(
     node_id: i64,
     completed: bool,
     context: &LifecycleContext,
-) -> Result<()> {
+) -> Result<DailyPlanItem> {
     let result = sqlx::query(
         "UPDATE daily_plan_item SET completed_at = CASE WHEN $2 THEN $3 ELSE NULL END WHERE node_id = $1",
     )
@@ -184,7 +201,7 @@ pub async fn set_completion(
     if result.rows_affected() == 0 {
         return Err(PlanningError::ItemNotFound(node_id));
     }
-    Ok(())
+    reread(pool, node_id).await
 }
 
 async fn item_location(
@@ -212,7 +229,7 @@ pub async fn reorder_day(
     plan_date: Date,
     ordered_node_ids: &[i64],
     context: &LifecycleContext,
-) -> Result<()> {
+) -> Result<Vec<DailyPlanItem>> {
     if plan_date < context.today {
         return Err(PlanningError::FrozenPast);
     }
@@ -239,7 +256,7 @@ pub async fn reorder_day(
             .await?;
     }
     tx.commit().await?;
-    Ok(())
+    list_items(pool, plan_date, plan_date).await
 }
 
 pub async fn delete_item(pool: &PgPool, node_id: i64, context: &LifecycleContext) -> Result<()> {

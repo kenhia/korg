@@ -153,7 +153,11 @@ async fn mcp_surface_end_to_end() {
             .await
             .unwrap(),
     );
-    assert_eq!(completed["ok"], true);
+    assert_eq!(completed["node_id"].as_i64(), Some(planned_node));
+    assert!(
+        completed["completed_at"].is_string(),
+        "completion acknowledged"
+    );
     let moved = body(
         &server
             .call(
@@ -213,7 +217,9 @@ async fn update_work_item_partial_and_nullable() {
             .await
             .unwrap(),
     );
-    assert_eq!(res["ok"], json!(true));
+    // Mutations acknowledge with the post-write row (WI #525), not `{ok:true}`.
+    assert_eq!(res["wi_number"], json!(n));
+    assert_eq!(res["wi_status"], "resolved");
 
     let got = body(
         &server
@@ -334,7 +340,8 @@ async fn mcp_coverage_gaps_end_to_end() {
             .await
             .unwrap(),
     );
-    assert_eq!(upd["ok"], json!(true));
+    assert_eq!(upd["node_id"], json!(card_node));
+    assert_eq!(upd["status"], "Active");
     let cards = body(&server.call("list_cards", args(json!({}))).await.unwrap());
     let c = &cards.as_array().unwrap()[0];
     assert_eq!(c["status"], "Active", "card status moved");
@@ -705,4 +712,151 @@ async fn survey_work_items_paginates_and_filters() {
         5,
         "closed item excluded by the status filter"
     );
+}
+
+/// The MCP half of the §4.2 matrix: not-found reads and missing/cross-kind
+/// mutation targets are `isError` results carrying a `code`, not successful
+/// `null`s and not `{"ok":true}` (D-5, D-6, F-03, F-04).
+#[tokio::test]
+async fn typed_errors_carry_codes_and_never_lie_about_success() {
+    let (_c, pool) = fresh_korg().await;
+    let server = server(pool);
+
+    /// Assert an `isError` result with the given code, returning its message.
+    fn err(result: &CallToolResult, code: &str, what: &str) {
+        assert_eq!(result.is_error, Some(true), "{what}: expected isError");
+        let text = result.content[0]
+            .as_text()
+            .expect("text content")
+            .text
+            .clone();
+        let body: Value = serde_json::from_str(&text).expect("error body is json");
+        assert_eq!(body["code"], code, "{what}: code (body {body:?})");
+        assert!(
+            body["message"].as_str().is_some_and(|m| !m.is_empty()),
+            "{what}: message"
+        );
+    }
+
+    let wi = body(
+        &server
+            .call(
+                "create_work_item",
+                args(json!({"title":"real","content":"c"})),
+            )
+            .await
+            .unwrap(),
+    );
+    let n = wi["wi_number"].as_i64().unwrap();
+
+    err(
+        &server
+            .call("update_work_item", args(json!({"wi_number":9999})))
+            .await
+            .unwrap(),
+        "not_found",
+        "update_work_item on a missing number",
+    );
+    err(
+        &server
+            .call("get_work_item", args(json!({"wi_number":9999})))
+            .await
+            .unwrap(),
+        "not_found",
+        "get_work_item on a missing number",
+    );
+    err(
+        &server
+            .call("get_report", args(json!({"node_id":9999})))
+            .await
+            .unwrap(),
+        "not_found",
+        "get_report on a missing node",
+    );
+    err(
+        &server
+            .call("get_topic", args(json!({"node_id":9999})))
+            .await
+            .unwrap(),
+        "not_found",
+        "get_topic on a missing node",
+    );
+    err(
+        &server
+            .call(
+                "relate",
+                args(json!({"left":n,"right":9999,"label":"related-to"})),
+            )
+            .await
+            .unwrap(),
+        "not_found",
+        "relate to a missing node",
+    );
+    err(
+        &server
+            .call("add_comment", args(json!({"node_id":9999,"body":"orphan"})))
+            .await
+            .unwrap(),
+        "not_found",
+        "comment on a missing node",
+    );
+    err(
+        &server
+            .call(
+                "update_work_item",
+                args(json!({"wi_number":n,"wi_tshirt":"GIGANTIC"})),
+            )
+            .await
+            .unwrap(),
+        "invalid_input",
+        "unknown t-shirt size",
+    );
+    err(
+        &server
+            .call(
+                "update_work_item",
+                args(json!({"wi_number":n,"wi_type":"taks"})),
+            )
+            .await
+            .unwrap(),
+        "invalid_input",
+        "unknown wi_type",
+    );
+
+    // The cross-kind hazard: a work item's node id is not a card's (F-04).
+    err(
+        &server
+            .call(
+                "update_card",
+                args(json!({"node_id":n,"archived":true,"title":"hijack"})),
+            )
+            .await
+            .unwrap(),
+        "not_found",
+        "update_card against a work item",
+    );
+    let got = body(
+        &server
+            .call("get_work_item", args(json!({"wi_number":n})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(got["archived"], false, "work item untouched");
+    assert_eq!(got["title"], "real", "work item untouched");
+
+    // Deletes say what they did.
+    let gone = body(
+        &server
+            .call("delete_comment", args(json!({"id":9999})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(gone["deleted"], false, "nothing to delete");
+    let gone = body(
+        &server
+            .call("unrelate", args(json!({"id":9999})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(gone["deleted"], false, "no such edge");
 }

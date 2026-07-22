@@ -62,7 +62,8 @@ async fn api_repo_links_cards_projects() {
         },
     )
     .await
-    .unwrap();
+    .unwrap()
+    .node_id;
     assert_eq!(list_links(&pool).await.unwrap()[0].disposition, "Unread");
     set_link_disposition(&pool, link, "Revisit").await.unwrap();
     set_node_tags(&pool, link, &["rust".into(), "mcp".into()])
@@ -86,7 +87,8 @@ async fn api_repo_links_cards_projects() {
         },
     )
     .await
-    .unwrap();
+    .unwrap()
+    .node_id;
     update_card(
         &pool,
         card,

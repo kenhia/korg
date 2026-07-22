@@ -53,7 +53,9 @@ async fn move_between_projects_and_area_validation() {
     let area_a = create_area(&pool, "A", "ui", None).await.unwrap();
     let area_b = create_area(&pool, "B", "backend", None).await.unwrap();
 
-    let wi = create_work_item(&pool, new_wi(pa, Some(area_a))).await.unwrap();
+    let wi = create_work_item(&pool, new_wi(pa, Some(area_a)))
+        .await
+        .unwrap();
 
     // Move to B without naming an area → the now-foreign area is dropped.
     update_work_item(
@@ -98,7 +100,12 @@ async fn move_between_projects_and_area_validation() {
     .await
     .unwrap();
     assert_eq!(
-        get_work_item(&pool, wi.wi_number).await.unwrap().unwrap().area.as_deref(),
+        get_work_item(&pool, wi.wi_number)
+            .await
+            .unwrap()
+            .unwrap()
+            .area
+            .as_deref(),
         Some("backend")
     );
 
@@ -126,7 +133,10 @@ async fn get_work_item_detail_inlines_capped_comments() {
     let wi = create_work_item(&pool, new_wi(p, None)).await.unwrap();
 
     // No comments: empty, not truncated, count 0.
-    let d = get_work_item_detail(&pool, wi.wi_number).await.unwrap().unwrap();
+    let d = get_work_item_detail(&pool, wi.wi_number)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(d.item.comment_count, 0);
     assert!(d.comments.is_empty());
     assert!(!d.comments_truncated);
@@ -134,9 +144,14 @@ async fn get_work_item_detail_inlines_capped_comments() {
     // More than the cap: capped list, truncated flag, true total.
     let over = WORKITEM_COMMENT_CAP + 2;
     for i in 0..over {
-        add_comment(&pool, wi.node_id, &format!("c{i}")).await.unwrap();
+        add_comment(&pool, wi.node_id, &format!("c{i}"))
+            .await
+            .unwrap();
     }
-    let d = get_work_item_detail(&pool, wi.wi_number).await.unwrap().unwrap();
+    let d = get_work_item_detail(&pool, wi.wi_number)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(d.item.comment_count, over);
     assert_eq!(d.comments.len() as i64, WORKITEM_COMMENT_CAP);
     assert!(d.comments_truncated);
@@ -147,5 +162,8 @@ async fn get_work_item_detail_inlines_capped_comments() {
     assert_eq!(row.comment_count, over);
 
     // Missing work item → None.
-    assert!(get_work_item_detail(&pool, 999_999).await.unwrap().is_none());
+    assert!(get_work_item_detail(&pool, 999_999)
+        .await
+        .unwrap()
+        .is_none());
 }

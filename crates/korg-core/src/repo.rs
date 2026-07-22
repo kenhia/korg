@@ -8,46 +8,51 @@
 use anyhow::Result;
 use rust_decimal::Decimal;
 use serde::Serialize;
-use sqlx::{PgPool, Row};
+use sqlx::{Executor, PgPool, Postgres, Row};
 use time::OffsetDateTime;
 
-/// Domain errors the API surface should translate to 4xx rather than 500
-/// (WI #289). Anything else stays an opaque `anyhow` error → 500. Carried
-/// through `anyhow` and recovered by `downcast_ref` in korg-api's error layer.
-#[derive(Debug, thiserror::Error)]
-pub enum RepoError {
-    /// Caller passed a bad value (unknown status, area not in project, …) → 400.
-    #[error("{0}")]
-    InvalidInput(String),
-    /// Named/keyed entity doesn't exist (no project X, …) → 404.
-    #[error("{0}")]
-    NotFound(String),
+pub use crate::error::RepoError;
+use crate::vocab::{self, CARD_STATUSES, LINK_DISPOSITIONS, PROPOSAL_STATUSES, REPORT_STATUSES};
+pub use crate::vocab::{PROJECT_STATUSES, WI_STATUSES};
+
+fn validate_status(value: &str, allowed: &[&str], what: &str) -> Result<()> {
+    Ok(vocab::validate(value, allowed, what)?)
+}
+
+/// Every mutation starts here (WI #525): the target must exist *and* be the
+/// kind the operation is about. Without the kind half, `update_card` against a
+/// work item's node id silently archived the work item and reported success —
+/// exactly the slip an agent makes now that `wi_number == node_id`.
+async fn require_kind<'e, E>(executor: E, node_id: i64, kind: &str, what: &str) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let found: Option<String> = sqlx::query_scalar("SELECT kind FROM node WHERE id = $1")
+        .bind(node_id)
+        .fetch_optional(executor)
+        .await?;
+    match found.as_deref() {
+        Some(k) if k == kind => Ok(()),
+        _ => Err(RepoError::NotFound(format!("no {what} with node_id {node_id}")).into()),
+    }
+}
+
+/// Existence check for operations that legitimately span kinds (comments,
+/// relationships, tags).
+async fn require_node<'e, E>(executor: E, node_id: i64) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM node WHERE id = $1")
+        .bind(node_id)
+        .fetch_optional(executor)
+        .await?;
+    exists
+        .map(|_| ())
+        .ok_or_else(|| RepoError::NotFound(format!("no node with id {node_id}")).into())
 }
 
 // --- work items -----------------------------------------------------------
-
-/// Canonical work-item statuses (WI #285). Lifecycle: `open → resolved`
-/// (implemented; may still need a user test / may not be PR'd) `→ done`
-/// (agent satisfied — terminal but still visible in default lists)
-/// `→ closed` (Ken only; hidden by default). Writes outside this set are
-/// rejected.
-pub const WI_STATUSES: [&str; 4] = ["open", "resolved", "done", "closed"];
-
-/// Project lifecycle statuses (WI #246). Default WI-page rail shows only
-/// `active` + `maintenance` unless "show all" is on.
-pub const PROJECT_STATUSES: [&str; 4] = ["active", "maintenance", "inactive", "archived"];
-
-fn validate_status(value: &str, allowed: &[&str], what: &str) -> Result<()> {
-    if allowed.contains(&value) {
-        Ok(())
-    } else {
-        Err(RepoError::InvalidInput(format!(
-            "invalid {what} '{value}' — expected one of: {}",
-            allowed.join(", ")
-        ))
-        .into())
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct NewWorkItem {
@@ -64,14 +69,32 @@ pub struct NewWorkItem {
     pub tags: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct WorkItemRef {
-    pub node_id: i64,
-    pub wi_number: i64,
-}
-
-pub async fn create_work_item(pool: &PgPool, new: NewWorkItem) -> Result<WorkItemRef> {
+/// Create a work item and return the row a read would return (WI #525) — a
+/// superset of the old `{node_id, wi_number}` acknowledgement.
+pub async fn create_work_item(pool: &PgPool, new: NewWorkItem) -> Result<WorkItemRow> {
     validate_status(&new.wi_status, &WI_STATUSES, "wi_status")?;
+    validate_status(&new.wi_type, &vocab::WI_TYPES, "wi_type")?;
+    validate_status(&new.wi_tshirt, &vocab::WI_TSHIRTS, "wi_tshirt")?;
+    // An area belongs to exactly one project; `update_work_item` has always
+    // enforced that, `create_work_item` did not (WI #526).
+    if let Some(area_id) = new.area_id {
+        let area_pid: Option<i64> = sqlx::query_scalar("SELECT project_id FROM area WHERE id = $1")
+            .bind(area_id)
+            .fetch_optional(pool)
+            .await?;
+        match area_pid {
+            None => {
+                return Err(RepoError::NotFound(format!("no area with id {area_id}")).into());
+            }
+            Some(pid) if Some(pid) != new.project_id => {
+                return Err(RepoError::InvalidInput(format!(
+                    "area {area_id} does not belong to the work item's project"
+                ))
+                .into());
+            }
+            Some(_) => {}
+        }
+    }
     let mut tx = pool.begin().await?;
     let node_id: i64 = sqlx::query(
         "INSERT INTO node (kind, project_id, category, tags) \
@@ -104,7 +127,9 @@ pub async fn create_work_item(pool: &PgPool, new: NewWorkItem) -> Result<WorkIte
     .get("wi_number");
 
     tx.commit().await?;
-    Ok(WorkItemRef { node_id, wi_number })
+    get_work_item(pool, wi_number)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no work item #{wi_number}")).into())
 }
 
 // --- cards ----------------------------------------------------------------
@@ -120,7 +145,8 @@ pub struct NewCard {
     pub rank: Decimal,
 }
 
-pub async fn create_card(pool: &PgPool, new: NewCard) -> Result<i64> {
+pub async fn create_card(pool: &PgPool, new: NewCard) -> Result<CardRow> {
+    validate_status(&new.status, &CARD_STATUSES, "card status")?;
     let mut tx = pool.begin().await?;
     let node_id: i64 = sqlx::query(
         "INSERT INTO node (kind, project_id, category, tags) \
@@ -146,7 +172,9 @@ pub async fn create_card(pool: &PgPool, new: NewCard) -> Result<i64> {
     .await?;
 
     tx.commit().await?;
-    Ok(node_id)
+    get_card(pool, node_id)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no card with node_id {node_id}")).into())
 }
 
 // --- reading-list links ---------------------------------------------------
@@ -171,7 +199,7 @@ pub struct LinkRow {
     pub tags: Vec<String>,
 }
 
-pub async fn create_link(pool: &PgPool, new: NewLink) -> Result<i64> {
+pub async fn create_link(pool: &PgPool, new: NewLink) -> Result<LinkRow> {
     let mut tx = pool.begin().await?;
     let node_id: i64 = sqlx::query(
         "INSERT INTO node (kind, project_id, category, tags) \
@@ -192,32 +220,50 @@ pub async fn create_link(pool: &PgPool, new: NewLink) -> Result<i64> {
         .await?;
 
     tx.commit().await?;
-    Ok(node_id)
+    get_link(pool, node_id)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no link with node_id {node_id}")).into())
 }
 
+const LINK_SELECT: &str =
+    "SELECT l.node_id, l.url, l.title, l.read, l.disposition::text AS disposition, \
+            n.category, n.tags \
+     FROM link l JOIN node n ON n.id = l.node_id";
+
 pub async fn list_links(pool: &PgPool) -> Result<Vec<LinkRow>> {
-    let rows = sqlx::query_as::<_, LinkRow>(
-        "SELECT l.node_id, l.url, l.title, l.read, l.disposition::text AS disposition, \
-                n.category, n.tags \
-         FROM link l JOIN node n ON n.id = l.node_id \
-         ORDER BY l.node_id",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows = sqlx::query_as::<_, LinkRow>(&format!("{LINK_SELECT} ORDER BY l.node_id"))
+        .fetch_all(pool)
+        .await?;
     Ok(rows)
 }
 
-pub async fn set_link_disposition(pool: &PgPool, node_id: i64, disposition: &str) -> Result<()> {
+pub async fn get_link(pool: &PgPool, node_id: i64) -> Result<Option<LinkRow>> {
+    Ok(
+        sqlx::query_as::<_, LinkRow>(&format!("{LINK_SELECT} WHERE l.node_id = $1"))
+            .bind(node_id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+pub async fn set_link_disposition(
+    pool: &PgPool,
+    node_id: i64,
+    disposition: &str,
+) -> Result<LinkRow> {
+    validate_status(disposition, &LINK_DISPOSITIONS, "link disposition")?;
+    require_kind(pool, node_id, "link", "link").await?;
     sqlx::query("UPDATE link SET disposition = $2::link_disposition WHERE node_id = $1")
         .bind(node_id)
         .bind(disposition)
         .execute(pool)
         .await?;
-    Ok(())
+    reread_link(pool, node_id).await
 }
 
 /// Update the cross-cutting tags on any node.
 pub async fn set_node_tags(pool: &PgPool, node_id: i64, tags: &[String]) -> Result<()> {
+    require_node(pool, node_id).await?;
     sqlx::query("UPDATE node SET tags = $2 WHERE id = $1")
         .bind(node_id)
         .bind(tags)
@@ -226,13 +272,20 @@ pub async fn set_node_tags(pool: &PgPool, node_id: i64, tags: &[String]) -> Resu
     Ok(())
 }
 
-pub async fn mark_link_read(pool: &PgPool, node_id: i64, read: bool) -> Result<()> {
+pub async fn mark_link_read(pool: &PgPool, node_id: i64, read: bool) -> Result<LinkRow> {
+    require_kind(pool, node_id, "link", "link").await?;
     sqlx::query("UPDATE link SET read = $2 WHERE node_id = $1")
         .bind(node_id)
         .bind(read)
         .execute(pool)
         .await?;
-    Ok(())
+    reread_link(pool, node_id).await
+}
+
+async fn reread_link(pool: &PgPool, node_id: i64) -> Result<LinkRow> {
+    get_link(pool, node_id)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no link with node_id {node_id}")).into())
 }
 
 // --- generalized relationships --------------------------------------------
@@ -249,6 +302,10 @@ pub struct Neighbor {
 }
 
 pub async fn relate(pool: &PgPool, left: i64, right: i64, label: &str) -> Result<i64> {
+    // Endpoints are checked up front so a typo'd node id is a 404, not a raw
+    // FK violation surfaced as a 500 (WI #524).
+    require_node(pool, left).await?;
+    require_node(pool, right).await?;
     // Relationships are DIRECTED (sprint 008, supersedes WI #84's undirected
     // canonicalization): the label reads left-to-right, e.g. left `depends_on`
     // right. Exact duplicates still dedup via the unique constraint; the
@@ -308,12 +365,14 @@ pub async fn project_edges(pool: &PgPool, project: &str, label: &str) -> Result<
     Ok(rows)
 }
 
-pub async fn unrelate(pool: &PgPool, id: i64) -> Result<()> {
-    sqlx::query("DELETE FROM relationship WHERE id = $1")
+/// Delete an edge; `false` means there was nothing with that id (WI #525 —
+/// deletes report what they did instead of always claiming success).
+pub async fn unrelate(pool: &PgPool, id: i64) -> Result<bool> {
+    let result = sqlx::query("DELETE FROM relationship WHERE id = $1")
         .bind(id)
         .execute(pool)
         .await?;
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
 // --- cross-kind node preview (WI #260) -------------------------------------
@@ -608,10 +667,7 @@ pub struct WorkItemDetail {
 
 /// `get_work_item` plus inlined, capped comments (WI #392). `None` if the
 /// work item doesn't exist.
-pub async fn get_work_item_detail(
-    pool: &PgPool,
-    wi_number: i64,
-) -> Result<Option<WorkItemDetail>> {
+pub async fn get_work_item_detail(pool: &PgPool, wi_number: i64) -> Result<Option<WorkItemDetail>> {
     let Some(item) = get_work_item(pool, wi_number).await? else {
         return Ok(None);
     };
@@ -739,18 +795,28 @@ pub struct CardRow {
     pub updated: OffsetDateTime,
 }
 
+const CARD_SELECT: &str =
+    "SELECT c.node_id, c.status::text AS status, c.title, c.description, c.rank, \
+            pj.name AS project, n.category, n.tags, n.archived, n.created, n.updated \
+     FROM card c \
+     JOIN node n ON n.id = c.node_id \
+     LEFT JOIN project pj ON pj.id = n.project_id";
+
 pub async fn list_cards(pool: &PgPool) -> Result<Vec<CardRow>> {
-    let rows = sqlx::query_as::<_, CardRow>(
-        "SELECT c.node_id, c.status::text AS status, c.title, c.description, c.rank, \
-                pj.name AS project, n.category, n.tags, n.archived, n.created, n.updated \
-         FROM card c \
-         JOIN node n ON n.id = c.node_id \
-         LEFT JOIN project pj ON pj.id = n.project_id \
-         ORDER BY c.status, c.rank ASC",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows =
+        sqlx::query_as::<_, CardRow>(&format!("{CARD_SELECT} ORDER BY c.status, c.rank ASC"))
+            .fetch_all(pool)
+            .await?;
     Ok(rows)
+}
+
+pub async fn get_card(pool: &PgPool, node_id: i64) -> Result<Option<CardRow>> {
+    Ok(
+        sqlx::query_as::<_, CardRow>(&format!("{CARD_SELECT} WHERE c.node_id = $1"))
+            .bind(node_id)
+            .fetch_optional(pool)
+            .await?,
+    )
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
@@ -782,7 +848,7 @@ pub struct ProjectPatch {
     pub category: Option<Option<String>>,
 }
 
-pub async fn update_project(pool: &PgPool, id: i64, patch: &ProjectPatch) -> Result<()> {
+pub async fn update_project(pool: &PgPool, id: i64, patch: &ProjectPatch) -> Result<ProjectRow> {
     if let Some(v) = &patch.status {
         validate_status(v, &PROJECT_STATUSES, "project status")?;
     }
@@ -844,12 +910,18 @@ pub async fn update_project(pool: &PgPool, id: i64, patch: &ProjectPatch) -> Res
             .await?;
     }
     tx.commit().await?;
-    Ok(())
+    get_project(pool, id)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no project with id {id}")).into())
 }
 
 /// Name-keyed wrapper (the REST/MCP surfaces key projects by name; the
 /// name itself is immutable — see WI #246).
-pub async fn update_project_by_name(pool: &PgPool, name: &str, patch: &ProjectPatch) -> Result<()> {
+pub async fn update_project_by_name(
+    pool: &PgPool,
+    name: &str,
+    patch: &ProjectPatch,
+) -> Result<ProjectRow> {
     let id: Option<i64> = sqlx::query_scalar("SELECT id FROM project WHERE name = $1")
         .bind(name)
         .fetch_optional(pool)
@@ -860,14 +932,24 @@ pub async fn update_project_by_name(pool: &PgPool, name: &str, patch: &ProjectPa
     }
 }
 
+const PROJECT_SELECT: &str =
+    "SELECT id, name, gh_repo, cn_path, description, status, machines, deploy_to, category \
+     FROM project";
+
 pub async fn list_projects(pool: &PgPool) -> Result<Vec<ProjectRow>> {
-    let rows = sqlx::query_as::<_, ProjectRow>(
-        "SELECT id, name, gh_repo, cn_path, description, status, machines, deploy_to, category \
-         FROM project ORDER BY name",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows = sqlx::query_as::<_, ProjectRow>(&format!("{PROJECT_SELECT} ORDER BY name"))
+        .fetch_all(pool)
+        .await?;
     Ok(rows)
+}
+
+pub async fn get_project(pool: &PgPool, id: i64) -> Result<Option<ProjectRow>> {
+    Ok(
+        sqlx::query_as::<_, ProjectRow>(&format!("{PROJECT_SELECT} WHERE id = $1"))
+            .bind(id)
+            .fetch_optional(pool)
+            .await?,
+    )
 }
 
 // --- projects (write) -----------------------------------------------------
@@ -920,8 +1002,12 @@ pub struct CardPatch {
     pub tags: Option<Vec<String>>,
 }
 
-pub async fn update_card(pool: &PgPool, node_id: i64, patch: CardPatch) -> Result<()> {
+pub async fn update_card(pool: &PgPool, node_id: i64, patch: CardPatch) -> Result<CardRow> {
+    if let Some(status) = &patch.status {
+        validate_status(status, &CARD_STATUSES, "card status")?;
+    }
     let mut tx = pool.begin().await?;
+    require_kind(&mut *tx, node_id, "card", "card").await?;
     if let Some(status) = &patch.status {
         sqlx::query("UPDATE card SET status = $2::card_status WHERE node_id = $1")
             .bind(node_id)
@@ -979,7 +1065,9 @@ pub async fn update_card(pool: &PgPool, node_id: i64, patch: CardPatch) -> Resul
             .await?;
     }
     tx.commit().await?;
-    Ok(())
+    get_card(pool, node_id)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no card with node_id {node_id}")).into())
 }
 
 // --- comments -------------------------------------------------------------
@@ -1008,6 +1096,7 @@ pub async fn list_comments(pool: &PgPool, node_id: i64) -> Result<Vec<Comment>> 
 }
 
 pub async fn add_comment(pool: &PgPool, node_id: i64, body: &str) -> Result<Comment> {
+    require_node(pool, node_id).await?;
     let c = sqlx::query_as::<_, Comment>(
         "INSERT INTO comment (node_id, body) VALUES ($1, $2) \
          RETURNING id, node_id, body, created, updated",
@@ -1030,15 +1119,16 @@ pub async fn update_comment(pool: &PgPool, id: i64, body: &str) -> Result<Commen
     .bind(body)
     .fetch_optional(pool)
     .await?;
-    c.ok_or_else(|| anyhow::anyhow!("no comment with id {id}"))
+    c.ok_or_else(|| RepoError::NotFound(format!("no comment with id {id}")).into())
 }
 
-pub async fn delete_comment(pool: &PgPool, id: i64) -> Result<()> {
-    sqlx::query("DELETE FROM comment WHERE id = $1")
+/// Delete a comment; `false` means there was no such comment (WI #525).
+pub async fn delete_comment(pool: &PgPool, id: i64) -> Result<bool> {
+    let result = sqlx::query("DELETE FROM comment WHERE id = $1")
         .bind(id)
         .execute(pool)
         .await?;
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
 // --- areas ----------------------------------------------------------------
@@ -1076,9 +1166,13 @@ pub struct NewProposal {
     pub covers: Vec<i64>,
 }
 
+/// The created proposal plus which of the requested wi_numbers resolved.
+/// `covered` is the honest echo of a drop-and-report input (F-06): compare it
+/// against what you asked for.
 #[derive(Debug, Clone, Serialize)]
-pub struct ProposalRef {
-    pub node_id: i64,
+pub struct ProposalCreated {
+    #[serde(flatten)]
+    pub row: ProposalRow,
     pub covered: Vec<i64>,
 }
 
@@ -1086,7 +1180,7 @@ pub struct ProposalRef {
 /// one transaction. Mirrors `create_work_item`'s node+detail insert; the
 /// wi_number -> node_id resolution happens before the transaction, matching
 /// `update_work_item`'s handling of `parent`.
-pub async fn create_proposal(pool: &PgPool, new: NewProposal) -> Result<ProposalRef> {
+pub async fn create_proposal(pool: &PgPool, new: NewProposal) -> Result<ProposalCreated> {
     let mut covered = Vec::with_capacity(new.covers.len());
     for wi in &new.covers {
         if let Some(n) = node_id_for_wi(pool, *wi).await? {
@@ -1136,7 +1230,10 @@ pub async fn create_proposal(pool: &PgPool, new: NewProposal) -> Result<Proposal
     }
 
     tx.commit().await?;
-    Ok(ProposalRef { node_id, covered })
+    let row = get_proposal(pool, node_id)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no proposal with node_id {node_id}")))?;
+    Ok(ProposalCreated { row, covered })
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
@@ -1157,22 +1254,33 @@ pub struct ProposalRow {
     pub updated: OffsetDateTime,
 }
 
+const PROPOSAL_SELECT: &str =
+    "SELECT p.node_id, p.title, p.summary, p.status::text AS status, p.rank, p.pinned, \
+            pj.name AS project, n.category, n.tags, n.archived, n.created, n.updated \
+     FROM sprint_proposal p \
+     JOIN node n ON n.id = p.node_id \
+     LEFT JOIN project pj ON pj.id = n.project_id";
+
 /// List proposals ordered pinned-first, then by rank — the drag-order a user
 /// or agent leaves them in. `status` optionally filters (e.g. "proposed").
 pub async fn list_proposals(pool: &PgPool, status: Option<&str>) -> Result<Vec<ProposalRow>> {
-    let rows = sqlx::query_as::<_, ProposalRow>(
-        "SELECT p.node_id, p.title, p.summary, p.status::text AS status, p.rank, p.pinned, \
-                pj.name AS project, n.category, n.tags, n.archived, n.created, n.updated \
-         FROM sprint_proposal p \
-         JOIN node n ON n.id = p.node_id \
-         LEFT JOIN project pj ON pj.id = n.project_id \
-         WHERE ($1::text IS NULL OR p.status::text = $1) \
-         ORDER BY p.pinned DESC, p.rank ASC",
-    )
+    let rows = sqlx::query_as::<_, ProposalRow>(&format!(
+        "{PROPOSAL_SELECT} WHERE ($1::text IS NULL OR p.status::text = $1) \
+         ORDER BY p.pinned DESC, p.rank ASC"
+    ))
     .bind(status)
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+pub async fn get_proposal(pool: &PgPool, node_id: i64) -> Result<Option<ProposalRow>> {
+    Ok(
+        sqlx::query_as::<_, ProposalRow>(&format!("{PROPOSAL_SELECT} WHERE p.node_id = $1"))
+            .bind(node_id)
+            .fetch_optional(pool)
+            .await?,
+    )
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1189,8 +1297,16 @@ pub struct ProposalPatch {
 /// Partially update a proposal: status transitions (propose -> active ->
 /// done/declined), reorder (rank), pin, archive. Same "only bind what's
 /// present" shape as `update_card`.
-pub async fn update_proposal(pool: &PgPool, node_id: i64, patch: ProposalPatch) -> Result<()> {
+pub async fn update_proposal(
+    pool: &PgPool,
+    node_id: i64,
+    patch: ProposalPatch,
+) -> Result<ProposalRow> {
+    if let Some(v) = &patch.status {
+        validate_status(v, &PROPOSAL_STATUSES, "proposal status")?;
+    }
     let mut tx = pool.begin().await?;
+    require_kind(&mut *tx, node_id, "sprint_proposal", "proposal").await?;
     if let Some(v) = &patch.title {
         sqlx::query("UPDATE sprint_proposal SET title = $2 WHERE node_id = $1")
             .bind(node_id)
@@ -1243,7 +1359,9 @@ pub async fn update_proposal(pool: &PgPool, node_id: i64, patch: ProposalPatch) 
             .await?;
     }
     tx.commit().await?;
-    Ok(())
+    get_proposal(pool, node_id)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no proposal with node_id {node_id}")).into())
 }
 
 /// Create (or return existing) an area under a project by name.
@@ -1255,8 +1373,9 @@ pub async fn create_area(
 ) -> Result<i64> {
     let pid: i64 = sqlx::query_scalar("SELECT id FROM project WHERE name = $1")
         .bind(project)
-        .fetch_one(pool)
-        .await?;
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no project named '{project}'")))?;
     let id: i64 = sqlx::query(
         "INSERT INTO area (project_id, name, description) VALUES ($1, $2, $3) \
          ON CONFLICT (project_id, name) DO UPDATE SET description = EXCLUDED.description \
@@ -1304,14 +1423,30 @@ pub struct WorkItemPatch {
     pub tags: Option<Vec<String>>,
 }
 
-pub async fn update_work_item(pool: &PgPool, wi_number: i64, patch: WorkItemPatch) -> Result<()> {
-    let node_id = match node_id_for_wi(pool, wi_number).await? {
-        Some(n) => n,
-        None => return Ok(()),
-    };
-    // Resolve parent wi_number -> node id before the transaction.
+pub async fn update_work_item(
+    pool: &PgPool,
+    wi_number: i64,
+    patch: WorkItemPatch,
+) -> Result<WorkItemRow> {
+    let node_id = node_id_for_wi(pool, wi_number)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no work item #{wi_number}")))?;
+    if let Some(v) = &patch.wi_status {
+        validate_status(v, &WI_STATUSES, "wi_status")?;
+    }
+    if let Some(v) = &patch.wi_type {
+        validate_status(v, &vocab::WI_TYPES, "wi_type")?;
+    }
+    if let Some(v) = &patch.wi_tshirt {
+        validate_status(v, &vocab::WI_TSHIRTS, "wi_tshirt")?;
+    }
+    // Resolve parent wi_number -> node id before the transaction. An
+    // unresolvable number used to fall through to `Some(None)` — silently
+    // *clearing* the parent (F-06).
     let parent_node: Option<Option<i64>> = match &patch.parent {
-        Some(Some(num)) => Some(node_id_for_wi(pool, *num).await?),
+        Some(Some(num)) => Some(Some(node_id_for_wi(pool, *num).await?.ok_or_else(
+            || RepoError::InvalidInput(format!("no work item #{num} to use as parent")),
+        )?)),
         Some(None) => Some(None),
         None => None,
     };
@@ -1346,7 +1481,6 @@ pub async fn update_work_item(pool: &PgPool, wi_number: i64, patch: WorkItemPatc
             .await?;
     }
     if let Some(v) = &patch.wi_status {
-        validate_status(v, &WI_STATUSES, "wi_status")?;
         sqlx::query("UPDATE workitem SET wi_status = $2 WHERE node_id = $1")
             .bind(node_id)
             .bind(v)
@@ -1475,7 +1609,9 @@ pub async fn update_work_item(pool: &PgPool, wi_number: i64, patch: WorkItemPatc
     }
 
     tx.commit().await?;
-    Ok(())
+    get_work_item(pool, wi_number)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no work item #{wi_number}")).into())
 }
 
 // --- daily reports (kmon et al.) --------------------------------------------
@@ -1502,8 +1638,11 @@ pub struct ReportRef {
 
 /// Create or replace the report for (source, report_date). A same-day re-run
 /// updates content in place and KEEPS the node_id, so relationships and
-/// comments survive. Finding edges (label 'finding') are added idempotently.
+/// comments survive. The finding edge set (label 'finding') is *replaced*, not
+/// accumulated (D-7): a corrected re-run that drops a finding drops its edge,
+/// so `get_report.findings` reflects the latest run only.
 pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
+    validate_status(&new.status, &REPORT_STATUSES, "report status")?;
     let mut resolved = Vec::with_capacity(new.findings.len());
     for wi in &new.findings {
         if let Some(n) = node_id_for_wi(pool, *wi).await? {
@@ -1563,6 +1702,18 @@ pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
             (id, false)
         }
     };
+
+    // Drop finding edges this run didn't produce. Orientation is still
+    // id-canonical here (F-01 / B2 fixes that), so match on "the other end".
+    sqlx::query(
+        "DELETE FROM relationship \
+         WHERE relationship = 'finding' AND (left_id = $1 OR right_id = $1) \
+           AND (CASE WHEN left_id = $1 THEN right_id ELSE left_id END) <> ALL($2)",
+    )
+    .bind(node_id)
+    .bind(&resolved)
+    .execute(&mut *tx)
+    .await?;
 
     for &target in &resolved {
         let (lo, hi) = if node_id <= target {

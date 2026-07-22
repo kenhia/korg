@@ -59,7 +59,7 @@ rooted at `/api`. Responses are JSON.
 | `GET /api/daily-plan/history`          | Historical range or `week`, `month`, `90days`, `year` preset. |
 | `POST   /api/relationships`            | Create a generalized relationship.   |
 | `DELETE /api/relationships/:id`        | Delete a relationship.               |
-| `GET    /api/nodes/:id`                | Kind-agnostic preview of any node by id (powers find-by-ID + the preview panel); `null` if none. |
+| `GET    /api/nodes/:id`                | Kind-agnostic preview of any node by id (powers find-by-ID + the preview panel); 404 if none. |
 | `GET    /api/nodes/:id/neighbors`      | List a node's related neighbors.     |
 | `GET    /api/proposals`                | List sprint proposals (optional `status` filter). |
 | `POST   /api/proposals`                | Propose a sprint: title + summary + covered `work_item_numbers` in one call. |
@@ -70,6 +70,42 @@ Example:
 ```bash
 curl -s http://localhost:8090/api/work-items | jq
 ```
+
+### Response and error contract
+
+Two rules hold across REST and MCP alike (WI #524, #525):
+
+**Mutations validate, acknowledge, and return the entity.** Every create and
+update checks that its target exists *and is the right kind*, then returns the
+full row a read would return — no bare `{"ok": true}`. Deletes return
+`{"deleted": true|false}`, so "nothing to delete" is distinguishable from
+"deleted". A missing or wrong-kind target is a 404: `PATCH /api/cards/<id>`
+where `<id>` is a work item's node fails and changes nothing, rather than
+archiving the work item and reporting success.
+
+**Errors are typed.** Error bodies are
+`{"error": "<message>", "code": "<code>"}`, where `code` is stable and
+machine-readable; MCP tool errors carry the same pair as
+`{"message", "code"}` in an `isError` result.
+
+| `code` | HTTP | Meaning |
+| ------ | ---- | ------- |
+| `invalid_input` | 400 | A value the caller supplied is not acceptable — unknown status, t-shirt size, `wi_type`, card status, disposition, unparseable date, an area outside the work item's project, an unresolvable parent. |
+| `not_found` | 404 | The named or keyed entity does not exist — including single-item reads, which 404 rather than answering `200 null`. |
+| `conflict` | 409 | Well-formed but at odds with server-enforced state (frozen past, stale reorder). |
+| `internal` | 500 | A genuine server fault. Only this class should ever be retried blindly. |
+
+Vocabularies are validated in korg-core, so an unknown value comes back as a
+400 naming the whole allowed set rather than a 500 carrying raw Postgres text:
+
+- `wi_status`: `open`, `resolved`, `done`, `closed`
+- `wi_type`: `task`, `bug`, `chore`, `feature`, `research`, `tweak`, `brainstorm`
+- `wi_tshirt`: `XS`, `S`, `M`, `L`, `XL`, `Huge`, `Unknown`
+- card `status`: `Backlog`, `Research`, `OnDeck`, `Active`, `Done`, `Cut`
+- link `disposition`: `Unread`, `Done`, `Revisit`, `Summarized`, `VaultSaved`
+- proposal `status`: `proposed`, `active`, `done`, `declined`
+- report `status`: `ok`, `attention`, `problem`
+- project `status`: `active`, `maintenance`, `inactive`, `archived`
 
 ## MCP endpoint
 
