@@ -118,6 +118,39 @@ reload (same sticky-localStorage convention as the work-items rail).
 - Production untouched: all verification ran against scratch containers, which
   were destroyed afterwards.
 
+## Deployed
+
+Deployed to `kubsdb` 2026-07-22 (post-merge, from `main` @ `677b609`) via
+`/sprint-ship`'s new Phase 7 — the first run of the deploy-from-sprint-ship
+step, driven by this repo's `.sprint-deploy`. Image `sha256:a35cf1bc…`; prior
+production image `sha256:b5d220a5…` (sprint 014) retained for rollback.
+Container healthy, 0 restarts, on the loopback+LAN binding.
+
+No schema change this sprint, but the archived default changes what the lists
+*return*, so counts were captured before the deploy and reconciled after:
+
+| | baseline (pre-deploy) | live after |
+|---|---|---|
+| work items | 375 total, 16 archived | `total=360` default, `376` with `archived=all`, `16` with `archived=true` |
+| cards | 26 | `total=26` |
+| links | 4 | `total=4` |
+| proposals | 56 | 56 |
+
+The work-item totals are +1 against the baseline because **Ken created WI #572
+("Post deploy health check?") at 18:47:07, while the image was building**.
+376 − 16 archived = 360, which is exactly what the default envelope reports —
+nothing was lost, only filtered.
+
+Verified live over `https://kubsdb.encke-wahoo.ts.net:5674`: the envelope with
+`limit=200`/`offset` paging and the `archived` tri-state (including a 400 on
+`archived=maybe`); `project` filters; `get_proposal` on `korg:557` returning
+its four covered work items with status, size and comment counts in one call;
+`GET /api/work-items/544` returning the detail shape with its comment inlined;
+`list_proposals?project=korg` carrying `covered_count`; 44 tools over MCP with
+the enveloped lists, the `archived: null` escape hatch, `get_proposal`, and
+`update_link` refusing a bad disposition with `invalid_input`; `/plan` deep
+link 200; `scripts/mcp-roundtrip-check.sh` green.
+
 ## Lock-step changes outside this repo
 
 The `start-sprint` skill now resolves a proposal with one `get_proposal` call
