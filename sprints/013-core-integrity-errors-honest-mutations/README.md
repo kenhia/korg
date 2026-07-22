@@ -123,6 +123,35 @@ validated vocabularies. The normative `docs/api.md` is B5's.
 - `--reset` guard exercised both ways: refused with the inventory in the
   message, then allowed with `KORG_RESET_CONFIRM=yes`.
 
+## Deployed
+
+Deployed to `kubsdb` 2026-07-22 (post-merge, from `main` @ `ca61464`) via the
+`deploy-kubsdb` skill. Image `sha256:d2197807…`; prior production image
+`sha256:6d0b61a5…` (sprint 012) retained for rollback. Migration 0013 applied on
+startup.
+
+Verified live over `https://kubsdb.encke-wahoo.ts.net:5674`: the §4.2 matrix
+(`PATCH`/`GET` on a missing wi_number → 404 `not_found`; missing report → 404;
+unparseable date → 400 `invalid_input`; `PATCH /api/cards/524` where 524 is a
+work item → 404 `no card with node_id 524` with WI #524 verifiably untouched),
+the MCP half of it (`get_work_item`/`update_work_item` on a missing number →
+`isError` + `not_found`; bad `wi_type` → `invalid_input` naming the vocabulary;
+cross-kind `update_card` → `not_found`), an idempotent `PATCH` returning the
+full row instead of `{"ok":true}`, `/plan` deep link 200, and
+`scripts/mcp-roundtrip-check.sh` green.
+
+**Port binding changed — read before the next deploy.** The container had been
+published on `0.0.0.0:5674`, which only ever worked because Docker happened to
+bind the port before `tailscaled` did. `tailscale serve` terminates TLS on the
+tailnet address (`100.90.99.84:5674`, plus the IPv6 tailnet address) and
+proxies to `http://localhost:5674`, so once that listener exists a `0.0.0.0`
+bind collides with it and `docker run` fails with *address already in use* —
+which is exactly what happened mid-deploy here, leaving korg down for a few
+minutes. The container is now published on `127.0.0.1:5674` **and**
+`192.168.1.60:5674`: `tailscale serve`'s `localhost` target and LAN access both
+resolve, and the ordering fragility is gone. Keep this binding on redeploy
+rather than reverting to `0.0.0.0`.
+
 ## Out of scope (per the bundle)
 
 Response envelopes and pagination, relationship direction/backfill, schema and

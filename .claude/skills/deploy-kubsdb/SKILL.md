@@ -22,13 +22,24 @@ redeploy:
 | Setting | Value |
 |---------|-------|
 | network | `kubsdb-net` |
-| ports   | `0.0.0.0:5674 -> 5674` |
+| ports   | `127.0.0.1:5674 -> 5674` **and** `192.168.1.60:5674 -> 5674` (see the warning below — do **not** use `0.0.0.0:5674`) |
 | restart | `unless-stopped` |
 | env     | `DATABASE_URL=postgres://korg:…@postgresql:5432/korg`, `KORG_WEB_DIR=/app/web/build`, `KORG_LISTEN_ADDR=0.0.0.0:5674` |
 | mounts  | none |
 
 **Never hand-copy the DB password.** Step 3 reuses the env from the running
 container via `docker inspect`, so the secret never leaves kubsdb.
+
+**Do not publish on `0.0.0.0:5674`.** `tailscale serve` terminates TLS on
+kubsdb's tailnet address (`100.90.99.84:5674` + the IPv6 tailnet address) and
+proxies to `http://localhost:5674`. A `0.0.0.0` bind overlaps that listener, so
+`docker run` fails with *failed to bind host port 0.0.0.0:5674/tcp: address
+already in use* whenever tailscaled got there first — and the failed run leaves
+the container created with **no network attached**, which then crash-loops on
+`Temporary failure in name resolution` for `postgresql`. Publishing loopback
+(what `tailscale serve` proxies to) plus the LAN address serves both consumers
+with no ordering dependency. If you hit the wedged state, `docker rm -f korg`
+and re-run step 3 — `docker start` cannot repair the missing network.
 
 `kubsdb`'s login shell is **fish** — pipe multi-line remote scripts through
 `ssh kubsdb bash -s` (a bare `ssh kubsdb '…'` runs under fish and mis-parses
@@ -60,7 +71,8 @@ container via `docker inspect`, so the secret never leaves kubsdb.
      ENV=$(docker inspect korg --format '{{range .Config.Env}}-e {{.}} {{end}}')
      docker rm -f korg
      docker run -d --name korg --network kubsdb-net \
-       -p 5674:5674 --restart unless-stopped $ENV korg:latest
+       -p 127.0.0.1:5674:5674 -p 192.168.1.60:5674:5674 \
+       --restart unless-stopped $ENV korg:latest
    EOF
    ```
 4. **Verify:**
