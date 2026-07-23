@@ -161,3 +161,49 @@ it, because resolve-or-fail cannot create the new project the user just typed.
   is worth applying to the remaining id arguments when B7 sweeps coverage —
   `parent` already follows it, `source_node_id` on the daily-plan verbs has not
   been checked.
+
+## Deployed
+
+Deployed to `kubsdb` 2026-07-23 (post-merge, from `main` @ `5dbf2c8`) via
+`/sprint-ship`'s Phase 7. Image `sha256:6237bd19…`; prior production image
+`sha256:5fcc9267…` (sprint 016) retained for rollback. Container healthy,
+0 restarts, loopback + LAN binding.
+
+No schema change, so reconciliation is a straight equality check:
+
+| | baseline (pre-deploy) | live after |
+|---|---|---|
+| work items (`archived=all`) | 378 | 378 |
+| cards | 27 | 27 |
+| links | 4 | 4 |
+| proposals | 57 | 57 |
+| **projects** | **29** | **29** |
+
+The project count is the one that matters here. Verification deliberately fired
+five *failing* selector probes at production, and the count is unchanged — the
+WI #537 fence (resolve, never create) holds live, not just in tests.
+
+All five error paths verified against the deployed instance, each returning
+`400` with `code: invalid_input`:
+
+| probe | message |
+|---|---|
+| unknown project name | `no project named 'definitely-not-a-project' — call list_projects (GET /api/projects) for the available names` |
+| case near-miss | `no project named 'KORG' — did you mean 'korg'?` |
+| id *and* name together | `pass either project_id or project, not both` |
+| unknown `project_id` | `no project with id 999999 — call list_projects (GET /api/projects) for the available projects` |
+| unknown area name | `no area named 'nope' in that project — call list_areas for the available names` |
+
+The `project_id` row is the one that used to be a raw Postgres error inside a
+500.
+
+The success path was verified **idempotently** rather than by creating litter:
+`PATCH /api/work-items/575 {"project":"korg"}` re-asserts by *name* a project
+the item already had — 200, `project: "korg"`, state unchanged on re-read. This
+is the convention WI #572 argues for on post-deploy checks.
+
+MCP surface diffed against the committed snapshot rather than eyeballed:
+44 tools, none extra, none missing, **zero description or schema differences**,
+with the new selector descriptions visible live on `create_work_item`,
+`update_work_item` and `propose_sprint`. All ten routes 200;
+`scripts/mcp-roundtrip-check.sh` green.
