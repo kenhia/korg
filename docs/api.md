@@ -250,15 +250,11 @@ existing edge is a no-op that returns the same `rel_id`.
 `create_report`; both insert the semantic orientation (proposal → work item,
 report → work item).
 
-### One legacy shape
-
-`covers` edges predating migration 0008 join two **work items**: before the
-`sprint_proposal` node kind existed, a work item titled `Sprint: …` stood in
-for the bundle. Migration 0014 orients those bundle → member, so `direction`
-is meaningful for them too, but they are the one `covers` shape whose left
-endpoint is not a proposal. A reader that filters `covers` by
-`kind=sprint_proposal` will not see them; one that filters by
-`kind=workitem` from a proposal is unaffected.
+Every `covers` edge is `sprint_proposal → workitem` — there is no exception.
+(One used to exist: pre-0008 bundles were work items titled `Sprint: …`,
+standing in for a proposal kind that did not yet exist. Migration 0016
+converted those five into real archived-done proposals and re-pointed their
+edges, so the dual shape is gone — see History.)
 
 ### History
 
@@ -269,3 +265,14 @@ than meaning; `depends_on` was corrected by hand after sprint 008. The
 migration asserts its own postcondition — no `covers` edge may point at a
 proposal, no `finding` edge at a report — and refuses to apply if it cannot
 reach that state.
+
+Migration 0016 (LB-1 corpus true-up) finished the job on the read side: it
+converted the five pre-0008 `Sprint: …` work-item bundles into archived-done
+`sprint_proposal` nodes and re-pointed their 27 `covers` edges, retiring the
+one legacy `covers` shape whose left endpoint was a work item. It also
+consolidated the off-registry `related` / `follows_from` labels into
+`related-to` and the `part_of` label into the built-in `parent_node_id`, so
+every stored label is now one the registry declares — and added the nullable
+`created` / `origin` provenance columns (NULL = predates provenance) that LB-2
+begins stamping on new edges. Like 0014, it asserts its own postcondition and
+refuses to half-apply.

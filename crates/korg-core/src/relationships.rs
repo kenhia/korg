@@ -76,13 +76,6 @@ pub fn direction_is_meaningful(label: &str) -> bool {
     spec(label).is_none_or(|s| s.directed)
 }
 
-/// Legacy `covers` edges (pre-0008) bundle work items under another *work
-/// item* whose title starts with this prefix — the stand-in for a sprint
-/// proposal before that node kind existed. Migration 0014 uses it to orient
-/// them; `docs/api.md` documents that they are the one `covers` shape whose
-/// left endpoint is not a proposal.
-pub const LEGACY_SPRINT_TITLE_PREFIX: &str = "Sprint:";
-
 #[cfg(test)]
 mod tests {
     use super::*;
