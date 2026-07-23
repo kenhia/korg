@@ -237,3 +237,25 @@ above (the migration self-asserts, but confirm the counts on the live DB) and
 
 Then LB-2 (`korg:597`) can constrain writes against a corpus that already
 conforms.
+
+## Deployed 2026-07-23
+
+- **Image**: `korg:bf550060e994` — revision
+  `bf550060e9942a2077f6639f543e14cbd84ee116` (the squash-merge of PR #23).
+- **Rollback target**: `korg:fb09e12cea33` (image `cb335a5902f0`, sprint 020).
+  Image-only rollback does **not** undo the migration — crossing back over it
+  needs a restore from the pre-deploy dump (`docs/operations.md`).
+- **CI**: green on `main` before deploy (rust + web).
+- **Migration applied at startup**, postconditions verified live against the
+  pre-deploy baseline: off-registry labels **11→0**, project-less proposals
+  **7→0**, `sprint_proposal` nodes **60→65**, `covers` left-not-proposal
+  **27→0**, provenance columns **0→2** (all NULL), label index present, WIs
+  #400–402 parented to #277. Per-label after: `covers` 223 (invariant),
+  `depends_on` 23, `finding` 5, `related-to` 13.
+- **`post-deploy-check.sh --compare`**: `OK` — only `proposals 60→65 (+5)`
+  (the converted bundles), `work_items` held at 397, nothing dropped; both
+  transports and the error contract pass.
+- **Smoke test**: deep links `/`, `/plan`, `/planning` all 200; the five
+  converted bundles serve as archived-done proposals #599–603 (covers
+  2/9/5/5/6 = 27), and proposal #599's REST `covers` neighbors read back as
+  `sprint_proposal → workitem` (directed, out) → WIs #88/#103.
