@@ -5,6 +5,8 @@
   import type { ProposalStatus } from "$lib/generated/vocab";
   import { chip, midRank } from "$lib/domain";
   import NodePreview from "$lib/components/NodePreview.svelte";
+  import ErrorNotice from "$lib/components/ErrorNotice.svelte";
+  import { attempt, reportError } from "$lib/toast.svelte";
 
   type DndItem = { id: number; proposal: ProposalRow };
   type Covered = { wi_number: number; title: string };
@@ -35,7 +37,7 @@
   let proposalsRaw = $state<ProposalRow[]>([]);
   let covers = $state<Record<number, Covered[]>>({});
   let loading = $state(true);
-  let error = $state<string | null>(null);
+  let loadError = $state<unknown>(null);
   let copiedId = $state<number | null>(null);
   // Covered items are work items, whose node id equals their wi_number — pass
   // it straight to the shared preview panel.
@@ -77,7 +79,12 @@
   // One authoritative read per proposal (WI #536) — no neighbors call, no
   // client-side join against every work item in the instance.
   async function loadCovers(proposalNodeId: number) {
-    const detail = await api.proposal(proposalNodeId).catch(() => null);
+    // Best-effort: a proposal whose covers fail to load still renders, and the
+    // page-level load already reports a broader failure.
+    const detail = await attempt(
+      () => api.proposal(proposalNodeId),
+      "Load covered work items",
+    );
     covers[proposalNodeId] = (detail?.covered ?? []).map((c) => ({
       wi_number: c.wi_number,
       title: c.title,
@@ -86,7 +93,7 @@
 
   async function load() {
     loading = true;
-    error = null;
+    loadError = null;
     try {
       proposalsRaw = await api.proposals(
         undefined,
@@ -104,7 +111,7 @@
         proposalsRaw.filter((p) => p.covered_count > 0).map((p) => loadCovers(p.node_id)),
       );
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      loadError = e;
     } finally {
       loading = false;
     }
@@ -134,30 +141,31 @@
       moved.rank = String(rank);
       moved.pinned = pinned;
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      // Resynchronise: the list is showing an order the server rejected.
+      reportError(err, "Reorder proposal");
       await load();
     }
   }
 
   async function togglePin(p: ProposalRow) {
-    try {
-      await api.updateProposal(p.node_id, { pinned: !p.pinned });
-      p.pinned = !p.pinned;
-      rebuild();
-    } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
-    }
+    const r = await attempt(
+      () => api.updateProposal(p.node_id, { pinned: !p.pinned }),
+      p.pinned ? "Unpin proposal" : "Pin proposal",
+    );
+    if (!r) return;
+    p.pinned = !p.pinned;
+    rebuild();
   }
 
   async function setStatus(p: ProposalRow, status: ProposalStatus) {
-    try {
-      await api.updateProposal(p.node_id, { status });
-      p.status = status;
-      proposalsRaw = [...proposalsRaw];
-      rebuild();
-    } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
-    }
+    const r = await attempt(
+      () => api.updateProposal(p.node_id, { status }),
+      "Set proposal status",
+    );
+    if (!r) return;
+    p.status = status;
+    proposalsRaw = [...proposalsRaw];
+    rebuild();
   }
 
   async function copyStart(p: ProposalRow) {
@@ -173,7 +181,7 @@
       copiedId = p.node_id;
       setTimeout(() => (copiedId = null), 1500);
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      reportError(err, "Copy to clipboard");
     }
   }
 
@@ -248,9 +256,13 @@
 {/snippet}
 
 <section class="space-y-4">
-  <div class="flex items-center justify-between">
+  <!-- Wraps at narrow widths (WI #549). The header row pushed 41px past a
+       390px viewport, which scrolls the whole page sideways — the same class of
+       mobile failure as the nav, just less obvious because the overflowing part
+       is a filter rather than a link. -->
+  <div class="flex flex-wrap items-center justify-between gap-2">
     <h1 class="text-xl font-semibold">Planning</h1>
-    <div class="flex items-center gap-3">
+    <div class="flex flex-wrap items-center gap-3">
       <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]">
         <span class="sr-only">Filter proposals by project</span>
         Project
@@ -268,7 +280,9 @@
     </div>
   </div>
 
-  {#if error}<p class="rounded bg-red-950 px-3 py-2 text-sm text-red-300">{error}</p>{/if}
+  {#if loadError}
+    <ErrorNotice error={loadError} what="the planning queue" retry={load} />
+  {/if}
 
   {#if loading}
     <p class="text-[var(--color-muted)]">Loading…</p>

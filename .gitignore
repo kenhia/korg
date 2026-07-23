@@ -4,3 +4,6 @@
 .env
 /.phoenix
 .korg-sprint-proposal
+# Playwright writes here if it is ever run from the repo root instead of web/.
+/test-results
+/playwright-report

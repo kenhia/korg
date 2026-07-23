@@ -91,7 +91,9 @@
 <div class="space-y-6">
   <div class="flex items-center justify-between">
     <h1 class="text-xl font-semibold">Plan</h1>
+    <label class="sr-only" for="plan-project">Project</label>
     <select
+      id="plan-project"
       class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-sm"
       bind:value={selected}
       onchange={load}

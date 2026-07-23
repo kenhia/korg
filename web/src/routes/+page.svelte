@@ -9,6 +9,9 @@
     type WorkItemRow,
   } from "$lib/api";
   import { isCut, isHiddenByDefault, kindLabel } from "$lib/domain";
+  import { attempt, notify, reportError } from "$lib/toast.svelte";
+  import ErrorNotice from "$lib/components/ErrorNotice.svelte";
+  import ConfirmButton from "$lib/components/ConfirmButton.svelte";
   import {
     addDays,
     isoDate,
@@ -25,8 +28,7 @@
   let cards = $state<CardRow[]>([]);
   let workItems = $state<WorkItemRow[]>([]);
   let loading = $state(true);
-  let error = $state<string | null>(null);
-  let notice = $state<string | null>(null);
+  let loadError = $state<unknown>(null);
   let sourceSearch = $state("");
   let trayDate = $state(isoDate(new Date()));
 
@@ -75,7 +77,7 @@
 
   async function load() {
     loading = true;
-    error = null;
+    loadError = null;
     try {
       const from = isoDate(weekStart);
       const to = isoDate(addDays(weekStart, 6));
@@ -92,7 +94,7 @@
       if (trayDate < today || trayDate < from || trayDate > to)
         trayDate = today >= from && today <= to ? today : from;
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
+      loadError = cause;
     } finally {
       loading = false;
     }
@@ -107,27 +109,31 @@
     void load();
   }
   async function refresh(message?: string) {
-    if (message) notice = message;
+    if (message) notify(message);
     await load();
   }
   async function setCompletion(item: DailyPlanItem, completed: boolean) {
-    try {
-      await api.setDailyPlanCompletion(item.node_id, completed);
-      await refresh(
-        completed ? `Completed ${item.display}` : `Reopened ${item.display}`,
-      );
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
-      await load();
+    const r = await attempt(
+      () => api.setDailyPlanCompletion(item.node_id, completed),
+      completed ? "Complete item" : "Reopen item",
+    );
+    // The checkbox is bound to server state, so resynchronise either way.
+    await load();
+    if (r) {
+      notify(completed ? `Completed ${item.display}` : `Reopened ${item.display}`);
     }
   }
+
+  // Removing a plan item is not undoable through this page (re-adding needs the
+  // source and position), so it confirms — see the ConfirmButton at the call
+  // site (WI #549).
   async function remove(item: DailyPlanItem) {
-    try {
-      await api.deleteDailyPlanItem(item.node_id);
-      await refresh(`Removed ${item.display}`);
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
-    }
+    const r = await attempt(
+      () => api.deleteDailyPlanItem(item.node_id),
+      "Remove from plan",
+    );
+    if (!r) return;
+    await refresh(`Removed ${item.display}`);
   }
   function dragPlan(event: DragEvent, item: DailyPlanItem) {
     event.dataTransfer?.setData(PLAN_DRAG, String(item.node_id));
@@ -168,17 +174,17 @@
         await refresh("Added to plan");
       }
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
+      // The dragged item is showing where it was dropped, not where it is.
+      reportError(cause, "Update the plan");
       await load();
     }
   }
   async function addSource(sourceNodeId: number, title: string) {
-    try {
-      await api.createDailyPlanItem(sourceNodeId, trayDate);
-      await refresh(`Added ${title}`);
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
-    }
+    const r = await attempt(
+      () => api.createDailyPlanItem(sourceNodeId, trayDate),
+      "Add to plan",
+    );
+    if (r) await refresh(`Added ${title}`);
   }
   onMount(load);
 </script>
@@ -214,18 +220,9 @@
       >
     </div>
   </header>
-  {#if error}<p
-      class="rounded border border-red-900 bg-red-950 px-3 py-2 text-sm text-red-200"
-      role="alert"
-    >
-      {error}
-    </p>{/if}
-  {#if notice}<p
-      class="rounded border border-sky-900 bg-sky-950 px-3 py-2 text-sm text-sky-200"
-      role="status"
-    >
-      {notice}
-    </p>{/if}
+  {#if loadError}
+    <ErrorNotice error={loadError} what="the planner" retry={load} />
+  {/if}
   {#if loading}<p class="text-[var(--color-muted)]">Loading planner…</p>{:else}
     <div
       class="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7"
@@ -292,29 +289,38 @@
                       setCompletion(item, event.currentTarget.checked)}
                   />
                   <div class="min-w-0 flex-1">
-                    <div class="flex items-center gap-1.5">
+                    <!-- Wraps to two lines rather than truncating to one
+                         (WI #549). A day column is ~190px wide at 1440px, and
+                         a single-line `truncate` was showing 81px of a 628px
+                         title — 87% of the label gone, at a *desktop* width, on
+                         the page whose whole job is telling you what you are
+                         doing today. Two lines of a narrow column is cheap;
+                         `title` keeps the full text one hover away. -->
+                    <div class="flex items-start gap-1.5">
                       <span
-                        class={`shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase ${kindClass(item.source_kind)}`}
+                        class={`mt-0.5 shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase ${kindClass(item.source_kind)}`}
                         >{kindLabel(item.source_kind)}</span
                       ><span
-                        class="truncate text-xs font-medium"
+                        class="line-clamp-2 break-words text-xs font-medium"
                         class:line-through={item.completed_at !== null}
-                        >{item.display}</span
+                        title={item.display}>{item.display}</span
                       >
                     </div>
                     {#if item.source_title !== item.display}<p
-                        class="mt-1 truncate text-[10px] text-[var(--color-muted)]"
-                        title="Current source title"
+                        class="mt-1 line-clamp-2 break-words text-[10px] text-[var(--color-muted)]"
+                        title={`Current source title: ${item.source_title}`}
                       >
                         Now: {item.source_title}
                       </p>{/if}
                   </div>
-                  {#if !frozen(date)}<button
+                  {#if !frozen(date)}<ConfirmButton
+                      label={`Remove ${item.display}`}
                       class="rounded px-1 text-xs text-[var(--color-muted)] hover:bg-red-950 hover:text-red-200"
-                      aria-label={`Remove ${item.display}`}
-                      title="Remove from day"
-                      onclick={() => remove(item)}>✕</button
-                    >{/if}
+                      armedClass="rounded bg-red-900 px-1 text-xs text-red-100"
+                      onconfirm={() => remove(item)}
+                    >
+                      ✕
+                    </ConfirmButton>{/if}
                 </div>
               </li>
             {:else}<li
@@ -372,7 +378,9 @@
           <span
             class="rounded bg-[var(--color-surface-hi)] px-1 text-[10px] uppercase text-[var(--color-muted)]"
             >{source.kind}</span
-          ><span class="min-w-0 flex-1 truncate text-xs">{source.title}</span
+          ><span
+            class="min-w-0 flex-1 line-clamp-2 break-words text-xs"
+            title={source.title}>{source.title}</span
           ><button
             class="rounded bg-[var(--color-accent-soft)] px-2 py-1 text-xs hover:bg-[var(--color-accent)]"
             onclick={() => addSource(source.node_id, source.title)}>Add</button

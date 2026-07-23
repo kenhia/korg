@@ -6,6 +6,8 @@
     isCut,
     isHiddenByDefault,
   } from "$lib/domain";
+  import { notify, reportError } from "$lib/toast.svelte";
+  import ErrorNotice from "$lib/components/ErrorNotice.svelte";
 
   let cards = $state<CardRow[]>([]);
   let workItems = $state<WorkItemRow[]>([]);
@@ -57,12 +59,10 @@
   }
 
   let linking = $state(false);
-  let linkedMsg = $state("");
 
   async function linkSelected(): Promise<void> {
     if (selectedIds.length < 2) return;
     linking = true;
-    linkedMsg = "";
     try {
       const ids = selectedIds;
       // Clique: relate every selected pair. relate() is idempotent + symmetric.
@@ -73,22 +73,45 @@
       }
       const n = ids.length;
       const edges = (n * (n - 1)) / 2;
-      linkedMsg = `Linked ${n} items (${edges} relationship${edges === 1 ? "" : "s"}).`;
+      notify(`Linked ${n} items (${edges} relationship${edges === 1 ? "" : "s"}).`);
       selectedIds = [];
     } catch (e) {
-      linkedMsg = `Failed to link: ${e instanceof Error ? e.message : String(e)}`;
+      reportError(e, "Link items");
     } finally {
       linking = false;
     }
   }
 
+  // This page was the review's sharpest example of a silent failure: all four
+  // collections loaded with `.catch(() => [])`, so an API outage rendered a
+  // page that confidently said there was nothing to link. It did not merely
+  // lose data — it asserted something false, and looked entirely normal doing
+  // it (WI #547).
+  let loadError = $state<unknown>(null);
+  let loading = $state(true);
+
   async function load() {
-    [cards, workItems, links, projects] = await Promise.all([
-      api.cards().then((p) => p.items).catch(() => []),
-      api.workItems().then((p) => p.items).catch(() => []),
-      api.links().then((p) => p.items).catch(() => []),
-      api.projects().catch(() => []),
-    ]);
+    loading = true;
+    loadError = null;
+    try {
+      const [c, w, l, p] = await Promise.all([
+        api.cards(),
+        api.workItems(),
+        api.links(),
+        api.projects(),
+      ]);
+      cards = c.items;
+      workItems = w.items;
+      links = l.items;
+      projects = p;
+    } catch (e) {
+      // One notice for the page rather than four. The lists share a failure
+      // mode — the API is unreachable or broken — and four identical red boxes
+      // would be noise, not information.
+      loadError = e;
+    } finally {
+      loading = false;
+    }
   }
 
   onMount(load);
@@ -107,7 +130,16 @@
   </label>
 </div>
 
-<div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+{#if loadError}
+  <ErrorNotice error={loadError} what="the lists" retry={load} />
+{:else if loading}
+  <p class="text-sm text-[var(--color-muted)]" role="status">Loading…</p>
+{/if}
+
+<div
+  class="grid grid-cols-1 gap-4 md:grid-cols-3"
+  class:hidden={loadError || loading}
+>
   <!-- Cards -->
   <section
     class="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
@@ -210,12 +242,10 @@
 <div
   class="sticky bottom-0 mt-4 flex items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3"
 >
-  <span class="text-sm text-[var(--color-muted)]">
-    {#if linkedMsg}
-      <span role="status">{linkedMsg}</span>
-    {:else}
-      {selectedCount} selected
-    {/if}
+  <!-- The outcome of linking now goes to the shared toaster (success or
+       failure), so this reports selection only. -->
+  <span class="text-sm text-[var(--color-muted)]" role="status">
+    {selectedCount} selected
   </span>
   <button
     class="rounded bg-[var(--color-accent-soft)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"

@@ -24,6 +24,9 @@
   import WorkItemForm from "$lib/components/WorkItemForm.svelte";
   import NodePreview from "$lib/components/NodePreview.svelte";
   import Comments from "$lib/components/Comments.svelte";
+  import ErrorNotice from "$lib/components/ErrorNotice.svelte";
+  import ConfirmButton from "$lib/components/ConfirmButton.svelte";
+  import { attempt, notify } from "$lib/toast.svelte";
 
   const ALL = "\u0000all";
   const UNASSIGNED = "Unassigned";
@@ -50,7 +53,11 @@
   let current = $state<string>(ALL);
   let items = $state<WorkItemRow[]>([]);
   let loading = $state(true);
+  // Field-level message for the find-by-ID box — it belongs next to the input
+  // that produced it, not in the global toaster. Load failures use `loadError`
+  // and the shared ErrorNotice.
   let error = $state<string | null>(null);
+  let loadError = $state<unknown>(null);
 
   let detail = $state<WorkItemRow | null>(null);
   let cursor = $state<number | null>(null);
@@ -109,15 +116,22 @@
 
   async function saveProject() {
     if (!editProject) return;
-    await api.updateProject(editProject.name, {
-      status: eStatus as (typeof PROJECT_STATUSES)[number],
-      machines: csv(eMachines),
-      deploy_to: csv(eDeploy),
-      category: eCategory.trim() || null,
-      description: eDescription.trim() || null,
-      gh_repo: eGhRepo.trim() || null,
-      cn_path: eCnPath.trim() || null,
-    });
+    const name = editProject.name;
+    const saved = await attempt(
+      () =>
+        api.updateProject(name, {
+          status: eStatus as (typeof PROJECT_STATUSES)[number],
+          machines: csv(eMachines),
+          deploy_to: csv(eDeploy),
+          category: eCategory.trim() || null,
+          description: eDescription.trim() || null,
+          gh_repo: eGhRepo.trim() || null,
+          cn_path: eCnPath.trim() || null,
+        }),
+      "Save project",
+    );
+    // Stay in the editor on failure rather than closing over unsaved edits.
+    if (!saved) return;
     editProject = null;
     projects = await api.projects();
   }
@@ -167,7 +181,13 @@
   }
 
   async function quickUpdate(item: WorkItemRow, patch: Partial<{ wi_type: string; wi_status: string; wi_tshirt: string }>) {
-    await api.updateWorkItem(item.wi_number, patch);
+    const r = await attempt(
+      () => api.updateWorkItem(item.wi_number, patch),
+      "Update work item",
+    );
+    // Without this guard the dropdown kept the value the server rejected, so
+    // the row showed a status korg does not have.
+    if (!r) return;
     Object.assign(item, patch);
     if (patch.wi_status !== undefined && isHiddenByDefault(patch.wi_status)) {
       quickEditKeep = new Set(quickEditKeep).add(item.wi_number);
@@ -180,7 +200,11 @@
   // own project's areas just for this.
   async function quickUpdateArea(item: WorkItemRow, areaName: string) {
     const area = currentAreas.find((a) => a.name === areaName);
-    await api.updateWorkItem(item.wi_number, { area_id: area ? area.id : null });
+    const r = await attempt(
+      () => api.updateWorkItem(item.wi_number, { area_id: area ? area.id : null }),
+      "Set area",
+    );
+    if (!r) return;
     item.area = area ? area.name : null;
   }
 
@@ -256,7 +280,7 @@
         archived: "all",
       })
     ).items;
-    currentAreas = current === ALL ? [] : await api.areas(current).catch(() => []);
+    currentAreas = current === ALL ? [] : await loadAreas(current);
     forceShow = new Set();
     resetFilters();
     cursor = filtered[0]?.wi_number ?? null;
@@ -306,12 +330,12 @@
 
   async function load() {
     loading = true;
-    error = null;
+    loadError = null;
     try {
       await loadProjects();
       await loadItems();
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      loadError = e;
     } finally {
       loading = false;
     }
@@ -331,23 +355,43 @@
     editing = false;
     related = [];
     detailAreas = [];
-    related = (await api.neighbors(item.node_id).catch(() => null))?.items ?? [];
-    detailAreas = item.project ? await api.areas(item.project).catch(() => []) : [];
+    related = await loadNeighbors(item.node_id);
+    detailAreas = item.project ? await loadAreas(item.project) : [];
+  }
+
+  // Best-effort background refreshes. These are follow-up reads after an action
+  // that already succeeded and reported itself, so a failure here is reported
+  // once rather than replacing the view with an error.
+  async function loadNeighbors(nodeId: number) {
+    const r = await attempt(() => api.neighbors(nodeId), "Load relationships");
+    return r?.items ?? [];
+  }
+
+  async function loadAreas(project: string) {
+    const r = await attempt(() => api.areas(project), "Load areas");
+    return r ?? [];
   }
 
   async function refreshDetail() {
     if (!detail) return;
-    const u = await api.workItem(detail.wi_number).catch(() => null);
+    const u = await attempt(
+      () => api.workItem(detail!.wi_number),
+      "Reload work item",
+    );
     if (u) {
       detail = u;
-      related = (await api.neighbors(u.node_id).catch(() => null))?.items ?? [];
+      related = await loadNeighbors(u.node_id);
     }
   }
 
   async function addProject() {
     const name = newProject.trim();
     if (name === "") return;
-    await api.createProject(name);
+    const created = await attempt(
+      () => api.createProject(name),
+      "Create project",
+    );
+    if (!created) return;
     newProject = "";
     await loadProjects();
     await pick(name);
@@ -355,39 +399,69 @@
 
   async function addArea() {
     if (!areaAddFor || areaName.trim() === "") return;
-    await api.createArea(areaAddFor, areaName.trim(), areaDesc.trim() || undefined);
-    if (areaAddFor === current) currentAreas = await api.areas(current).catch(() => []);
+    const project = areaAddFor;
+    const name = areaName.trim();
+    const desc = areaDesc.trim() || undefined;
+    const created = await attempt(
+      () => api.createArea(project, name, desc),
+      "Create area",
+    );
+    if (!created) return;
+    if (project === current) currentAreas = await loadAreas(current);
     areaName = "";
     areaDesc = "";
     areaAddFor = null;
   }
 
+  // Reversible, so undo rather than a confirm (WI #549).
   async function toggleArchive() {
     if (!detail) return;
-    await api.updateWorkItem(detail.wi_number, { archived: !detail.archived });
+    const wi = detail.wi_number;
+    const was = detail.archived;
+    const r = await attempt(
+      () => api.updateWorkItem(wi, { archived: !was }),
+      was ? "Restore work item" : "Archive work item",
+    );
+    if (!r) return;
     await refreshDetail();
     await loadItems();
+    notify(was ? `#${wi} restored.` : `#${wi} archived.`, async () => {
+      const undone = await attempt(
+        () => api.updateWorkItem(wi, { archived: was }),
+        "Undo",
+      );
+      if (undone) {
+        await refreshDetail();
+        await loadItems();
+      }
+    });
   }
 
   async function addRel() {
     if (!detail) return;
     const wn = parseInt(relTarget, 10);
     if (!wn) return;
-    const target = await api.workItem(wn).catch(() => null);
-    if (!target) {
-      error = `No work item #${wn}`;
-      return;
-    }
-    await api.relate(detail.node_id, target.node_id, relLabelValue);
+    const node_id = detail.node_id;
+    const label = relLabelValue;
+    const created = await attempt(async () => {
+      const target = await api.workItem(wn);
+      if (!target) throw new Error(`No work item #${wn}`);
+      return api.relate(node_id, target.node_id, label);
+    }, "Add relationship");
+    if (!created) return;
     relTarget = "";
     relAdding = false;
-    related = (await api.neighbors(detail.node_id).catch(() => null))?.items ?? [];
+    related = await loadNeighbors(node_id);
   }
 
+  // Removing an edge cannot be undone from the UI (re-adding needs the label
+  // and target again), so it confirms — see the ConfirmButton at the call site.
   async function removeRel(relId: number) {
     if (!detail) return;
-    await api.unrelate(relId);
-    related = (await api.neighbors(detail.node_id).catch(() => null))?.items ?? [];
+    const node_id = detail.node_id;
+    const r = await attempt(() => api.unrelate(relId), "Remove relationship");
+    if (!r) return;
+    related = await loadNeighbors(node_id);
   }
 
   function relatedLabel(n: Neighbor): string {
@@ -447,7 +521,11 @@
   <div class="flex flex-wrap items-center justify-between gap-2">
     <h1 class="text-xl font-semibold">Work items</h1>
     <div class="flex items-center gap-1" title="Jump to a work item, or preview any node, by its id">
+      <label class="sr-only" for="find-by-id"
+        >Find a work item or node by id</label
+      >
       <input
+        id="find-by-id"
         class="w-32 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none"
         placeholder="find by ID…"
         inputmode="numeric"
@@ -461,7 +539,12 @@
   </div>
 
   {#if error}
-    <p class="rounded bg-red-950 px-3 py-2 text-sm text-red-300">{error}</p>
+    <p role="alert" class="rounded bg-red-950 px-3 py-2 text-sm text-red-300">
+      {error}
+    </p>
+  {/if}
+  {#if loadError}
+    <ErrorNotice error={loadError} what="work items" retry={load} />
   {/if}
 
   {#if loading}
@@ -655,9 +738,7 @@
               class:ring-[var(--color-accent)]={item.wi_number === flashWi}
               class:opacity-55={item.archived}
               class:italic={item.archived}
-              tabindex="0"
               onclick={() => open(item)}
-              onkeydown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), open(item))}
             >
               <td class="px-3 py-1.5 font-mono text-xs text-[var(--color-muted)]">{item.wi_number}</td>
               {#if current === ALL}<td class="px-3 py-1.5 text-xs text-[var(--color-muted)]">{item.project ?? "—"}</td>{/if}
@@ -719,7 +800,22 @@
                 {/if}
               </td>
               <td class="px-3 py-1.5">{item.sprint ?? "—"}</td>
-              <td class="px-3 py-1.5 font-medium">{item.title}</td>
+              <!-- The title is a real button rather than the row carrying
+                   role="button" + tabindex (WI #548). A <tr> that claims to be
+                   a button stops being a row: it drops out of the table's
+                   semantics, so nothing can navigate the grid by row any more.
+                   A focusable control inside the cell keeps the table a table
+                   AND gives keyboard users Enter/Space for free, because it is
+                   an actual button. The row keeps its click for mouse users. -->
+              <td class="px-3 py-1.5 font-medium">
+                <button
+                  class="w-full cursor-pointer text-left font-medium"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    open(item);
+                  }}>{item.title}</button
+                >
+              </td>
             </tr>
           {:else}
             <tr><td class="px-3 py-3 text-sm text-[var(--color-muted)]" colspan={current === ALL ? 8 : 7}>No work items found.</td></tr>
@@ -818,7 +914,16 @@
             <li class="flex items-center gap-2">
               <span class={chip.tag} title={relationshipReads(n.label) ?? "caller-defined direction"}>{n.label}</span>
               <span>{relatedLabel(n)}</span>
-              <button class="ml-auto rounded px-1 text-xs text-[var(--color-muted)] hover:text-red-400" aria-label="Remove" title="Remove" onclick={() => removeRel(n.rel_id)}>✕</button>
+              <!-- Not undoable from here — re-adding needs the target and
+                   label again — so it confirms (WI #549). -->
+              <ConfirmButton
+                label="Remove relationship"
+                class="ml-auto rounded px-1 text-xs text-[var(--color-muted)] hover:text-red-400"
+                armedClass="ml-auto rounded bg-red-900 px-1 text-xs text-red-100"
+                onconfirm={() => removeRel(n.rel_id)}
+              >
+                ✕
+              </ConfirmButton>
             </li>
           {/each}
         </ul>

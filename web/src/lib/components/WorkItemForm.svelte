@@ -103,7 +103,7 @@
     </div>
   </div>
 
-  {#if err}<p class="rounded bg-red-950 px-2 py-1 text-xs text-red-300">{err}</p>{/if}
+  {#if err}<p role="alert" class="rounded bg-red-950 px-2 py-1 text-xs text-red-300">{err}</p>{/if}
 
   <input class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none" placeholder="Title" bind:value={title} />
 

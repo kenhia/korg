@@ -115,9 +115,15 @@ test("complete, reorder, move, and delete open plan items", async ({
   await expect(
     page.getByTestId(`planner-day-${secondDate}`).getByText(first),
   ).toBeVisible();
+  // Two presses: removing a plan item is irreversible from this page, so it
+  // confirms (WI #549).
+  const removeItem = page
+    .getByTestId(`planner-day-${secondDate}`)
+    .getByRole("button", { name: `Remove ${first}` });
+  await removeItem.click();
   await page
     .getByTestId(`planner-day-${secondDate}`)
-    .getByRole("button", { name: `Remove ${first}` })
+    .getByRole("button", { name: `Confirm: Remove ${first}` })
     .click();
   await expect(
     page.getByTestId(`planner-day-${secondDate}`).getByText(first),

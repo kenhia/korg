@@ -5,17 +5,18 @@
   // Daily Reports and the Work Items find-by-ID box so the panel lives once.
   import { api, type NodePreview } from "$lib/api";
   import { renderMarkdown } from "$lib/markdown";
+  import { chip } from "$lib/domain";
+  import Dialog from "./Dialog.svelte";
+  import ErrorNotice from "./ErrorNotice.svelte";
 
   let { nodeId, onClose }: { nodeId: number; onClose: () => void } = $props();
 
   let node = $state<NodePreview | null>(null);
   let loading = $state(true);
-  let error = $state<string | null>(null);
+  let error = $state<unknown>(null);
   let missing = $state(false);
 
-  // Re-fetch whenever the requested id changes.
-  $effect(() => {
-    const id = nodeId;
+  function load(id: number) {
     node = null;
     error = null;
     missing = false;
@@ -26,8 +27,13 @@
         if (n === null) missing = true;
         else node = n;
       })
-      .catch((e) => (error = e instanceof Error ? e.message : String(e)))
+      .catch((e) => (error = e))
       .finally(() => (loading = false));
+  }
+
+  // Re-fetch whenever the requested id changes.
+  $effect(() => {
+    load(nodeId);
   });
 
   // Human label for the id line: #260 for work items, node #12 otherwise.
@@ -36,38 +42,37 @@
   );
 </script>
 
-<div class="fixed inset-0 z-50 flex justify-end">
-  <button
-    class="absolute inset-0 bg-black/60"
-    aria-label="Close preview"
-    onclick={onClose}
-  ></button>
-  <div
-    class="relative z-10 h-full w-full max-w-md overflow-auto border-l border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-xl"
-    data-testid="node-preview-panel"
-  >
-    <div class="mb-3 flex items-center justify-between">
-      <h2 class="text-lg font-semibold">
-        {#if node}
-          <span
-            class="rounded bg-[var(--color-accent-soft)] px-1.5 py-0.5 text-xs uppercase tracking-wide text-[var(--color-accent)]"
-            >{node.kind}</span
-          >
-        {:else}
-          Preview
-        {/if}
-      </h2>
-      <button
-        class="rounded px-2 py-1 text-[var(--color-muted)] hover:bg-[var(--color-surface-hi)]"
-        aria-label="Close"
-        onclick={onClose}>✕</button
-      >
+<!-- Was a hand-built overlay whose scrim was a full-screen
+     `<button aria-label="Close preview">` — a viewport-sized control in the tab
+     order and the a11y tree — with no focus trap, no focus restore and no
+     Escape. `<dialog>` gives all three, and `::backdrop` gives the scrim
+     without the phantom button (WI #548). -->
+<Dialog
+  open={true}
+  {onClose}
+  placement="side"
+  title={node ? `${node.kind} preview` : "Preview"}
+  titleHidden
+  class="max-w-md"
+>
+  <div data-testid="node-preview-panel">
+    <div class="mb-3">
+      {#if node}
+        <span
+          class="rounded bg-[var(--color-accent-soft)] px-1.5 py-0.5 text-xs uppercase tracking-wide text-[var(--color-accent)]"
+          >{node.kind}</span
+        >
+      {/if}
     </div>
 
     {#if loading}
       <p class="text-[var(--color-muted)]">Loading…</p>
     {:else if error}
-      <p class="rounded bg-red-950 px-3 py-2 text-sm text-red-300">{error}</p>
+      <ErrorNotice
+        {error}
+        what="this node"
+        retry={() => load(nodeId)}
+      />
     {:else if missing}
       <p class="text-sm text-[var(--color-muted)]">No node with id {nodeId}.</p>
     {:else if node}
@@ -80,20 +85,18 @@
           >{/if}
       </h3>
 
+      <!-- These were hand-written copies of the project and tag chip styles —
+           the seventh variant F-15 counted, and the one site B4's consolidation
+           into domain.ts missed. They use the shared map now, which is also how
+           the tag contrast fix (WI #571) reaches this panel for free. -->
       <div class="mt-2 flex flex-wrap gap-1 text-xs">
         {#each node.badges as b (b)}
           <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5"
             >{b}</span
           >
         {/each}
-        {#if node.project}<span
-            class="rounded bg-teal-900/60 px-1.5 py-0.5 text-teal-300"
-            >{node.project}</span
-          >{/if}
-        {#each node.tags as t (t)}<span
-            class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-[var(--color-muted)]"
-            >#{t}</span
-          >{/each}
+        {#if node.project}<span class={chip.project}>{node.project}</span>{/if}
+        {#each node.tags as t (t)}<span class={chip.tag}>#{t}</span>{/each}
       </div>
 
       {#if node.fields.length > 0}
@@ -148,4 +151,4 @@
       {/if}
     {/if}
   </div>
-</div>
+</Dialog>

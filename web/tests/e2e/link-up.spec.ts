@@ -83,7 +83,7 @@ test("linking two selected items relates them", async ({ page, request }) => {
   await wiRegion.getByText(b, { exact: true }).click();
 
   await page.getByRole("button", { name: "Link 2 items", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Linked 2 items");
+  await expect(page.getByTestId("toast-success")).toContainText("Linked 2 items");
 
   // The two items are now related. `related-to` is registry-undirected, so the
   // edge is visible from either end regardless of which way it was stored.

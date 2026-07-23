@@ -21,6 +21,25 @@ covers:
   with pin-to-top. Start/Decline/Done buttons drive the status lifecycle; a
   copy icon copies a `/start-sprint korg:<node_id>` prompt.
 
+### Behaviour common to every page
+
+Three rules hold across the UI (sprint 019):
+
+**Nothing fails silently.** Every mutation reports failure in a toast, and a
+failed *load* renders a distinguishable "couldn't load" state with a retry —
+never an empty list. The distinction matters: "there is nothing here" and "korg
+is unreachable" used to look identical. Error toasts stay until dismissed;
+successes fade.
+
+**Destructive actions are split by whether they can be undone.** Deleting a
+comment, removing a relationship, or removing a daily-plan item cannot be
+undone from the UI, so each takes two presses — the button arms, then commits,
+and disarms if you click away. Archiving a work item, card or topic *is*
+reversible, so it happens immediately and offers an Undo in the toast instead.
+
+**Dialogs behave like dialogs.** The node preview and the card editor trap
+focus, close on Escape, and return focus to whatever opened them.
+
 ## REST API
 
 All endpoints are unauthenticated (single-user, trusted-network posture) and

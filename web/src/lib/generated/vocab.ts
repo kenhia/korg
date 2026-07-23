@@ -24,6 +24,9 @@ export type ReportStatus = (typeof REPORT_STATUSES)[number];
 export const PROJECT_STATUSES = ["active", "maintenance", "inactive", "archived"] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 
+export const ERROR_CODES = ["invalid_input", "not_found", "conflict", "internal"] as const;
+export type ErrorCode = (typeof ERROR_CODES)[number];
+
 /** The relationship labels korg itself writes or interprets. Any other
  *  label is legal and its direction is caller-defined. */
 export const RELATIONSHIP_LABELS = [
