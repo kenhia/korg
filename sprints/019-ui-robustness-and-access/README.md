@@ -228,3 +228,62 @@ Two conclusions in this sprint were wrong until controlled:
   activation works; the role is the library's.
 - No light theme — confirmed out of scope with Ken. korg has one dark theme, so
   "both themes" in the proposal is read as both *surface levels*.
+
+## Deployed 2026-07-23
+
+Shipped to kubsdb from merged `main` (`ae202ca0`).
+
+| | |
+|---|---|
+| Image | `korg:latest` + `korg:ae202ca0780c` |
+| Revision label | `org.opencontainers.image.revision=ae202ca0780cb01b4a9b1129f3a2f6d6a38a7cf8` |
+| Rollback target | `sha256:61bdfd51…` / `korg:c78468fa1912` (sprint 018) |
+
+Preflight passed every gate: clean tree, kubsdb reachable, backups current
+(`korg-20260723-032356.sql.gz`, 283 KB, larger than each predecessor), rollback
+target noted, baseline captured. Sprint 018's SHA stamping paid off immediately —
+the rollback target reported `rev=c78468fa…` where the previous deploy had to
+record an empty label.
+
+`scripts/post-deploy-check.sh --compare` passed with **zero delta** on every row
+count (380 work items, 27 cards, 4 links, 0 topics, 57 proposals, 23 reports, 29
+projects), plus health, the enveloped reads, the focused read, the 404 +
+`code: not_found` contract, the MCP roundtrip and the idempotent write.
+
+Verified live, specific to what this sprint changed:
+
+- **Tag chips carry the hue.** 40 amber chips render on the cards board, and the
+  one measured separates from its tile at **1.65:1** — the same tile background
+  that made the old chip exactly 1.00:1 and invisible. The bug that started
+  WI #571, fixed and measured in production.
+- **The card editor is a real modal.** `dialog.matches(":modal")` is true after
+  opening and Escape closes it, so it is `showModal()` rather than a styled div.
+- **The toaster is mounted** on every page, and find-by-ID has its `<label for>`.
+- **No horizontal overflow at 390px** across `/`, `/cards`, `/work-items`,
+  `/planning` and `/reading-list`.
+
+### CI note
+
+GitHub dropped `pull_request` events for this repo for roughly an hour. PR #20
+got zero check suites, and neither reopening the PR nor an empty `synchronize`
+push produced a run — while the workflow stayed `active`, Actions `enabled`, the
+repo public, and GitHub reported all systems operational. Merged on the local
+gate (the same set CI runs) with Ken's agreement; the `push` to `main` fired
+immediately and went **green on both jobs**, so the outage was
+`pull_request`-specific and has passed. Worth reporting to GitHub rather than
+re-diagnosing if it recurs.
+
+### Two housekeeping items
+
+**PR #9 closed as superseded** ("Plan view: resolved/closed are terminal
+statuses", open since 2026-07-08). It wanted `/plan`'s `isDone` to treat
+`{done, closed, resolved}` as terminal; `main` already does exactly that via
+`isSatisfied()`, which landed in sprint 016 and went further by separating the
+two questions the UI had been conflating.
+
+**A stray commit was corrected.** The first attempt at this deploy record ran
+`git add -A` from the repo root while another session was writing B7 in the same
+working tree, and swept two of its in-progress files onto `main`. They were
+un-tracked with `git rm --cached` (so that session kept them on disk) in the
+commit following `d577836`. Worth remembering: `git add -A` is not safe in a
+shared working tree, and `sprint-ship`'s Phase 3 says to run exactly that.
