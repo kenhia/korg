@@ -4,6 +4,13 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "area": {
+          "description": "Area name — the alternative to `area_id`, resolved within the item's project.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "area_id": {
           "format": "int64",
           "type": [
@@ -21,6 +28,13 @@
           "type": "string"
         },
         "details": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "description": "Project name — the alternative to `project_id` (see list_projects). Never pass both.",
           "type": [
             "string",
             "null"
@@ -202,6 +216,13 @@
             "null"
           ]
         },
+        "area": {
+          "description": "Area name — the alternative to `area_id`; null clears. Resolved in the new project.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "area_id": {
           "format": "int64",
           "type": [
@@ -232,6 +253,13 @@
           "format": "int64",
           "type": [
             "integer",
+            "null"
+          ]
+        },
+        "project": {
+          "description": "Project name — the alternative to `project_id`; null unassigns. Never pass both.",
+          "type": [
+            "string",
             "null"
           ]
         },
@@ -320,6 +348,13 @@
           "default": "",
           "type": "string"
         },
+        "project": {
+          "description": "Project name — the alternative to `project_id` (see list_projects). Never pass both.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "project_id": {
           "format": "int64",
           "type": [
@@ -389,6 +424,13 @@
         "node_id": {
           "format": "int64",
           "type": "integer"
+        },
+        "project": {
+          "description": "Project name — the alternative to `project_id`; null unassigns. Never pass both.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "format": "int64",
@@ -565,6 +607,13 @@
       "additionalProperties": false,
       "properties": {
         "category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "description": "Project name — the alternative to `project_id` (see list_projects). Never pass both.",
           "type": [
             "string",
             "null"
@@ -815,6 +864,13 @@
         "name": {
           "minLength": 1,
           "type": "string"
+        },
+        "project": {
+          "description": "Project name — the alternative to `project_id` (see list_projects). Never pass both.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "format": "int64",
@@ -1166,6 +1222,13 @@
         "pinned": {
           "default": false,
           "type": "boolean"
+        },
+        "project": {
+          "description": "Project name — the alternative to `project_id` (see list_projects). Never pass both.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "project_id": {
           "format": "int64",

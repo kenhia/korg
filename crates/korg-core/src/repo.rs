@@ -56,6 +56,194 @@ where
         .ok_or_else(|| RepoError::NotFound(format!("no node with id {node_id}")).into())
 }
 
+// --- name-or-id selectors (WI #575) -----------------------------------------
+//
+// Every write that targets a project used to take a bare `project_id`, so an
+// agent that didn't already hold the id had to guess — and a wrong guess was a
+// *silent wrong write*, not an error. A work item filed with `project_id: 1`
+// landed in an archived project and reported success.
+//
+// Operations now accept either the id or the name, resolved here, in core, so
+// both transports get identical behaviour. Three rules, and the reasons matter:
+//
+// 1. **Never both.** Passing `project_id` and `project` together is
+//    `invalid_input`, not a precedence rule. A precedence rule silently
+//    discards one of two things the caller explicitly asked for, which is the
+//    very failure this change exists to remove.
+// 2. **Resolve, never create.** An unknown name is an error. WI #537 removed
+//    project-name acceptance from `update_card` precisely because it *created*
+//    the project as a side effect of a card edit; that stays removed. Creating
+//    a project is `create_project`'s job and nothing else's.
+// 3. **Say what to do next.** An unresolvable name names `list_projects` as
+//    the remedy — the same principle as `vocab::validate`, where the error
+//    doubles as the documentation needed to retry.
+
+/// Both halves of a selector were supplied. Which one did the caller mean?
+/// korg refuses to guess.
+fn selector_conflict(id_field: &str, name_field: &str) -> anyhow::Error {
+    RepoError::InvalidInput(format!("pass either {id_field} or {name_field}, not both")).into()
+}
+
+/// A name that didn't resolve, with the remedy attached.
+///
+/// The only suggestion offered is a case-insensitive exact match, which is the
+/// realistic near-miss (`KORG` for `korg`). Deliberately no fuzzy matching: a
+/// confidently wrong "did you mean…" would invite exactly the misfile this
+/// whole change is about, and `list_projects` is one call away.
+async fn unknown_project(pool: &PgPool, name: &str) -> anyhow::Error {
+    let suggestion: Option<String> =
+        sqlx::query_scalar("SELECT name FROM project WHERE lower(name) = lower($1)")
+            .bind(name)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+    let hint = match suggestion {
+        Some(actual) => format!(" — did you mean '{actual}'?"),
+        None => " — call list_projects (GET /api/projects) for the available names".into(),
+    };
+    RepoError::InvalidInput(format!("no project named '{name}'{hint}")).into()
+}
+
+/// Look a project up by name.
+async fn project_id_for_name(pool: &PgPool, name: &str) -> Result<i64> {
+    let id: Option<i64> = sqlx::query_scalar("SELECT id FROM project WHERE name = $1")
+        .bind(name)
+        .fetch_optional(pool)
+        .await?;
+    match id {
+        Some(id) => Ok(id),
+        None => Err(unknown_project(pool, name).await),
+    }
+}
+
+/// Confirm a project id exists. Without this a typo'd id reached the FK and
+/// came back as a raw Postgres error in a 500 — the same shape WI #524 fixed
+/// for `relate`'s endpoints.
+async fn require_project(pool: &PgPool, id: i64) -> Result<()> {
+    let found: Option<i64> = sqlx::query_scalar("SELECT id FROM project WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    found.map(|_| ()).ok_or_else(|| {
+        RepoError::InvalidInput(format!(
+            "no project with id {id} — call list_projects (GET /api/projects) for the available projects"
+        ))
+        .into()
+    })
+}
+
+/// Resolve a create-time project selector: id, name, or neither.
+pub(crate) async fn resolve_project(
+    pool: &PgPool,
+    id: Option<i64>,
+    name: Option<&str>,
+) -> Result<Option<i64>> {
+    match (id, name) {
+        (Some(_), Some(_)) => Err(selector_conflict("project_id", "project")),
+        (Some(id), None) => {
+            require_project(pool, id).await?;
+            Ok(Some(id))
+        }
+        (None, Some(name)) => Ok(Some(project_id_for_name(pool, name).await?)),
+        (None, None) => Ok(None),
+    }
+}
+
+/// Resolve a patch-time project selector, where the outer `Option` is
+/// "mentioned at all" and the inner one is "unassign".
+pub(crate) async fn resolve_project_patch(
+    pool: &PgPool,
+    id: Option<Option<i64>>,
+    name: Option<Option<String>>,
+) -> Result<Option<Option<i64>>> {
+    match (id, name) {
+        (Some(_), Some(_)) => Err(selector_conflict("project_id", "project")),
+        (Some(id), None) => match id {
+            Some(id) => {
+                require_project(pool, id).await?;
+                Ok(Some(Some(id)))
+            }
+            None => Ok(Some(None)),
+        },
+        (None, Some(name)) => match name {
+            Some(name) => Ok(Some(Some(project_id_for_name(pool, &name).await?))),
+            None => Ok(Some(None)),
+        },
+        (None, None) => Ok(None),
+    }
+}
+
+/// Look an area up by name within its project. Areas are unique per
+/// `(project_id, name)`, so a name is only meaningful once the project is
+/// known — which is why an area name without a project is a specific error
+/// rather than a lookup that mysteriously finds nothing.
+async fn area_id_for_name<'e, E>(executor: E, project_id: Option<i64>, name: &str) -> Result<i64>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let Some(project_id) = project_id else {
+        return Err(RepoError::InvalidInput(format!(
+            "cannot resolve area '{name}' without a project — pass project or project_id too"
+        ))
+        .into());
+    };
+    let id: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM area WHERE project_id = $1 AND name = $2")
+            .bind(project_id)
+            .bind(name)
+            .fetch_optional(executor)
+            .await?;
+    id.ok_or_else(|| {
+        RepoError::InvalidInput(format!(
+            "no area named '{name}' in that project — call list_areas for the available names"
+        ))
+        .into()
+    })
+}
+
+/// Resolve a create-time area selector against an already-resolved project.
+async fn resolve_area<'e, E>(
+    executor: E,
+    project_id: Option<i64>,
+    id: Option<i64>,
+    name: Option<&str>,
+) -> Result<Option<i64>>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    match (id, name) {
+        (Some(_), Some(_)) => Err(selector_conflict("area_id", "area")),
+        (Some(id), None) => Ok(Some(id)),
+        (None, Some(name)) => Ok(Some(area_id_for_name(executor, project_id, name).await?)),
+        (None, None) => Ok(None),
+    }
+}
+
+/// Resolve a patch-time area selector against the project the work item will
+/// have *after* the update.
+async fn resolve_area_patch<'e, E>(
+    executor: E,
+    project_id: Option<i64>,
+    id: Option<Option<i64>>,
+    name: Option<Option<String>>,
+) -> Result<Option<Option<i64>>>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    match (id, name) {
+        (Some(_), Some(_)) => Err(selector_conflict("area_id", "area")),
+        (Some(id), None) => Ok(Some(id)),
+        (None, Some(name)) => match name {
+            Some(name) => Ok(Some(Some(
+                area_id_for_name(executor, project_id, &name).await?,
+            ))),
+            None => Ok(Some(None)),
+        },
+        (None, None) => Ok(None),
+    }
+}
+
 // --- collection reads: the envelope every list returns ----------------------
 
 /// The shape every collection read returns (WI #534, D-3). `total` is the full
@@ -143,8 +331,14 @@ pub fn archived_default() -> ArchivedFilter {
 pub struct NewWorkItem {
     #[serde(default)]
     pub project_id: Option<i64>,
+    /// Project name — the alternative to `project_id` (see list_projects). Never pass both.
+    #[serde(default)]
+    pub project: Option<String>,
     #[serde(default)]
     pub area_id: Option<i64>,
+    /// Area name — the alternative to `area_id`, resolved within the item's project.
+    #[serde(default)]
+    pub area: Option<String>,
     #[serde(default = "ops::default_task")]
     #[schemars(schema_with = "schema::wi_type")]
     pub wi_type: String,
@@ -174,18 +368,25 @@ pub async fn create_work_item(pool: &PgPool, new: NewWorkItem) -> Result<WorkIte
     validate_status(&new.wi_status, &WI_STATUSES, "wi_status")?;
     validate_status(&new.wi_type, &vocab::WI_TYPES, "wi_type")?;
     validate_status(&new.wi_tshirt, &vocab::WI_TSHIRTS, "wi_tshirt")?;
+    let project_id = resolve_project(pool, new.project_id, new.project.as_deref()).await?;
+    let area_id = resolve_area(pool, project_id, new.area_id, new.area.as_deref()).await?;
     // An area belongs to exactly one project; `update_work_item` has always
-    // enforced that, `create_work_item` did not (WI #526).
-    if let Some(area_id) = new.area_id {
+    // enforced that, `create_work_item` did not (WI #526). Resolving by name
+    // satisfies this by construction; an explicit `area_id` still has to be
+    // checked.
+    if let Some(area_id) = area_id {
         let area_pid: Option<i64> = sqlx::query_scalar("SELECT project_id FROM area WHERE id = $1")
             .bind(area_id)
             .fetch_optional(pool)
             .await?;
         match area_pid {
             None => {
-                return Err(RepoError::NotFound(format!("no area with id {area_id}")).into());
+                return Err(RepoError::InvalidInput(format!(
+                    "no area with id {area_id} — call list_areas for the available areas"
+                ))
+                .into());
             }
-            Some(pid) if Some(pid) != new.project_id => {
+            Some(pid) if Some(pid) != project_id => {
                 return Err(RepoError::InvalidInput(format!(
                     "area {area_id} does not belong to the work item's project"
                 ))
@@ -199,7 +400,7 @@ pub async fn create_work_item(pool: &PgPool, new: NewWorkItem) -> Result<WorkIte
         "INSERT INTO node (kind, project_id, category, tags) \
          VALUES ('workitem', $1, $2, $3) RETURNING id",
     )
-    .bind(new.project_id)
+    .bind(project_id)
     .bind(&new.category)
     .bind(&new.tags)
     .fetch_one(&mut *tx)
@@ -213,7 +414,7 @@ pub async fn create_work_item(pool: &PgPool, new: NewWorkItem) -> Result<WorkIte
          VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING wi_number",
     )
     .bind(node_id)
-    .bind(new.area_id)
+    .bind(area_id)
     .bind(&new.wi_type)
     .bind(&new.wi_status)
     .bind(&new.wi_tshirt)
@@ -239,6 +440,9 @@ pub async fn create_work_item(pool: &PgPool, new: NewWorkItem) -> Result<WorkIte
 pub struct NewCard {
     #[serde(default)]
     pub project_id: Option<i64>,
+    /// Project name — the alternative to `project_id` (see list_projects). Never pass both.
+    #[serde(default)]
+    pub project: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
     #[serde(default)]
@@ -258,12 +462,13 @@ pub struct NewCard {
 
 pub async fn create_card(pool: &PgPool, new: NewCard) -> Result<CardRow> {
     validate_status(&new.status, &CARD_STATUSES, "card status")?;
+    let project_id = resolve_project(pool, new.project_id, new.project.as_deref()).await?;
     let mut tx = pool.begin().await?;
     let node_id: i64 = sqlx::query(
         "INSERT INTO node (kind, project_id, category, tags) \
          VALUES ('card', $1, $2, $3) RETURNING id",
     )
-    .bind(new.project_id)
+    .bind(project_id)
     .bind(&new.category)
     .bind(&new.tags)
     .fetch_one(&mut *tx)
@@ -295,6 +500,9 @@ pub async fn create_card(pool: &PgPool, new: NewCard) -> Result<CardRow> {
 pub struct NewLink {
     #[serde(default)]
     pub project_id: Option<i64>,
+    /// Project name — the alternative to `project_id` (see list_projects). Never pass both.
+    #[serde(default)]
+    pub project: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
     #[serde(default)]
@@ -319,12 +527,13 @@ pub struct LinkRow {
 }
 
 pub async fn create_link(pool: &PgPool, new: NewLink) -> Result<LinkRow> {
+    let project_id = resolve_project(pool, new.project_id, new.project.as_deref()).await?;
     let mut tx = pool.begin().await?;
     let node_id: i64 = sqlx::query(
         "INSERT INTO node (kind, project_id, category, tags) \
          VALUES ('link', $1, $2, $3) RETURNING id",
     )
-    .bind(new.project_id)
+    .bind(project_id)
     .bind(&new.category)
     .bind(&new.tags)
     .fetch_one(&mut *tx)
@@ -1420,6 +1629,9 @@ pub struct CardPatch {
     pub archived: Option<bool>,
     #[serde(default, deserialize_with = "ops::double_option")]
     pub project_id: Option<Option<i64>>,
+    /// Project name — the alternative to `project_id`; null unassigns. Never pass both.
+    #[serde(default, deserialize_with = "ops::double_option")]
+    pub project: Option<Option<String>>,
     #[serde(default, deserialize_with = "ops::double_option")]
     pub category: Option<Option<String>>,
     #[serde(default)]
@@ -1431,6 +1643,7 @@ pub async fn update_card(pool: &PgPool, node_id: i64, patch: CardPatch) -> Resul
     if let Some(status) = &patch.status {
         validate_status(status, &CARD_STATUSES, "card status")?;
     }
+    let project_id = resolve_project_patch(pool, patch.project_id, patch.project).await?;
     let mut tx = pool.begin().await?;
     require_kind(&mut *tx, node_id, "card", "card").await?;
     if let Some(status) = &patch.status {
@@ -1468,10 +1681,10 @@ pub async fn update_card(pool: &PgPool, node_id: i64, patch: CardPatch) -> Resul
             .execute(&mut *tx)
             .await?;
     }
-    if let Some(project_id) = &patch.project_id {
+    if let Some(project_id) = project_id {
         sqlx::query("UPDATE node SET project_id = $2 WHERE id = $1")
             .bind(node_id)
-            .bind(*project_id)
+            .bind(project_id)
             .execute(&mut *tx)
             .await?;
     }
@@ -1587,6 +1800,9 @@ pub async fn list_areas(pool: &PgPool, project: &str) -> Result<Vec<AreaRow>> {
 pub struct NewProposal {
     #[serde(default)]
     pub project_id: Option<i64>,
+    /// Project name — the alternative to `project_id` (see list_projects). Never pass both.
+    #[serde(default)]
+    pub project: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
     #[serde(default)]
@@ -1624,6 +1840,7 @@ pub struct ProposalCreated {
 /// wi_number -> node_id resolution happens before the transaction, matching
 /// `update_work_item`'s handling of `parent`.
 pub async fn create_proposal(pool: &PgPool, new: NewProposal) -> Result<ProposalCreated> {
+    let project_id = resolve_project(pool, new.project_id, new.project.as_deref()).await?;
     let mut covered = Vec::with_capacity(new.covers.len());
     for wi in &new.covers {
         if let Some(n) = node_id_for_wi(pool, *wi).await? {
@@ -1636,7 +1853,7 @@ pub async fn create_proposal(pool: &PgPool, new: NewProposal) -> Result<Proposal
         "INSERT INTO node (kind, project_id, category, tags) \
          VALUES ('sprint_proposal', $1, $2, $3) RETURNING id",
     )
-    .bind(new.project_id)
+    .bind(project_id)
     .bind(&new.category)
     .bind(&new.tags)
     .fetch_one(&mut *tx)
@@ -1979,8 +2196,14 @@ pub struct WorkItemPatch {
     // unless a valid `area_id` is given in the same call.
     #[serde(default, deserialize_with = "ops::double_option")]
     pub project_id: Option<Option<i64>>,
+    /// Project name — the alternative to `project_id`; null unassigns. Never pass both.
+    #[serde(default, deserialize_with = "ops::double_option")]
+    pub project: Option<Option<String>>,
     #[serde(default, deserialize_with = "ops::double_option")]
     pub area_id: Option<Option<i64>>,
+    /// Area name — the alternative to `area_id`; null clears. Resolved in the new project.
+    #[serde(default, deserialize_with = "ops::double_option")]
+    pub area: Option<Option<String>>,
     /// Parent work item's wi_number; null clears the parent.
     #[serde(default, deserialize_with = "ops::double_option")]
     pub parent: Option<Option<i64>>,
@@ -2020,6 +2243,12 @@ pub async fn update_work_item(
         Some(None) => Some(None),
         None => None,
     };
+    // Selectors resolve before the transaction, like `parent` above: a name
+    // that doesn't resolve must change nothing (WI #575). The area name is the
+    // exception — it resolves inside the transaction, because it is only
+    // meaningful relative to the project the item will have *after* this
+    // update, which isn't known until then.
+    let project_id = resolve_project_patch(pool, patch.project_id, patch.project).await?;
     let mut tx = pool.begin().await?;
 
     if let Some(v) = &patch.title {
@@ -2081,15 +2310,20 @@ pub async fn update_work_item(
                 .fetch_one(&mut *tx)
                 .await?;
         // Project the work item will have after this update.
-        let effective_pid = match &patch.project_id {
+        let effective_pid = match &project_id {
             Some(v) => *v,
             None => current_pid,
         };
 
+        // An area name resolves against that effective project, then joins the
+        // id path below — so `area` and `area_id` are validated identically.
+        let area_id =
+            resolve_area_patch(&mut *tx, effective_pid, patch.area_id, patch.area).await?;
+
         // Decide the area to leave in place. Some(Some(id)) = set+validate,
         // Some(None) = explicit clear, None = keep (auto-clearing on a move
         // when the current area no longer fits).
-        let new_area: Option<Option<i64>> = match &patch.area_id {
+        let new_area: Option<Option<i64>> = match &area_id {
             Some(Some(aid)) => {
                 let area_pid: Option<i64> =
                     sqlx::query_scalar("SELECT project_id FROM area WHERE id = $1")
@@ -2107,7 +2341,7 @@ pub async fn update_work_item(
             }
             Some(None) => Some(None),
             None => {
-                if patch.project_id.is_some() {
+                if project_id.is_some() {
                     let cur_area: Option<i64> =
                         sqlx::query_scalar("SELECT area_id FROM workitem WHERE node_id = $1")
                             .bind(node_id)
@@ -2134,7 +2368,7 @@ pub async fn update_work_item(
             }
         };
 
-        if let Some(v) = &patch.project_id {
+        if let Some(v) = &project_id {
             sqlx::query("UPDATE node SET project_id = $2 WHERE id = $1")
                 .bind(node_id)
                 .bind(*v)

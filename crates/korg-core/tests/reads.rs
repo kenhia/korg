@@ -36,7 +36,9 @@ async fn reads_roundtrip_work_items_cards_projects() {
         &pool,
         NewWorkItem {
             project_id: None,
+            project: None,
             area_id: None,
+            area: None,
             wi_type: "feature".into(),
             wi_status: "open".into(),
             wi_tshirt: "M".into(),
@@ -55,6 +57,7 @@ async fn reads_roundtrip_work_items_cards_projects() {
         &pool,
         NewCard {
             project_id: None,
+            project: None,
             category: None,
             tags: vec![],
             status: "Backlog".into(),

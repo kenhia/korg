@@ -43,6 +43,7 @@ fn ctx() -> LifecycleContext {
 fn topic(name: &str) -> NewTopic {
     NewTopic {
         project_id: None,
+        project: None,
         category: None,
         tags: vec![],
         name: name.into(),
@@ -55,7 +56,9 @@ async fn work_item(pool: &PgPool, title: &str) -> i64 {
         pool,
         NewWorkItem {
             project_id: None,
+            project: None,
             area_id: None,
+            area: None,
             wi_type: "task".into(),
             wi_status: "open".into(),
             wi_tshirt: "S".into(),
@@ -151,6 +154,7 @@ async fn planning_snapshots_orders_duplicates_and_validates_sources() {
         &pool,
         NewCard {
             project_id: None,
+            project: None,
             category: None,
             tags: vec![],
             status: "Backlog".into(),
@@ -166,6 +170,7 @@ async fn planning_snapshots_orders_duplicates_and_validates_sources() {
         &pool,
         NewLink {
             project_id: None,
+            project: None,
             category: None,
             tags: vec![],
             url: "https://example.com".into(),

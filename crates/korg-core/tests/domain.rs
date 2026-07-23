@@ -41,7 +41,9 @@ async fn domain_cross_kind_relationships_and_reading_list() {
         &pool,
         NewWorkItem {
             project_id: None,
+            project: None,
             area_id: None,
+            area: None,
             wi_type: "task".into(),
             wi_status: "open".into(),
             wi_tshirt: "Unknown".into(),
@@ -62,6 +64,7 @@ async fn domain_cross_kind_relationships_and_reading_list() {
         &pool,
         NewCard {
             project_id: None,
+            project: None,
             category: Some("research".into()),
             tags: vec![],
             status: "Active".into(),
@@ -78,6 +81,7 @@ async fn domain_cross_kind_relationships_and_reading_list() {
         &pool,
         NewLink {
             project_id: None,
+            project: None,
             category: None,
             tags: vec!["read-later".into()],
             url: "https://example.com/typed-nodes".into(),

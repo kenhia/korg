@@ -35,6 +35,41 @@ rather than rejecting them, as it always has.
 Regenerate with `just gen`; `just check` fails if the committed output is
 stale. See [setup.md](setup.md#generated-files).
 
+## Selecting a project or an area
+
+Writes that target a project take **either** `project_id` **or** `project` (the
+name); writes that target an area take **either** `area_id` **or** `area`. This
+applies to `create_work_item`, `update_work_item`, `create_card`, `update_card`,
+`create_link`, `create_topic` and `propose_sprint`, on both transports.
+
+Three rules, and each exists because of a specific failure:
+
+- **Never both.** Passing an id *and* a name is `invalid_input`, even when they
+  agree. There is deliberately no precedence rule: a precedence rule silently
+  discards one of two things the caller explicitly asked for.
+- **Resolve, never create.** An unknown name is an error. Creating a project is
+  `create_project`'s job — `update_card` used to create one as a side effect of
+  a card edit, which sprint 015 removed (WI #537) and this does not bring back.
+- **Errors name the remedy.** An unresolvable name points at `list_projects` /
+  `list_areas`; a name that differs only in case is answered with the real one
+  ("did you mean 'korg'?"). Same principle as the vocabulary errors: the error
+  doubles as the documentation needed to retry.
+
+`null` means the same thing on both spellings: on a patch, `"project": null`
+unassigns exactly as `"project_id": null` does.
+
+Area names are unique only *within* a project, so `area` resolves against the
+project the row will have after the operation — pass `project`/`project_id` in
+the same call when moving and re-tagging at once. An `area` with no project at
+all is `invalid_input` rather than a lookup that mysteriously finds nothing.
+
+Every unresolvable selector answers `invalid_input`, including a `project_id`
+or `area_id` that does not exist. Those used to reach the foreign key and
+surface as a raw database error in a 500 (`project_id`) or claim `not_found`
+as though the *work item* were missing (`area_id`). The rule is uniform now:
+the operation's own target missing is `not_found`; a selector that does not
+resolve is `invalid_input`.
+
 ## Collection reads
 
 Every list returns the same envelope (sprint 015):

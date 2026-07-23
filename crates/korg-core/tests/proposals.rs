@@ -32,7 +32,9 @@ async fn fresh_korg() -> (impl Sized, PgPool) {
 fn wi(title: &str) -> NewWorkItem {
     NewWorkItem {
         project_id: None,
+        project: None,
         area_id: None,
+        area: None,
         wi_type: "task".into(),
         wi_status: "open".into(),
         wi_tshirt: "Unknown".into(),
@@ -48,6 +50,7 @@ fn wi(title: &str) -> NewWorkItem {
 fn proposal(title: &str, rank: i64, covers: Vec<i64>) -> NewProposal {
     NewProposal {
         project_id: None,
+        project: None,
         category: None,
         tags: vec![],
         title: title.into(),

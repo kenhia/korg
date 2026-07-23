@@ -32,7 +32,9 @@ async fn fresh_korg() -> (impl Sized, PgPool) {
 fn wi(title: &str, project_id: i64, status: &str) -> NewWorkItem {
     NewWorkItem {
         project_id: Some(project_id),
+        project: None,
         area_id: None,
+        area: None,
         wi_type: "task".into(),
         wi_status: status.into(),
         wi_tshirt: "Unknown".into(),

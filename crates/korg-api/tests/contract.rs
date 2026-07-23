@@ -916,3 +916,102 @@ async fn link_update_is_atomic_and_proposals_filter_by_project() {
     assert_eq!(scoped.as_array().unwrap().len(), 1);
     assert_eq!(scoped[0]["title"], "in alpha");
 }
+
+/// Name-keyed selectors over REST (WI #575). korg-core owns the resolution, so
+/// this asserts the *transport* carries it: the field is accepted on the way in
+/// and the failure keeps its `code` on the way out.
+#[tokio::test]
+async fn writes_accept_a_project_name_over_rest() {
+    let (_c, router) = app().await;
+    req(
+        &router,
+        "POST",
+        "/api/projects",
+        Some(json!({"name":"korg"})),
+    )
+    .await;
+
+    // Create by name.
+    let (st, item) = req(
+        &router,
+        "POST",
+        "/api/work-items",
+        Some(json!({"title":"by name","content":"c","project":"korg"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(item["project"], "korg");
+
+    // Areas resolve within that project.
+    req(
+        &router,
+        "POST",
+        "/api/areas",
+        Some(json!({"project":"korg","name":"ui"})),
+    )
+    .await;
+    let (st, item) = req(
+        &router,
+        "POST",
+        "/api/work-items",
+        Some(json!({"title":"with area","content":"c","project":"korg","area":"ui"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(item["area"], "ui");
+
+    // Patch by name, then unassign with an explicit null.
+    let wi = item["wi_number"].as_i64().unwrap();
+    let (st, moved) = req(
+        &router,
+        "PATCH",
+        &format!("/api/work-items/{wi}"),
+        Some(json!({"project": null})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(moved["project"].is_null(), "null must unassign: {moved}");
+
+    // An unknown name is a 400 carrying `invalid_input` — not a 500, and not a
+    // silent misfile.
+    assert_error(
+        req(
+            &router,
+            "POST",
+            "/api/work-items",
+            Some(json!({"title":"x","content":"c","project":"nope"})),
+        )
+        .await,
+        StatusCode::BAD_REQUEST,
+        "invalid_input",
+        "unknown project name",
+    );
+
+    // Both selectors at once is a conflict, not a precedence puzzle.
+    assert_error(
+        req(
+            &router,
+            "POST",
+            "/api/work-items",
+            Some(json!({"title":"x","content":"c","project":"korg","project_id":1})),
+        )
+        .await,
+        StatusCode::BAD_REQUEST,
+        "invalid_input",
+        "both project selectors",
+    );
+
+    // A typo'd id reached the FK and came back a 500 before this sprint.
+    assert_error(
+        req(
+            &router,
+            "POST",
+            "/api/work-items",
+            Some(json!({"title":"x","content":"c","project_id":9999})),
+        )
+        .await,
+        StatusCode::BAD_REQUEST,
+        "invalid_input",
+        "unknown project id",
+    );
+}

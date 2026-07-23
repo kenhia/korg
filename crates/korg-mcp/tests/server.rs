@@ -1062,3 +1062,93 @@ async fn collection_contracts_and_new_tools_over_mcp() {
         "a rejected patch changes nothing, not even its valid half"
     );
 }
+
+/// Name-keyed selectors over MCP (WI #575), including the error *shape* an
+/// agent branches on: `isError` with a `code`, and a message that names the
+/// remedy so the retry does not need a human.
+#[tokio::test]
+async fn tools_accept_a_project_name_and_explain_a_bad_one() {
+    let (_c, pool) = fresh_korg().await;
+    let server = server(pool);
+    server
+        .call("create_project", args(json!({"name":"korg"})))
+        .await
+        .expect("create_project");
+
+    let wi = body(
+        &server
+            .call(
+                "create_work_item",
+                args(json!({"title":"by name","content":"c","project":"korg"})),
+            )
+            .await
+            .expect("create_work_item by project name"),
+    );
+    assert_eq!(wi["project"], "korg");
+
+    server
+        .call("create_area", args(json!({"project":"korg","name":"ui"})))
+        .await
+        .expect("create_area");
+    let wi = body(
+        &server
+            .call(
+                "update_work_item",
+                args(json!({"wi_number": wi["wi_number"], "area":"ui"})),
+            )
+            .await
+            .expect("update_work_item area by name"),
+    );
+    assert_eq!(wi["area"], "ui");
+
+    // An unresolvable name is an isError result carrying invalid_input and the
+    // remedy — the error doubles as the documentation needed to retry.
+    let failed = server
+        .call(
+            "create_work_item",
+            args(json!({"title":"x","content":"c","project":"nope"})),
+        )
+        .await
+        .expect("call completes");
+    assert_eq!(failed.is_error, Some(true));
+    let text = failed.content[0].as_text().expect("text").text.clone();
+    let err: Value = serde_json::from_str(&text).expect("error body is json");
+    assert_eq!(err["code"], "invalid_input", "{err}");
+    let message = err["message"].as_str().unwrap_or_default();
+    assert!(message.contains("nope"), "names the bad value: {message}");
+    assert!(
+        message.contains("list_projects"),
+        "names the remedy: {message}"
+    );
+
+    // A case near-miss gets pointed at the real name rather than the list.
+    let failed = server
+        .call(
+            "create_work_item",
+            args(json!({"title":"x","content":"c","project":"KORG"})),
+        )
+        .await
+        .expect("call completes");
+    let text = failed.content[0].as_text().expect("text").text.clone();
+    let err: Value = serde_json::from_str(&text).expect("error body is json");
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("did you mean 'korg'"),
+        "{err}"
+    );
+
+    // Nothing was created by any of the failures.
+    let projects = body(
+        &server
+            .call("list_projects", args(json!({})))
+            .await
+            .expect("list_projects"),
+    );
+    assert_eq!(
+        projects.as_array().unwrap().len(),
+        1,
+        "a failed name resolution created a project (the WI #537 bug)"
+    );
+}

@@ -36,7 +36,9 @@ async fn fresh_korg() -> (impl Sized, PgPool) {
 fn wi(title: &str) -> NewWorkItem {
     NewWorkItem {
         project_id: None,
+        project: None,
         area_id: None,
+        area: None,
         wi_type: "task".into(),
         wi_status: "open".into(),
         wi_tshirt: "S".into(),
@@ -62,6 +64,7 @@ async fn covers_edges_are_written_proposal_to_work_item() {
         &pool,
         NewProposal {
             project_id: None,
+            project: None,
             category: None,
             tags: vec![],
             title: "bundle".into(),
@@ -146,6 +149,7 @@ async fn backfill_orients_legacy_edges_and_leaves_no_proposal_on_the_right() {
         &pool,
         NewProposal {
             project_id: None,
+            project: None,
             category: None,
             tags: vec![],
             title: "modern".into(),
@@ -259,6 +263,7 @@ async fn neighbors_filters_bounds_and_orders_stably() {
         &pool,
         NewProposal {
             project_id: None,
+            project: None,
             category: None,
             tags: vec![],
             title: "bundle".into(),
