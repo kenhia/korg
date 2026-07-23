@@ -31,6 +31,9 @@ test("add and remove comments on a work item", async ({ page }) => {
   await expect(page.getByTestId("comment-list")).toContainText(note);
 
   // Delete it.
+  // Two presses: this is irreversible, so it confirms (WI #549). The button's
+  // accessible name changes to "Confirm: …" once armed.
   await page.getByRole("button", { name: "Delete comment" }).click();
+  await page.getByRole("button", { name: "Confirm: Delete comment" }).click();
   await expect(page.getByTestId("comment-list")).toContainText("No comments.");
 });

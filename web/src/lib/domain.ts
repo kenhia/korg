@@ -145,9 +145,36 @@ export function directionIsMeaningful(label: string): boolean {
  * depending on the page, so the same value looked like a different kind of
  * thing in two places. These are the canonical ones — the kanban board's, which
  * were the only set that colour-coded the three kinds distinctly.
+ *
+ * **Tags carry a hue (WI #571).** They used to be
+ * `bg-[var(--color-surface-hi)] text-[var(--color-muted)]`, and "tags fade into
+ * the background" turned out not to be a text-contrast problem at all — the
+ * muted-on-surface-hi text measured 5.23:1, comfortably past WCAG AA, so an
+ * axe-core pass looked straight at this bug and reported nothing. The problem
+ * was that the chip painted its *container* in the same token as the thing
+ * behind it: 1.00:1 against a `surface-hi` kanban tile, 1.15:1 on a `surface`
+ * panel. A chip reads as a chip because it is a container, and this one had no
+ * edge.
+ *
+ * So the fix is a third hue, not a darker grey — measured against the two
+ * chips that already worked rather than picked by eye. Contrast of the chip
+ * background against its container, and of the label against the chip
+ * (`surface` / `surface-hi` / page `bg`):
+ *
+ * | chip | edge | label |
+ * |---|---|---|
+ * | project (teal, unchanged) | 1.50 / 1.36 / 1.59 | 7.86 / 7.56 / 8.03 |
+ * | category (violet, unchanged) | 1.40 / 1.26 / 1.49 | 8.91 / 8.63 / 9.06 |
+ * | tag **before** | 1.15 / **1.00** / 1.25 | 5.23 (flat, no hue) |
+ * | tag **after** | 1.63 / 1.46 / 1.75 | 8.51 / 8.28 / 8.63 |
+ *
+ * The new tag clears both existing chips on edge separation and sits between
+ * them on label contrast. korg has a single dark theme (`app.css`), so "both
+ * themes" in the sprint proposal is read as both *surface levels* — which is
+ * the distinction that actually produced the bug.
  */
 export const chip = {
   project: "rounded bg-teal-900/60 px-1.5 py-0.5 text-xs text-teal-300",
   category: "rounded bg-violet-900/70 px-1.5 py-0.5 text-xs text-violet-200",
-  tag: "rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs text-[var(--color-muted)]",
+  tag: "rounded bg-amber-900/70 px-1.5 py-0.5 text-xs text-amber-200",
 } as const;

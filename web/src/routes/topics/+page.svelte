@@ -2,24 +2,25 @@
   import { onMount } from "svelte";
   import { api, type Topic } from "$lib/api";
   import { chip } from "$lib/domain";
+  import { attempt, notify } from "$lib/toast.svelte";
+  import ErrorNotice from "$lib/components/ErrorNotice.svelte";
 
   let topics = $state<Topic[]>([]);
   let query = $state("");
   let loading = $state(true);
-  let error = $state<string | null>(null);
-  let notice = $state<string | null>(null);
+  let loadError = $state<unknown>(null);
   let creating = $state(false);
   let editing = $state<Topic | null>(null);
   let form = $state({ name: "", description: "", category: "", tags: "" });
 
   async function load() {
     loading = true;
-    error = null;
+    loadError = null;
     try {
       topics = (await api.topics(query.trim() === "" ? undefined : query.trim()))
         .items;
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
+      loadError = cause;
     } finally {
       loading = false;
     }
@@ -56,39 +57,48 @@
   async function save() {
     const name = form.name.trim();
     if (name === "") return;
-    try {
-      if (editing) {
-        await api.updateTopic(editing.node_id, {
-          name,
-          description: form.description.trim() || null,
-          category: form.category.trim() || null,
-          tags: tags(),
-        });
-        notice = `Updated ${name}`;
-      } else {
-        await api.createTopic({
-          name,
-          description: form.description.trim() || undefined,
-          category: form.category.trim() || undefined,
-          tags: tags(),
-        });
-        notice = `Created ${name}`;
-      }
-      cancel();
-      await load();
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
-    }
+    const target = editing;
+    const saved = await attempt(
+      () =>
+        target
+          ? api.updateTopic(target.node_id, {
+              name,
+              description: form.description.trim() || null,
+              category: form.category.trim() || null,
+              tags: tags(),
+            })
+          : api.createTopic({
+              name,
+              description: form.description.trim() || undefined,
+              category: form.category.trim() || undefined,
+              tags: tags(),
+            }),
+      target ? "Save topic" : "Create topic",
+    );
+    // Keep the form open on failure so the input is not thrown away.
+    if (!saved) return;
+    notify(target ? `Updated ${name}` : `Created ${name}`);
+    cancel();
+    await load();
   }
+
+  // Archiving is reversible (archiveTopic takes a flag), so undo, not confirm
+  // (WI #549).
   async function archive(topic: Topic) {
-    try {
-      await api.archiveTopic(topic.node_id);
-      notice = `Archived ${topic.name}`;
-      if (editing?.node_id === topic.node_id) cancel();
-      await load();
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
-    }
+    const r = await attempt(
+      () => api.archiveTopic(topic.node_id),
+      "Archive topic",
+    );
+    if (!r) return;
+    if (editing?.node_id === topic.node_id) cancel();
+    await load();
+    notify(`Archived ${topic.name}.`, async () => {
+      const undone = await attempt(
+        () => api.archiveTopic(topic.node_id, false),
+        "Undo",
+      );
+      if (undone) await load();
+    });
   }
   onMount(load);
 </script>
@@ -120,18 +130,11 @@
       oninput={() => void load()}
     />
   </div>
-  {#if error}<p
-      class="rounded bg-red-950 px-3 py-2 text-sm text-red-200"
-      role="alert"
-    >
-      {error}
-    </p>{/if}
-  {#if notice}<p
-      class="rounded bg-sky-950 px-3 py-2 text-sm text-sky-200"
-      role="status"
-    >
-      {notice}
-    </p>{/if}
+  <!-- Successes and mutation failures go to the shared toaster; only a failed
+       load replaces content, so only that renders here. -->
+  {#if loadError}
+    <ErrorNotice error={loadError} what="topics" retry={load} />
+  {/if}
 
   {#if creating || editing}
     <form

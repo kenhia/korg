@@ -47,7 +47,11 @@ test("edit, archive, and relate a work item", async ({ page }) => {
   await expect(page.getByText(new RegExp(`#${bId} `))).toBeVisible();
 
   // Remove it.
-  await page.getByRole("button", { name: "Remove" }).click();
+  // Two presses: this is irreversible, so it confirms (WI #549). The button's
+  // accessible name changes to "Confirm: …" once armed.
+  const removeRel = page.getByRole("button", { name: "Remove relationship" });
+  await removeRel.click();
+  await page.getByRole("button", { name: "Confirm: Remove relationship" }).click();
   await expect(page.getByText("No relationships.")).toBeVisible();
 
   // Archive.

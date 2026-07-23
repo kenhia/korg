@@ -9,6 +9,9 @@
   } from "$lib/api";
   import { CARD_STATUSES, type CardStatus } from "$lib/generated/vocab";
   import { activeCardStatuses, chip, CUT, isCut, midRank } from "$lib/domain";
+  import { attempt, notify, reportError } from "$lib/toast.svelte";
+  import ErrorNotice from "$lib/components/ErrorNotice.svelte";
+  import Dialog from "$lib/components/Dialog.svelte";
   import Comments from "$lib/components/Comments.svelte";
   import {
     startOfWeek,
@@ -28,7 +31,7 @@
   let cardsRaw = $state<CardRow[]>([]);
   let board = $state<Record<CardStatus, DndItem[]>>(emptyBoard());
   let loading = $state(true);
-  let error = $state<string | null>(null);
+  let loadError = $state<unknown>(null);
   let view = $state<"board" | "list">("board");
   let newTitle = $state("");
   const flip = 150;
@@ -122,13 +125,13 @@
 
   async function load() {
     loading = true;
-    error = null;
+    loadError = null;
     try {
       // The page filters archived client-side behind a toggle, so it needs both.
-    cardsRaw = (await api.cards({ archived: "all" })).items;
+      cardsRaw = (await api.cards({ archived: "all" })).items;
       rebuild();
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      loadError = e;
     } finally {
       loading = false;
     }
@@ -136,7 +139,9 @@
 
   async function add() {
     if (newTitle.trim() === "") return;
-    await api.createCard({ title: newTitle.trim() });
+    const title = newTitle.trim();
+    const created = await attempt(() => api.createCard({ title }), "Add card");
+    if (!created) return;
     newTitle = "";
     await load();
   }
@@ -160,7 +165,9 @@
       moved.status = status;
       moved.rank = String(rank);
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      // A rejected move leaves the board showing a position the server does not
+      // have, so reload to resynchronise rather than leaving a lie on screen.
+      reportError(err, "Move card");
       await load();
     }
   }
@@ -203,7 +210,7 @@
         "Card added to the daily plan; its board status is unchanged.";
       await loadPlan();
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      reportError(err, "Add card to the daily plan");
     }
   }
 
@@ -260,28 +267,50 @@
     // than as a hidden side effect of a card PATCH. createProject is
     // idempotent, so this is one call whether or not the project exists.
     const projectName = form.project.trim();
-    const project_id =
-      projectName === "" ? null : (await api.createProject(projectName)).id;
-    await api.updateCard(editing.node_id, {
-      title: form.title,
-      status: form.status,
-      description: form.description,
-      project_id,
-      category: form.category.trim() === "" ? null : form.category.trim(),
-      tags,
-    });
+    const node_id = editing.node_id;
+    const saved = await attempt(async () => {
+      const project_id =
+        projectName === "" ? null : (await api.createProject(projectName)).id;
+      return api.updateCard(node_id, {
+        title: form.title,
+        status: form.status,
+        description: form.description,
+        project_id,
+        category: form.category.trim() === "" ? null : form.category.trim(),
+        tags,
+      });
+    }, "Save card");
+    // Keep the editor open on failure — closing it would discard the edits the
+    // user just failed to save.
+    if (!saved) return;
     editing = null;
     await load();
   }
+
+  // Archiving is reversible, so it gets an undo toast rather than a confirm
+  // (WI #549). Confirms on reversible actions teach people to click through
+  // confirms, which is how the one that mattered stops working.
   async function toggleArchiveCard() {
     if (!editing) return;
-    await api.updateCard(editing.node_id, { archived: !editing.archived });
-    editing.archived = !editing.archived;
+    const node_id = editing.node_id;
+    const was = editing.archived;
+    const r = await attempt(
+      () => api.updateCard(node_id, { archived: !was }),
+      was ? "Restore card" : "Archive card",
+    );
+    if (!r) return;
+    editing.archived = !was;
     await load();
-  }
-
-  function onKey(e: KeyboardEvent) {
-    if (e.key === "Escape" && editing) requestClose();
+    notify(was ? "Card restored." : "Card archived.", async () => {
+      const undone = await attempt(
+        () => api.updateCard(node_id, { archived: was }),
+        "Undo",
+      );
+      if (undone) {
+        if (editing?.node_id === node_id) editing.archived = was;
+        await load();
+      }
+    });
   }
 
   onMount(async () => {
@@ -290,16 +319,34 @@
   });
 </script>
 
-<svelte:window onkeydown={onKey} />
-
 {#snippet tile(item: DndItem)}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- The keyboard handler is `onkeydowncapture`, which the compiler does not
+       count as one. It has to be: `svelte-dnd-action` registers its own keydown
+       listener and stops propagation, so a bubble-phase handler here never
+       runs — which is why the pre-existing Enter binding silently did nothing.
+       See the handler below. -->
   <div
     class="cursor-grab rounded bg-[var(--color-surface-hi)] p-2 active:cursor-grabbing"
     data-testid={`card-${item.id}`}
     onclick={() => openEdit(item.card)}
     role="button"
     tabindex="0"
-    onkeydown={(e) => e.key === "Enter" && openEdit(item.card)}
+    aria-label={`Edit card: ${item.card.title}`}
+    onkeydowncapture={(e) => {
+      // Capture phase, deliberately. The WI reports that the tile "ignores
+      // Space"; measuring it showed the tile ignored **Enter** too, despite
+      // having handled it since the board was written. `svelte-dnd-action`
+      // registers its own keydown listener for keyboard dragging and stops
+      // propagation, and Svelte 5 delegates `onkeydown` to the root — so the
+      // bubble-phase handler never ran. Capture fires first, which is the only
+      // way to keep both behaviours on one element.
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        e.stopPropagation();
+        openEdit(item.card);
+      }
+    }}
   >
     <div class="flex items-start gap-2">
       <div class="min-w-0 flex-1 text-sm">{item.card.title}</div>
@@ -367,9 +414,9 @@
     >
   </div>
 
-  {#if error}<p class="rounded bg-red-950 px-3 py-2 text-sm text-red-300">
-      {error}
-    </p>{/if}
+  {#if loadError}
+    <ErrorNotice error={loadError} what="the board" retry={load} />
+  {/if}
 
   <!-- Daily-plan targets: dropping adds a source occurrence and does not move the card. -->
   <div
@@ -535,13 +582,21 @@
               <tr
                 class="cursor-pointer border-t border-[var(--color-border)] hover:bg-[var(--color-surface-hi)]"
                 class:opacity-55={card.archived}
-                tabindex="0"
                 onclick={() => openEdit(card)}
-                onkeydown={(e) =>
-                  (e.key === "Enter" || e.key === " ") &&
-                  (e.preventDefault(), openEdit(card))}
               >
-                <td class="px-3 py-1.5 font-medium">{card.title}</td>
+                <!-- A real button in the cell rather than role="button" on the
+                     <tr> (WI #548): a row that claims to be a button is no
+                     longer a row, and the table loses its semantics. This keeps
+                     both, and Enter/Space come free with the element. -->
+                <td class="px-3 py-1.5 font-medium">
+                  <button
+                    class="w-full cursor-pointer text-left font-medium"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      openEdit(card);
+                    }}>{card.title}</button
+                  >
+                </td>
                 <td class="px-3 py-1.5">{card.status}</td>
                 <td class="px-3 py-1.5"
                   >{#if card.project}<span class={chip.project}
@@ -671,34 +726,28 @@
   {/snippet}
 
   {#if editing}
-    <div
-      class="fixed inset-0 z-50 flex items-start justify-center overflow-auto p-4"
+    <!-- Was a hand-built overlay with Escape but no focus trap and no focus
+         restore, behind a full-screen `<button>` scrim. `<dialog>` supplies all
+         three (WI #548). -->
+    <Dialog
+      open={true}
+      onClose={requestClose}
+      placement="center"
+      title="Edit card"
     >
-      <button
-        class="absolute inset-0 bg-black/60"
-        aria-label="Close"
-        onclick={requestClose}
-      ></button>
-      <div
-        class="relative z-10 mt-8 w-full max-w-lg space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-xl"
-        data-testid="card-modal"
-      >
-        <div class="flex items-center justify-between">
-          <h2 class="text-lg font-semibold">
-            Edit card {#if editing.archived}<span
-                class="ml-2 rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs uppercase text-[var(--color-muted)]"
-                >archived</span
-              >{/if}
-          </h2>
-          <button
-            class="rounded px-2 py-1 text-[var(--color-muted)] hover:bg-[var(--color-surface-hi)]"
-            aria-label="Close"
-            data-testid="modal-close"
-            onclick={requestClose}>✕</button
-          >
-        </div>
+      <div class="space-y-3" data-testid="card-modal">
+        {#if editing.archived}
+          <p>
+            <span
+              class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs uppercase text-[var(--color-muted)]"
+              >archived</span
+            >
+          </p>
+        {/if}
 
+        <label class="sr-only" for="edit-card-title">Card title</label>
         <input
+          id="edit-card-title"
           class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none"
           placeholder="Title"
           data-testid="edit-title"
@@ -811,6 +860,6 @@
           </div>
         {/if}
       </div>
-    </div>
+    </Dialog>
   {/if}
 </section>

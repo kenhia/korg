@@ -55,7 +55,7 @@ pub const PROJECT_STATUSES: [&str; 4] = ["active", "maintenance", "inactive", "a
 /// hand-kept copy that drifts (the old `api.ts` `WI_TYPES` had nine entries,
 /// six of which the server rejects).
 #[cfg(test)]
-const EXPORTED: [(&str, &str, &[&str]); 8] = [
+const EXPORTED: [(&str, &str, &[&str]); 9] = [
     ("WI_STATUSES", "WiStatus", &WI_STATUSES),
     ("WI_TYPES", "WiType", &WI_TYPES),
     ("WI_TSHIRTS", "WiTshirt", &WI_TSHIRTS),
@@ -64,6 +64,10 @@ const EXPORTED: [(&str, &str, &[&str]); 8] = [
     ("PROPOSAL_STATUSES", "ProposalStatus", &PROPOSAL_STATUSES),
     ("REPORT_STATUSES", "ReportStatus", &REPORT_STATUSES),
     ("PROJECT_STATUSES", "ProjectStatus", &PROJECT_STATUSES),
+    // Not a domain vocabulary but the same kind of fact: a closed set the
+    // client must agree with. The web app branches on it to tell "you typed
+    // something wrong" from "korg broke" (sprint 019).
+    ("ERROR_CODES", "ErrorCode", &crate::error::ERROR_CODES),
 ];
 
 /// Reject a value outside its vocabulary with the full allowed set in the

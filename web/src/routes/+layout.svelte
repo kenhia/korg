@@ -1,6 +1,7 @@
 <script lang="ts">
   import "../app.css";
   import { page } from "$app/stores";
+  import Toaster from "$lib/components/Toaster.svelte";
 
   let { children } = $props();
 
@@ -41,8 +42,14 @@
   <header
     class="sticky top-0 z-40 border-b border-[var(--color-border)] bg-[var(--color-surface)]"
   >
+    <!-- Wraps rather than scrolls (WI #549). It was `overflow-x-auto`, which at
+         390px put the last item at x≈797 of a 390-wide viewport with no
+         affordance whatsoever — the items were not hidden behind a control you
+         could learn to use, they were simply gone. Ten short labels wrap to two
+         rows on a phone and one row from `sm` up, which costs a little sticky
+         header height in exchange for every destination being reachable. -->
     <nav
-      class="mx-auto flex max-w-[120rem] items-center gap-1 overflow-x-auto px-4 py-2"
+      class="mx-auto flex max-w-[120rem] flex-wrap items-center gap-1 px-4 py-2"
     >
       <a
         href="/"
@@ -79,4 +86,6 @@
   >
     {@render children()}
   </main>
+
+  <Toaster />
 </div>

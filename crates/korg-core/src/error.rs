@@ -50,6 +50,15 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
+    /// Every code, for exhaustive iteration. Kept next to the enum so adding a
+    /// variant without listing it here fails `error_codes_are_exhaustive`.
+    pub const ALL: [Self; 4] = [
+        Self::InvalidInput,
+        Self::NotFound,
+        Self::Conflict,
+        Self::Internal,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::InvalidInput => "invalid_input",
@@ -59,6 +68,13 @@ impl ErrorCode {
         }
     }
 }
+
+/// The codes as strings, exported to TypeScript alongside the vocabularies so
+/// the web app can branch on `code` without hand-mirroring the list (sprint
+/// 019). `invalid_input` is the user's problem and reads as a correction;
+/// `internal` is korg's and reads as an apology — same HTTP failure, different
+/// UI, and only this field tells them apart.
+pub const ERROR_CODES: [&str; 4] = ["invalid_input", "not_found", "conflict", "internal"];
 
 /// Anything a transport can classify. Implemented for the two typed errors and
 /// for `anyhow::Error` (which downcasts to them, defaulting to `Internal`).
@@ -98,5 +114,20 @@ impl ErrorClass for anyhow::Error {
             return e.code();
         }
         ErrorCode::Internal
+    }
+}
+
+#[cfg(test)]
+mod code_tests {
+    use super::{ErrorCode, ERROR_CODES};
+
+    #[test]
+    fn error_codes_are_exhaustive() {
+        let from_enum: Vec<&str> = ErrorCode::ALL.iter().map(|c| c.as_str()).collect();
+        assert_eq!(
+            from_enum, ERROR_CODES,
+            "ERROR_CODES must list exactly what ErrorCode::ALL renders — the \
+             TypeScript union is generated from it",
+        );
     }
 }

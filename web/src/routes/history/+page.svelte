@@ -7,6 +7,8 @@
     type HistoryPreset,
   } from "$lib/api";
   import { kindLabel } from "$lib/domain";
+  import { attempt } from "$lib/toast.svelte";
+  import ErrorNotice from "$lib/components/ErrorNotice.svelte";
 
   const presets: { value: HistoryPreset; label: string }[] = [
     { value: "week", label: "Week" },
@@ -19,7 +21,7 @@
   let allItems = $state<DailyPlanItem[]>([]);
   let sourceNodeId = $state("");
   let loading = $state(true);
-  let error = $state<string | null>(null);
+  let loadError = $state<unknown>(null);
   const sourceOptions = $derived(
     [
       ...new Map(
@@ -37,7 +39,7 @@
 
   async function load() {
     loading = true;
-    error = null;
+    loadError = null;
     try {
       const selected = sourceNodeId === "" ? undefined : Number(sourceNodeId);
       const [filtered, all] = await Promise.all([
@@ -47,18 +49,19 @@
       history = filtered;
       allItems = all.items;
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
+      loadError = cause;
     } finally {
       loading = false;
     }
   }
   async function toggle(item: DailyPlanItem, completed: boolean) {
-    try {
-      await api.setDailyPlanCompletion(item.node_id, completed);
-      await load();
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
-    }
+    await attempt(
+      () => api.setDailyPlanCompletion(item.node_id, completed),
+      completed ? "Complete item" : "Reopen item",
+    );
+    // Reload either way: the checkbox reflects server state, so leaving it on
+    // the value the server rejected would be a lie.
+    await load();
   }
   function percent(rate: number): string {
     return new Intl.NumberFormat(undefined, {
@@ -112,12 +115,9 @@
       ></label
     >
   </div>
-  {#if error}<p
-      class="rounded bg-red-950 px-3 py-2 text-sm text-red-200"
-      role="alert"
-    >
-      {error}
-    </p>{/if}
+  {#if loadError}
+    <ErrorNotice error={loadError} what="history" retry={load} />
+  {/if}
   {#if loading || !history}<p class="text-[var(--color-muted)]">
       Loading history…
     </p>{:else}

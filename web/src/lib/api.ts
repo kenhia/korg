@@ -28,10 +28,66 @@ import type {
   WorkItemDetail,
   WorkItemRow,
 } from "./generated/korg";
-import type { CardStatus, Disposition, ProposalStatus } from "./generated/vocab";
+import type {
+  CardStatus,
+  Disposition,
+  ErrorCode,
+  ProposalStatus,
+} from "./generated/vocab";
+import { ERROR_CODES } from "./generated/vocab";
 
 export type * from "./generated/korg";
 export type * from "./generated/vocab";
+
+/**
+ * A failed API call, with the server's classification intact.
+ *
+ * korg's REST errors are `{error, code}` where `code` is one of
+ * `invalid_input | not_found | conflict | internal` (sprint 013, D-5). Until
+ * sprint 019 this client flattened both into one string, so every caller that
+ * wanted to behave differently for "you typed something wrong" than for "korg
+ * fell over" had no way to tell — the whole point of adding `code` was lost in
+ * the last five lines before it reached the UI.
+ *
+ * `detail` is the server's own sentence, which is written for a person
+ * ("no project named 'KORG' — did you mean 'korg'?"). Show that. `method` and
+ * `path` are kept as fields for the console rather than being prepended to the
+ * message, because a log line is not a user-facing string.
+ */
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: ErrorCode | null,
+    readonly detail: string,
+    readonly method: string,
+    readonly path: string,
+  ) {
+    super(detail);
+    this.name = "ApiError";
+  }
+
+  /** The caller supplied something korg refused — the user can fix it. */
+  get isUserFixable(): boolean {
+    return this.code === "invalid_input" || this.code === "conflict";
+  }
+}
+
+/** A network failure — the request never got an answer. Distinct from an
+ *  `ApiError`, which means korg replied and said no. */
+export class NetworkError extends Error {
+  constructor(
+    readonly method: string,
+    readonly path: string,
+    readonly cause: unknown,
+  ) {
+    super("Could not reach korg — check that the server is running.");
+    this.name = "NetworkError";
+  }
+}
+
+function isErrorCode(v: unknown): v is ErrorCode {
+  return typeof v === "string" && (ERROR_CODES as readonly string[]).includes(v);
+}
 
 /** The plan payload: a project's items plus its `depends_on` edges,
  *  `[left, right]` = left depends on right. Assembled by the handler rather
@@ -65,13 +121,29 @@ function listQuery(
 
 async function failure(method: string, path: string, res: Response) {
   let detail = res.statusText;
+  let code: ErrorCode | null = null;
   try {
     const j = await res.json();
     if (j && typeof j.error === "string") detail = j.error;
+    if (j && isErrorCode(j.code)) code = j.code;
   } catch {
-    /* ignore */
+    /* a non-JSON body (proxy error page, empty 502) leaves statusText */
   }
-  return new Error(`${method} ${path} failed: ${detail}`);
+  return new ApiError(res.status, code, detail, method, path);
+}
+
+/** `fetch` itself only rejects when the request never completed. Everything
+ *  else — 404, 500, a proxy's HTML error page — comes back as a `Response`. */
+async function send(
+  method: string,
+  path: string,
+  init: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(path, init);
+  } catch (cause) {
+    throw new NetworkError(method, path, cause);
+  }
 }
 
 async function http<T>(
@@ -79,7 +151,7 @@ async function http<T>(
   path: string,
   body?: unknown,
 ): Promise<T> {
-  const res = await fetch(path, {
+  const res = await send(method, path, {
     method,
     headers:
       body !== undefined ? { "content-type": "application/json" } : undefined,
@@ -94,7 +166,7 @@ async function http<T>(
 // absence as a normal outcome (find-by-ID, refresh-after-edit) use this and
 // get null; every other failure still throws.
 async function httpMaybe<T>(method: string, path: string): Promise<T | null> {
-  const res = await fetch(path, { method });
+  const res = await send(method, path, { method });
   if (res.status === 404) return null;
   if (!res.ok) throw await failure(method, path, res);
   return (await res.json()) as T;
