@@ -233,3 +233,39 @@ observing green.
 - Playwright in CI (deliberate, see above).
 - A restore drill. The last verified restore is 2026-07-08; `docs/operations.md`
   suggests a roughly quarterly cadence, but running one was out of scope.
+
+## Deployed 2026-07-23
+
+Shipped to kubsdb from merged `main` (`c78468fa`), the first deploy under the
+clean-tree + SHA-stamp rules this sprint introduced.
+
+| | |
+|---|---|
+| Image | `sha256:61bdfd51…`, tags `korg:latest` + `korg:c78468fa1912` |
+| Revision label | `org.opencontainers.image.revision=c78468fa19120946da68b271af8984fe98cd38b1` |
+| Rollback target | `sha256:6237bd19…` (no revision label — it predates the convention) |
+
+The new preflight gates all fired and passed: clean tree, kubsdb reachable,
+backups current (`korg-20260723-032356.sql.gz`, 283 KB, larger than each of its
+predecessors), rollback target noted, baseline captured.
+
+`scripts/post-deploy-check.sh --compare` passed with **zero delta** on every row
+count (379 work items, 27 cards, 4 links, 0 topics, 57 proposals, 23 reports, 29
+projects), plus health, the enveloped reads, the focused read, the 404 +
+`code: not_found` contract, the MCP roundtrip, and the idempotent write. Its
+first real use, and it did the job it was written for.
+
+Verified live, specific to what this sprint changed:
+
+- `docker inspect korg` now answers with the commit it was built from. The
+  previous container returned an empty label, which is exactly the "predates the
+  convention" answer WI #546 predicted.
+- The rewritten MCP `instructions` are serving, and name sprint proposals,
+  reports, comments and projects — all invisible to clients before this sprint,
+  along with the envelope contract and the name-or-id selector rule.
+
+CI note: `.github/workflows/ci.yml` ran green on the PR **and** on `main` after
+the squash merge (both jobs). Its first run failed twice on the way there, which
+is what a first run is for — `pnpm/action-setup` resolves `packageManager` from
+the repo root while korg's lives in `web/`, and `on.push.branches: ["**"]` plus
+`on.pull_request` double-ran every job. Both fixed in `e82787c` before the merge.
