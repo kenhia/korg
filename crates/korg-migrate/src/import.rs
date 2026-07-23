@@ -160,9 +160,16 @@ pub async fn import(kwi: &KwiData, kcard: &KcardData, korg: &PgPool) -> Result<I
     let max_wi_number: i64 = kwi.workitems.iter().map(|w| w.id as i64).max().unwrap_or(0);
     // One sequence since 0009_identity: keep node ids serial past the imported
     // wi_numbers (and anything else already inserted).
+    //
+    // The three-argument form, matching 0015 (WI #552): with `is_called` the
+    // negation of "any rows exist", an empty `node` leaves id 1 mintable
+    // instead of consuming it. The import always inserts before reaching here,
+    // so this is alignment rather than a fix — but the two-argument idiom is
+    // wrong often enough that leaving a copy of it around invites the bug back.
     sqlx::query(
         "SELECT setval(pg_get_serial_sequence('node','id'), \
-                GREATEST((SELECT COALESCE(MAX(id),1) FROM node), 1))",
+                GREATEST((SELECT COALESCE(MAX(id),1) FROM node), 1), \
+                EXISTS (SELECT 1 FROM node))",
     )
     .execute(&mut *tx)
     .await

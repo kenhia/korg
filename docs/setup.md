@@ -131,6 +131,38 @@ cargo test --workspace         # or: just test  (requires Docker)
 The Rust integration tests provision disposable PostgreSQL containers, so Docker
 must be running and the daemon reachable.
 
+### Writing one
+
+Everything a suite needs comes from `korg-test-support` (WI #550) — there is one
+container bootstrap in the workspace, not one per file:
+
+```rust
+use korg_test_support::{fresh_korg, new};
+
+#[tokio::test]
+async fn it_does_the_thing() {
+    let (_pg, pool) = fresh_korg().await;          // bind `_pg`: dropping it stops the container
+    let wi = create_work_item(&pool, new::work_item("a title")).await.unwrap();
+}
+```
+
+`new::{work_item, card, link, proposal, report}` default every optional field to
+what the MCP and REST surfaces' serde defaults produce, so a test names only the
+fields it asserts on — override the rest with struct-update syntax
+(`NewWorkItem { wi_status: "done".into(), ..new::work_item("t") }`). Use
+`raw_postgres()` instead of `fresh_korg()` only when the migrator itself is what
+you are testing.
+
+Surface-specific scaffolding lives next to the suites that need it — the MCP
+`server()`/`args()`/`body()` wrappers in `crates/korg-mcp/tests/common/`, the
+`app()`/`req()` pair in `crates/korg-api/tests/common/`. It cannot move into
+`korg-test-support`, which would then depend on the crates it is a
+dev-dependency of.
+
+**Adding an MCP tool?** `crates/korg-mcp/tests/dispatch.rs` will fail until you
+add the tool to its fixture table. That is deliberate: the fixture set must
+equal the advertised set, so a tool cannot ship without something calling it.
+
 ### Snapshot-backed suites (`KORG_SNAPSHOT_TESTS`)
 
 Three `korg-migrate` suites (`read_sources`, `import_smoke`, `fidelity`) restore

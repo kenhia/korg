@@ -16,17 +16,10 @@ use std::collections::{HashMap, HashSet};
 
 use korg_migrate::import::import;
 use korg_migrate::source::{read_kcard, read_kwi};
+use korg_test_support::count;
 use rust_decimal::Decimal;
-use sqlx::{PgPool, Row};
+use sqlx::Row;
 use time::OffsetDateTime;
-
-async fn count(pool: &PgPool, table: &str) -> i64 {
-    sqlx::query(&format!("SELECT count(*) FROM {table}"))
-        .fetch_one(pool)
-        .await
-        .expect("count")
-        .get::<i64, _>(0)
-}
 
 #[derive(sqlx::FromRow)]
 struct KorgWi {

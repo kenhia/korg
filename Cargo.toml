@@ -5,6 +5,7 @@ members = [
     "crates/korg-migrate",
     "crates/korg-mcp",
     "crates/korg-api",
+    "crates/korg-test-support",
 ]
 
 [workspace.package]
@@ -63,3 +64,6 @@ http-body-util = "0.1"
 # Test helpers
 testcontainers = "0.23"
 testcontainers-modules = { version = "0.11", features = ["postgres"] }
+# The shared harness every suite bootstraps from (WI #550). A dev-dependency
+# everywhere; never a runtime dependency of anything.
+korg-test-support = { path = "crates/korg-test-support" }

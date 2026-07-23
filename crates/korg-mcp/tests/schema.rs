@@ -151,18 +151,10 @@ fn advertised_enums_are_the_vocabulary() {
     );
 }
 
-/// Every registered tool is dispatchable, and every dispatched name is
-/// registered. A tool that exists only in one of the two lists is invisible or
-/// unusable, and nothing else would notice.
-#[test]
-fn every_advertised_tool_has_a_handler() {
-    let dispatch = include_str!("../src/tools.rs");
-    for tool in korg_mcp::tools::tools() {
-        let arm = format!("\"{}\"", tool.name);
-        assert!(
-            dispatch.contains(&arm),
-            "tool `{}` is advertised but has no dispatch arm",
-            tool.name
-        );
-    }
-}
+// `every_advertised_tool_has_a_handler` lived here until sprint 020. It grepped
+// `tools.rs` for each tool's string literal, which proved an arm *existed* —
+// it would have passed against `todo!()`, and it did pass throughout the period
+// when ten tools had never been called by anything. `tests/dispatch.rs` now
+// runs every arm instead, so the grep is deleted rather than kept alongside:
+// two tests for one property, one of which cannot fail when the other passes,
+// is just a slower way to learn the same thing.

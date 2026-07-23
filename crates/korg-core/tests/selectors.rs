@@ -18,59 +18,20 @@ use korg_core::repo::{
     NewWorkItem, WorkItemPatch,
 };
 use korg_core::topics;
+use korg_test_support::{fresh_korg, new};
 use rust_decimal::Decimal;
-use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::testcontainers::ImageExt;
-
-async fn fresh_korg() -> (impl Sized, PgPool) {
-    let container = Postgres::default()
-        .with_tag("18-alpine")
-        .start()
-        .await
-        .expect("start postgres");
-    let port = container.get_host_port_ipv4(5432).await.expect("port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = PgPoolOptions::new()
-        .max_connections(4)
-        .connect(&url)
-        .await
-        .expect("connect");
-    korg_core::migrator().run(&pool).await.expect("migrate");
-    (container, pool)
-}
 
 fn wi(title: &str) -> NewWorkItem {
     NewWorkItem {
-        project_id: None,
-        project: None,
-        area_id: None,
-        area: None,
-        wi_type: "task".into(),
-        wi_status: "open".into(),
         wi_tshirt: "S".into(),
-        sprint: None,
-        title: title.into(),
         content: "c".into(),
-        details: None,
-        category: None,
-        tags: vec![],
+        ..new::work_item(title)
     }
 }
 
 fn card(title: &str) -> NewCard {
-    NewCard {
-        project_id: None,
-        project: None,
-        category: None,
-        tags: vec![],
-        status: "Backlog".into(),
-        title: title.into(),
-        description: String::new(),
-        rank: Decimal::ZERO,
-    }
+    new::card(title)
 }
 
 /// The error an operation failed with, classified.

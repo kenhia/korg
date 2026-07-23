@@ -1,0 +1,19 @@
+[package]
+name = "korg-test-support"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# Test-only helpers. Nothing depends on this outside `[dev-dependencies]`, and
+# it deliberately depends on `korg-core` only: pulling in `korg-mcp` or
+# `korg-api` would make it their dev-dependency *and* their dependency, so
+# surface-specific scaffolding lives in each crate's own `tests/common/`.
+[dependencies]
+korg-core = { path = "../korg-core" }
+rust_decimal = { workspace = true }
+sqlx = { workspace = true }
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true }
+time = { workspace = true }

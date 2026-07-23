@@ -1,54 +1,19 @@
-//! Shared integration-test harness: spin up an ephemeral Postgres and restore
-//! the frozen kwi/kcard snapshots into it via `pg_restore`. Used by S4/S5/S6.
+//! Restore the frozen kwi/kcard snapshots into an ephemeral Postgres via
+//! `pg_restore`. Used by S4/S5/S6.
+//!
+//! The container itself comes from `korg-test-support`; these suites need a
+//! *bare* server (they restore legacy schemas into named databases), which is
+//! why they take `start_pg` rather than `fresh_korg`.
 
 #![allow(dead_code)]
 
+use sqlx::PgPool;
 use std::path::PathBuf;
 use std::process::Command;
 
-use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt};
-
-/// Holds the running container so it is not dropped (which would stop it).
-pub struct Pg {
-    pub container: ContainerAsync<Postgres>,
-    pub port: u16,
-}
-
-impl Pg {
-    pub fn url(&self, db: &str) -> String {
-        format!(
-            "postgres://postgres:postgres@127.0.0.1:{}/{}",
-            self.port, db
-        )
-    }
-}
-
-/// Pin to Postgres 18 so it can restore the pg_dump-18 (kwi) and pg_dump-16
-/// (kcard) archives without version skew.
-pub async fn start_pg() -> Pg {
-    let container = Postgres::default()
-        .with_tag("18-alpine")
-        .start()
-        .await
-        .expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("mapped port");
-    Pg { container, port }
-}
-
-pub async fn connect(url: &str) -> PgPool {
-    PgPoolOptions::new()
-        .max_connections(4)
-        .connect(url)
-        .await
-        .expect("connect to postgres")
-}
+// The container primitive is shared workspace-wide (WI #550); what stays here
+// is the snapshot-restore half, which is this crate's alone.
+pub use korg_test_support::{connect, start_pg, Pg};
 
 pub fn snapshots_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../snapshots")

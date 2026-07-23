@@ -6,36 +6,15 @@
 //! initialize, tools/list, and tools/call (create + list) work end-to-end
 //! against a real korg database.
 
-use http_body_util::BodyExt;
-use korg_api::{build_router, AppState};
 use serde_json::{json, Value};
-use std::sync::Arc;
-use time::macros::datetime;
-use tower::ServiceExt;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::testcontainers::ImageExt;
+use http_body_util::BodyExt;
+use tower::ServiceExt;
 
-async fn app() -> (impl Sized, axum::Router) {
-    let container = Postgres::default()
-        .with_tag("18-alpine")
-        .start()
-        .await
-        .expect("start postgres");
-    let port = container.get_host_port_ipv4(5432).await.expect("port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = korg_core::connect(&url).await.expect("connect+migrate");
-    let router = build_router(AppState {
-        pool: Arc::new(pool),
-        config: Arc::new(
-            korg_core::config::KorgConfig::fixed("UTC", datetime!(2026-07-11 12:00 UTC)).unwrap(),
-        ),
-    });
-    (container, router)
-}
+mod common;
+use common::app;
 
 /// POST a JSON-RPC message to `/mcp` and return (status, parsed-json-body).
 async fn rpc(router: &axum::Router, msg: Value) -> (StatusCode, Value) {

@@ -49,6 +49,9 @@ project-scoped; tags/category are shared across kinds.
 - `korg-mcp` — MCP tool surface (rmcp) over the korg domain, served by `korg-api`.
 - `korg-migrate` — one-shot, fidelity-verified import of kwi + kcard data;
   historical, and long finished.
+- `korg-test-support` — the shared test harness: one container bootstrap, one
+  set of entity builders. A dev-dependency of the other four and never a
+  runtime dependency of anything, so it ships in no binary.
 
 ## MCP server
 

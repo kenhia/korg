@@ -27,6 +27,7 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 
 [dev-dependencies]
+korg-test-support = { workspace = true }
 testcontainers = { workspace = true }
 testcontainers-modules = { workspace = true }
 http-body-util = { workspace = true }

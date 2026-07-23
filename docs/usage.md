@@ -114,10 +114,16 @@ machine-readable; MCP tool errors carry the same pair as
 
 | `code` | HTTP | Meaning |
 | ------ | ---- | ------- |
-| `invalid_input` | 400 | A value the caller supplied is not acceptable — unknown status, t-shirt size, `wi_type`, card status, disposition, unparseable date, an area outside the work item's project, an unresolvable parent, or a selector that does not resolve (unknown `project`/`project_id`/`area`/`area_id`, or an id *and* a name passed together). |
+| `invalid_input` | 400 | A value the caller supplied is not acceptable — unknown status, t-shirt size, `wi_type`, card status, disposition, unparseable date, a blank value where the schema says `minLength: 1` (comment body, link URL), an area outside the work item's project, an unresolvable parent, or a selector that does not resolve (unknown `project`/`project_id`/`area`/`area_id`, or an id *and* a name passed together). |
 | `not_found` | 404 | The named or keyed entity does not exist — including single-item reads, which 404 rather than answering `200 null`. |
 | `conflict` | 409 | Well-formed but at odds with server-enforced state (frozen past, stale reorder). |
 | `internal` | 500 | A genuine server fault. Only this class should ever be retried blindly. |
+
+Blank required text is checked in korg-core too (sprint 020). The `CHECK`
+constraints on `comment.body` and `link.url` always rejected it, but the failure
+surfaced as an `sqlx` error — so a caller who sent an empty string was told
+`internal` and shown the raw constraint violation, i.e. "korg has a problem,
+retry", for input that would never be accepted.
 
 Vocabularies are validated in korg-core, so an unknown value comes back as a
 400 naming the whole allowed set rather than a 500 carrying raw Postgres text:

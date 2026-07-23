@@ -8,15 +8,8 @@ mod common;
 
 use korg_migrate::import::import;
 use korg_migrate::source::{read_kcard, read_kwi};
-use sqlx::{PgPool, Row};
-
-async fn count(pool: &PgPool, table: &str) -> i64 {
-    sqlx::query(&format!("SELECT count(*) FROM {table}"))
-        .fetch_one(pool)
-        .await
-        .expect("count")
-        .get::<i64, _>(0)
-}
+use korg_test_support::count;
+use sqlx::Row;
 
 #[tokio::test]
 async fn import_smoke_counts_match_sources() {

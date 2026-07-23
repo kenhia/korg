@@ -8,15 +8,7 @@
 mod common;
 
 use korg_migrate::source::{read_kcard, read_kwi};
-use sqlx::{PgPool, Row};
-
-async fn count(pool: &PgPool, table: &str) -> i64 {
-    sqlx::query(&format!("SELECT count(*) FROM {table}"))
-        .fetch_one(pool)
-        .await
-        .expect("count query")
-        .get::<i64, _>(0)
-}
+use korg_test_support::count;
 
 #[tokio::test]
 async fn read_sources_matches_row_counts() {
