@@ -288,3 +288,54 @@ expanded into here.
   unpaginated reads should be enveloped for uniformity.
 - **WI #580** — `cards-dnd.spec.ts` is flaky on a populated board, same root
   cause as the drag test this sprint fixed.
+
+---
+
+## Deployed 2026-07-23
+
+Image `korg:fb09e12cea33` (revision `fb09e12cea3386570c68f912d7b33dd88c749a49`),
+built from merged `main` and deployed to kubsdb — web + REST + MCP on `:5674`.
+Rollback target: `korg:ae202ca…` / image `sha256:ecd620de1ac1` (sprint 019).
+
+Preflight: clean tree, `just check` green on merged `main`, backups current
+(`korg-20260723-032356.sql.gz`, 283 KB — larger than the previous night's, timer
+active).
+
+### The migration no-opped, as designed
+
+0015 is the first migration since 0009 to touch the node id sequence, and its
+whole contract on a populated database is to do nothing. Baselined before and
+diffed after:
+
+| | Before | After |
+|---|---|---|
+| `schema_version` | 14 | **15** |
+| `node` rows | 500 | 500 |
+| `max(node.id)` | 583 | 583 |
+| `min(node.id)` | 1 | 1 |
+| `node_id_seq` | `last_value=583 is_called=true` | `last_value=583 is_called=true` |
+
+The sequence is untouched, which is the assertion that mattered — a migration
+that rewound it onto ids already in use would have been invisible until the next
+write collided. `min(node.id) = 1` also confirms production was never affected by
+the bug 0015 fixes: the import populated node 1 directly, so the unmintable-#1
+case only ever existed on fresh installs.
+
+`scripts/post-deploy-check.sh --compare`: all reads, both transports, the error
+contract and the idempotent write green; **every row count identical** (work
+items 385, cards 27, links 4, topics 0, proposals 57, reports 23, projects 29).
+
+### What this sprint changed, verified live
+
+- **`invalid_input` instead of `internal`.** `POST /api/nodes/1/comments` with a
+  blank body now returns `400 {"code":"invalid_input","error":"comment body must
+  not be empty"}`; `POST /api/links` with a blank url returns the matching
+  `link url must not be empty`. Both previously returned `500 internal` carrying
+  raw Postgres constraint text. Chosen as the smoke test because a rejected
+  write exercises the fix and cannot add rows.
+- **The corrected MCP server instructions** are live in the `initialize`
+  response, naming which reads are paginated and which return a bare array.
+- **`project_edges`** — the path with zero coverage before this sprint — agrees
+  with the database exactly: `korg` 0 edges (all 23 `depends_on` edges belong to
+  other projects), `homelab-ai` 21, `kmon` 1, `kvscf` 1.
+- `GET /plan` returns 200.
