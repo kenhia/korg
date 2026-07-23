@@ -5,28 +5,14 @@
 //! schema landed: every table, the `card_status` enum, and the
 //! `wi_number` sequence exist.
 
-use sqlx::postgres::PgPoolOptions;
+use korg_test_support::raw_postgres;
 use sqlx::Row;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
 #[tokio::test]
 async fn schema_applies_cleanly() {
-    let container = Postgres::default()
-        .start()
-        .await
-        .expect("start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("get mapped port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-
-    let pool = PgPoolOptions::new()
-        .max_connections(4)
-        .connect(&url)
-        .await
-        .expect("connect to postgres");
+    // `raw_postgres` deliberately, not `fresh_korg`: this test's subject *is*
+    // the migrator, so it must run it itself and say so when it fails.
+    let (_pg, pool) = raw_postgres().await;
 
     korg_core::migrator()
         .run(&pool)

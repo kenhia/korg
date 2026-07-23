@@ -5,10 +5,9 @@
 //! intact. (schema.rs covers the clean full-migrator path; this test raw-applies
 //! the SQL files so it can seed between 0008 and 0009.)
 
-use sqlx::postgres::PgPoolOptions;
+use korg_core::repo::create_work_item;
+use korg_test_support::{fresh_korg, new, raw_postgres};
 use sqlx::{Executor, Row};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
 const MIGRATIONS: &[(&str, &str)] = &[
     ("0001", include_str!("../migrations/0001_init.sql")),
@@ -33,17 +32,13 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ),
 ];
 const IDENTITY: &str = include_str!("../migrations/0009_identity.sql");
+const SEQUENCE_FIX: &str = include_str!("../migrations/0015_node_sequence_fresh_install.sql");
 
 #[tokio::test]
 async fn identity_remap_preserves_edges() {
-    let container = Postgres::default().start().await.expect("start postgres");
-    let port = container.get_host_port_ipv4(5432).await.expect("port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = PgPoolOptions::new()
-        .max_connections(4)
-        .connect(&url)
-        .await
-        .expect("connect");
+    // Raw pool: this suite applies the migration files by hand so it can seed
+    // the pre-0009 shape between 0008 and 0009.
+    let (_pg, pool) = raw_postgres().await;
 
     for (name, sql) in MIGRATIONS {
         pool.execute(*sql)
@@ -137,4 +132,54 @@ async fn identity_remap_preserves_edges() {
     .expect("new wi")
     .get("wi_number");
     assert_eq!(wi, new_id);
+}
+
+/// WI #552 — a fresh install can mint node #1.
+///
+/// 0009's `setval(seq, GREATEST(MAX(id), 1))` consumes id 1 on an empty
+/// database, so before 0015 the first node ever created got id 2 and work item
+/// #1 was unreachable forever. This drives the *real* migrator (not the
+/// hand-applied files above) because the fix is a later migration and the
+/// ordering between them is the thing under test.
+#[tokio::test]
+async fn a_fresh_database_mints_node_one() {
+    let (_pg, pool) = fresh_korg().await;
+
+    let wi = create_work_item(&pool, new::work_item("the first work item"))
+        .await
+        .expect("create wi");
+
+    assert_eq!(
+        wi.wi_number, 1,
+        "the first work item on a fresh database must be #1"
+    );
+    assert_eq!(
+        wi.node_id, 1,
+        "and its node id must agree (0009's invariant)"
+    );
+}
+
+/// The half that would actually hurt: 0015 must be a no-op wherever `node`
+/// already has rows. Re-running it against a populated database must not rewind
+/// the sequence onto ids that are already taken.
+#[tokio::test]
+async fn the_sequence_fix_does_not_touch_a_populated_database() {
+    let (_pg, pool) = fresh_korg().await;
+
+    let first = create_work_item(&pool, new::work_item("first"))
+        .await
+        .expect("create first");
+
+    // Apply 0015 again by hand, as a re-run would.
+    pool.execute(SEQUENCE_FIX).await.expect("re-apply 0015");
+
+    let second = create_work_item(&pool, new::work_item("second"))
+        .await
+        .expect("create second");
+    assert!(
+        second.node_id > first.node_id,
+        "re-running 0015 rewound the sequence: {} then {}",
+        first.node_id,
+        second.node_id
+    );
 }

@@ -109,7 +109,7 @@ resolve is `invalid_input`.
 
 ## Collection reads
 
-Every list returns the same envelope (sprint 015):
+The **paginated** lists return an envelope (sprint 015):
 
 ```json
 { "items": [ ... ], "total": 42, "limit": 200, "offset": 0 }
@@ -118,6 +118,22 @@ Every list returns the same envelope (sprint 015):
 `total` is the full **filtered** count before `limit`/`offset`, so you can page
 without guessing and can tell a complete answer from a clipped one. `limit`
 defaults to 200 and is clamped to 500.
+
+The unpaginated lists return a **bare JSON array**. Which is which, verified
+against the code in sprint 020 — this table was previously "every list returns
+the same envelope", which was true of four of them:
+
+| Shape | Reads |
+|---|---|
+| `{items, total, limit, offset}` | `list_work_items`, `list_cards`, `list_links`, `list_topics`, `survey_work_items` |
+| `{items, total, limit, truncated}` | `neighbors` (`truncated`, not `offset` — it caps rather than pages) |
+| `{from, to, total, completed, items}` | `daily_plan_history` |
+| bare array | `list_proposals`, `list_reports`, `list_projects`, `list_areas`, `list_comments`, `list_daily_plan` |
+
+The bare-array reads are the ones with no natural paging story — the proposal
+queue is short and hand-ordered, a project has a handful of areas, a node has a
+handful of comments, a day has a handful of plan items. Whether they *should*
+be enveloped anyway for uniformity is open: **WI #579**.
 
 **Archived rows are excluded by default.** This is deliberate (D-3): the common
 question is "what is live", and the old behaviour silently mixed archived rows
@@ -142,8 +158,7 @@ everything and sifting:
 | `neighbors` | `label`, `kind` | `node_id`, `rel_id` |
 
 Every ordering carries an id tie-breaker, so equal ranks no longer shuffle
-between calls. `list_proposals` is not enveloped — the queue is small and
-ordered by hand.
+between calls.
 
 `survey_work_items` remains the cross-project sweep: same envelope, no
 `content`/`details`. Reach for `list_work_items` when you want one project's

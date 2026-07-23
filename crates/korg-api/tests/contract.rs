@@ -5,65 +5,11 @@
 //! (`PATCH /api/cards/<work-item node>`) silently mutated a different entity
 //! and reported success. These assertions are the regression fence.
 
-use http_body_util::BodyExt;
-use korg_api::{build_router, AppState};
 use serde_json::{json, Value};
-use std::sync::Arc;
-use time::macros::datetime;
-use tower::ServiceExt;
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::testcontainers::ImageExt;
-
-async fn app() -> (impl Sized, axum::Router) {
-    let container = Postgres::default()
-        .with_tag("18-alpine")
-        .start()
-        .await
-        .expect("start postgres");
-    let port = container.get_host_port_ipv4(5432).await.expect("port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = korg_core::connect(&url).await.expect("connect+migrate");
-    let router = build_router(AppState {
-        pool: Arc::new(pool),
-        config: Arc::new(
-            korg_core::config::KorgConfig::fixed("UTC", datetime!(2026-07-11 12:00 UTC)).unwrap(),
-        ),
-    });
-    (container, router)
-}
-
-async fn req(
-    router: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder().method(method).uri(path);
-    let body = match body {
-        Some(v) => {
-            builder = builder.header("content-type", "application/json");
-            Body::from(serde_json::to_vec(&v).unwrap())
-        }
-        None => Body::empty(),
-    };
-    let resp = router
-        .clone()
-        .oneshot(builder.body(body).unwrap())
-        .await
-        .expect("request");
-    let status = resp.status();
-    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-    let json: Value = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
-    };
-    (status, json)
-}
+use axum::http::StatusCode;
+mod common;
+use common::{app, req};
 
 /// Assert status + the stable `code` field (D-5) together: agents branch on
 /// the code, so a right status with a missing code is still a broken contract.

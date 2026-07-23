@@ -8,30 +8,10 @@ use korg_core::repo::{
 use korg_core::topics::{
     archive_topic, create_topic, get_topic, list_topics, update_topic, NewTopic, TopicPatch,
 };
+use korg_test_support::{fresh_korg, new};
 use rust_decimal::Decimal;
-use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::testcontainers::ImageExt;
 use time::macros::{date, datetime};
-
-async fn fresh_korg() -> (impl Sized, PgPool) {
-    let container = Postgres::default()
-        .with_tag("18-alpine")
-        .start()
-        .await
-        .expect("start postgres");
-    let port = container.get_host_port_ipv4(5432).await.expect("port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = PgPoolOptions::new()
-        .max_connections(4)
-        .connect(&url)
-        .await
-        .expect("connect");
-    korg_core::migrator().run(&pool).await.expect("migrate");
-    (container, pool)
-}
 
 fn ctx() -> LifecycleContext {
     LifecycleContext {
@@ -55,19 +35,8 @@ async fn work_item(pool: &PgPool, title: &str) -> i64 {
     create_work_item(
         pool,
         NewWorkItem {
-            project_id: None,
-            project: None,
-            area_id: None,
-            area: None,
-            wi_type: "task".into(),
-            wi_status: "open".into(),
             wi_tshirt: "S".into(),
-            sprint: None,
-            title: title.into(),
-            content: String::new(),
-            details: None,
-            category: None,
-            tags: vec![],
+            ..new::work_item(title)
         },
     )
     .await

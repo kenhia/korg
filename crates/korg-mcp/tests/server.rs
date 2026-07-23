@@ -1,61 +1,19 @@
 //! M4 acceptance — korg-mcp server dispatch over a real korg database.
 //!
 //! Builds the server against a fresh testcontainers korg DB and exercises the
-//! tool surface end-to-end: tool listing, work-item/link creation, generalized
-//! relate + neighbors (cross-kind), and the seeded slot template.
+//! tool surface end-to-end: tool listing, work-item/link creation, and
+//! generalized relate + neighbors (cross-kind).
+//!
+//! Behavioural coverage lives here; `dispatch.rs` holds the completeness fence
+//! that every advertised tool is actually dispatched somewhere.
 
-use korg_mcp::tools::{tools, KorgServer};
-use rmcp::model::{CallToolResult, JsonObject};
+use korg_mcp::tools::tools;
+use korg_test_support::fresh_korg;
+use rmcp::model::CallToolResult;
 use serde_json::{json, Value};
-use sqlx::PgPool;
-use std::sync::Arc;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::testcontainers::ImageExt;
-use time::macros::datetime;
 
-async fn fresh_korg() -> (impl Sized, PgPool) {
-    let container = Postgres::default()
-        .with_tag("18-alpine")
-        .start()
-        .await
-        .expect("start postgres");
-    let port = container.get_host_port_ipv4(5432).await.expect("port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = korg_core::connect(&url).await.expect("connect+migrate");
-    (container, pool)
-}
-
-fn args(v: Value) -> Option<JsonObject> {
-    match v {
-        Value::Object(m) => Some(m),
-        _ => panic!("args must be object"),
-    }
-}
-
-fn server(pool: PgPool) -> KorgServer {
-    KorgServer::new(
-        pool,
-        Arc::new(
-            korg_core::config::KorgConfig::fixed("UTC", datetime!(2026-07-11 12:00 UTC)).unwrap(),
-        ),
-    )
-}
-
-/// Extract the JSON body of a successful tool result.
-fn body(result: &CallToolResult) -> Value {
-    assert_ne!(
-        result.is_error,
-        Some(true),
-        "tool returned an error: {result:?}"
-    );
-    let text = result.content[0]
-        .as_text()
-        .expect("text content")
-        .text
-        .clone();
-    serde_json::from_str(&text).expect("result body is json")
-}
+mod common;
+use common::{args, body, server};
 
 #[tokio::test]
 async fn mcp_surface_end_to_end() {

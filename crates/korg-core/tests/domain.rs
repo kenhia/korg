@@ -9,29 +9,8 @@ use korg_core::repo::{
     create_card, create_link, create_work_item, list_links, neighbors, NewCard, NewLink,
     NewWorkItem,
 };
+use korg_test_support::{fresh_korg, new};
 use rust_decimal::Decimal;
-use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::testcontainers::ImageExt;
-
-async fn fresh_korg() -> (impl Sized, PgPool) {
-    let container = Postgres::default()
-        .with_tag("18-alpine")
-        .start()
-        .await
-        .expect("start postgres");
-    let port = container.get_host_port_ipv4(5432).await.expect("port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = PgPoolOptions::new()
-        .max_connections(4)
-        .connect(&url)
-        .await
-        .expect("connect");
-    korg_core::migrator().run(&pool).await.expect("migrate");
-    (container, pool)
-}
 
 #[tokio::test]
 async fn domain_cross_kind_relationships_and_reading_list() {
@@ -40,19 +19,9 @@ async fn domain_cross_kind_relationships_and_reading_list() {
     let wi = create_work_item(
         &pool,
         NewWorkItem {
-            project_id: None,
-            project: None,
-            area_id: None,
-            area: None,
-            wi_type: "task".into(),
-            wi_status: "open".into(),
-            wi_tshirt: "Unknown".into(),
-            sprint: None,
-            title: "Wire korg MCP".into(),
             content: "expose tools".into(),
-            details: None,
-            category: None,
             tags: vec!["korg".into()],
+            ..new::work_item("Wire korg MCP")
         },
     )
     .await

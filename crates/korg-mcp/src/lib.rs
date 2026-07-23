@@ -16,7 +16,10 @@ pub fn server_instructions() -> &'static str {
      sprint proposals, reports, and projects and areas. \
      Mutations validate their target and return the updated entity; errors are isError \
      results carrying {message, code} where code is one of invalid_input, not_found, \
-     conflict, internal. Collection reads return {items, total, limit, offset} and exclude \
+     conflict, internal. Paginated collection reads (list_work_items, list_cards, \
+     list_links, list_topics, survey_work_items) return {items, total, limit, offset}; \
+     the unpaginated ones (list_proposals, list_reports, list_projects, list_areas, \
+     list_comments, list_daily_plan) return a bare array. All exclude \
      archived rows unless you ask for them. Writes take a project or area by name \
      (`project`/`area`) or by id (`project_id`/`area_id`), never both."
 }

@@ -23,6 +23,26 @@ fn validate_status(value: &str, allowed: &[&str], what: &str) -> Result<()> {
     Ok(vocab::validate(value, allowed, what)?)
 }
 
+/// Reject a blank value before the database does (WI #551).
+///
+/// `comment.body` and `link.url` carry `CHECK (btrim(...) <> '')` constraints
+/// from 0001/0002. They worked — nothing blank was ever stored — but the
+/// failure arrived as an `sqlx::Error`, which classifies as `internal`, so a
+/// caller who sent an empty string was told korg had a problem and shown
+/// `error returned from database: new row for relation "comment" violates
+/// check constraint "comment_body_nonempty"`. Since sprint 019 the web client
+/// renders `internal` as an apology and a retry suggestion, which is precisely
+/// the wrong advice for input that will never be accepted.
+///
+/// The CHECK constraints stay: this is the polite front door, not a
+/// replacement for the guarantee.
+fn require_non_empty(value: &str, what: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(RepoError::invalid(format!("{what} must not be empty")).into());
+    }
+    Ok(())
+}
+
 /// Every mutation starts here (WI #525): the target must exist *and* be the
 /// kind the operation is about. Without the kind half, `update_card` against a
 /// work item's node id silently archived the work item and reported success —
@@ -527,6 +547,7 @@ pub struct LinkRow {
 }
 
 pub async fn create_link(pool: &PgPool, new: NewLink) -> Result<LinkRow> {
+    require_non_empty(&new.url, "link url")?;
     let project_id = resolve_project(pool, new.project_id, new.project.as_deref()).await?;
     let mut tx = pool.begin().await?;
     let node_id: i64 = sqlx::query(
@@ -1737,6 +1758,7 @@ pub async fn list_comments(pool: &PgPool, node_id: i64) -> Result<Vec<Comment>> 
 }
 
 pub async fn add_comment(pool: &PgPool, node_id: i64, body: &str) -> Result<Comment> {
+    require_non_empty(body, "comment body")?;
     require_node(pool, node_id).await?;
     let c = sqlx::query_as::<_, Comment>(
         "INSERT INTO comment (node_id, body) VALUES ($1, $2) \
@@ -1752,6 +1774,7 @@ pub async fn add_comment(pool: &PgPool, node_id: i64, body: &str) -> Result<Comm
 /// Edit a comment's body (WI #232). The `updated` column advances via the
 /// standard trigger; `created` is preserved.
 pub async fn update_comment(pool: &PgPool, id: i64, body: &str) -> Result<Comment> {
+    require_non_empty(body, "comment body")?;
     let c = sqlx::query_as::<_, Comment>(
         "UPDATE comment SET body = $2 WHERE id = $1 \
          RETURNING id, node_id, body, created, updated",
