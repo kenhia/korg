@@ -1,0 +1,104 @@
+# korg CI — the gates `just check` runs locally, run here on every push and PR.
+#
+# Keep this file and the `check` recipe in `justfile` in step: the recipe is the
+# local mirror of this workflow, and a gate that exists in only one of them is a
+# gate that will drift.
+#
+# Two things are deliberately NOT here:
+#
+#   * The korg-migrate snapshot suites (S4/S5/S6). They restore frozen pg_dumps
+#     of the legacy kwi/kcard databases from `snapshots/*.dump`, which are
+#     gitignored and machine-local — a runner has no way to obtain them. They
+#     skip themselves when the dumps are absent; see KORG_SNAPSHOT_TESTS in
+#     docs/setup.md.
+#   * The Playwright e2e suite. It needs a built web bundle, a running korg-api
+#     and a Postgres, i.e. most of a deployment. Worth adding later as its own
+#     job; for now it runs by hand against a live instance (docs/setup.md).
+#
+# Everything else — including the Rust integration tests, which spin up
+# throwaway Postgres containers via testcontainers — runs on the hosted runner's
+# Docker daemon with no extra setup.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Belt and braces: the suites skip on absent dumps anyway, but saying so here
+  # means a runner that somehow acquires a snapshot still behaves predictably.
+  KORG_SNAPSHOT_TESTS: "0"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: rust (fmt, generated files, clippy, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all --check
+
+      # The freshness check, inlined rather than shelling out to `just` so the
+      # workflow has no extra dependency. Same idea as the `gen-check` recipe:
+      # hash the generated files, regenerate, hash again. Comparing against git
+      # would also work in CI, but keeping the two implementations semantically
+      # identical is what makes the local recipe a trustworthy pre-push gate.
+      - name: Generated files are current
+        run: |
+          set -euo pipefail
+          paths=(web/src/lib/generated crates/korg-mcp/tests/tools_schema.json)
+          fingerprint() { find "${paths[@]}" -type f | sort | xargs sha256sum; }
+          before=$(fingerprint)
+          cargo test -p korg-core --lib export_bindings
+          UPDATE_SCHEMA_SNAPSHOT=1 cargo test -p korg-mcp --test schema
+          if [ "$before" != "$(fingerprint)" ]; then
+            echo "::error::generated files are stale — run 'just gen' and commit the diff" >&2
+            exit 1
+          fi
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # testcontainers talks to the runner's Docker daemon; no services: block
+      # needed, and each test gets its own disposable Postgres.
+      - name: Tests
+        run: cargo test --workspace
+
+  web:
+    name: web (svelte-check, eslint)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reads the pinned version from web/package.json's packageManager field.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: svelte-check
+        run: pnpm check
+
+      - name: eslint
+        run: pnpm lint

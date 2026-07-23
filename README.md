@@ -4,17 +4,22 @@
 app: one typed-node + generalized-edges data model, a headless Linux backend,
 and a web UI reachable from Windows browsers.
 
-> Status: **Milestone 1 — faithful data foundation.** kwi and kcard remain the
-> live tools and are left **frozen / read-only** until korg can demonstrably
-> take over.
+> Status: **live, and the system of record.** korg runs in production and holds
+> the work items, cards, planning queue and reading list that humans and agents
+> both work from. The legacy `kwi` and `kcard` tools were imported once,
+> fidelity-verified, and retired — they are no longer authoritative for
+> anything.
 
 ## Documentation
 
 - [docs/setup.md](docs/setup.md) — install, configure, build, and run.
 - [docs/usage.md](docs/usage.md) — web UI, REST API, and MCP endpoint.
-- [docs/api.md](docs/api.md) — normative agent-facing contracts (relationship
-  label registry, direction semantics).
-- [docs/migration.md](docs/migration.md) — import legacy kwi + kcard data.
+- [docs/api.md](docs/api.md) — normative agent-facing contracts: the tool
+  catalogue, collection-read envelope, and the relationship label registry with
+  its direction semantics.
+- [docs/operations.md](docs/operations.md) — deploy, backup and restore, and
+  querying the live database.
+- [docs/migration.md](docs/migration.md) — the historical kwi + kcard import.
 
 ## Model
 
@@ -36,10 +41,14 @@ project-scoped; tags/category are shared across kinds.
 
 - `korg-core` — schema (sqlx migrations), domain repos (work items, cards,
   reading-list links, generalized relationships), topics, and daily planning,
-  plus the domain vocabulary and error taxonomy both transports present
+  plus the domain vocabulary, request/response types and error taxonomy both
+  transports share
   (see [the response and error contract](docs/usage.md#response-and-error-contract)).
-- `korg-migrate` — one-shot, fidelity-verified import of kwi + kcard data.
+- `korg-api` — the axum binary: REST API, the mounted MCP endpoint, and the
+  static web bundle, in one process. This is what deploys.
 - `korg-mcp` — MCP tool surface (rmcp) over the korg domain, served by `korg-api`.
+- `korg-migrate` — one-shot, fidelity-verified import of kwi + kcard data;
+  historical, and long finished.
 
 ## MCP server
 
@@ -52,9 +61,10 @@ installed; point an MCP client at the URL:
 http://<host>:8090/mcp
 ```
 
-It exposes 44 tools for work items, cards, reading-list links, generalized
-cross-kind relationships, topics, and source-linked daily planning, backed directly by
-`korg-core`.
+It exposes 44 tools backed directly by `korg-core`. The full list, by category,
+is the [tool catalogue](docs/api.md#tool-catalogue) — the one place it is
+written down, so this sentence carries only the count and a drift test keeps
+even that honest.
 
 Transport notes:
 - **Stateless mode** with JSON responses — each POST is an independent
