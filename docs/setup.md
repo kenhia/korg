@@ -169,3 +169,21 @@ cd web
 npx playwright install chromium                       # once
 KORG_E2E_URL=http://127.0.0.1:8090 npx playwright test
 ```
+
+Run it against a **fresh** database. Several specs assert on "the plan for
+today" and on drag targets, so rows left behind by other runs can fail them for
+reasons that have nothing to do with the code.
+
+Two of the suites check things worth knowing about before changing the theme
+(sprint 019):
+
+- `a11y.spec.ts` runs axe-core over all ten routes and fails on `serious` or
+  `critical` violations. Its `color-contrast` rule is **disabled on purpose**:
+  axe-core mis-reads `oklch()`, and korg's whole palette is oklch — it reported
+  `--color-muted` at 3.61:1 where the painted colour is 6.21:1, so every
+  contrast violation it raised here was a false positive.
+- `theme-contrast.spec.ts` does that job properly by measuring the pixels the
+  browser actually paints. It also asserts something axe cannot: that a chip's
+  background separates from the surface behind it. That is the failure mode
+  behind WI #571 — the tag chip's label passed AA while the chip itself was
+  painted in its container's own colour and was effectively invisible.
