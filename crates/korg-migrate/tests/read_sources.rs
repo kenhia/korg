@@ -20,6 +20,9 @@ async fn count(pool: &PgPool, table: &str) -> i64 {
 
 #[tokio::test]
 async fn read_sources_matches_row_counts() {
+    if common::skip_snapshot_suite("read_sources") {
+        return;
+    }
     let (_pg, kwi_pool, kcard_pool) = common::staged_sources().await;
 
     let kwi = read_kwi(&kwi_pool).await.expect("read kwi");

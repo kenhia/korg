@@ -5,9 +5,46 @@ a tool description disagree, this document is right and the description is a
 bug.
 
 Error codes and the mutation contract live in
-[usage.md](usage.md#response-and-error-contract); collection reads and the
-relationship model are below. The remaining pieces move here as the cleanup
-bundles land.
+[usage.md](usage.md#response-and-error-contract); the tool catalogue, collection
+reads and the relationship model are below.
+
+## Tool catalogue
+
+Every tool the MCP endpoint exposes, by category. Names only — each tool's
+input schema and description are derived from `korg-core` and delivered by
+`tools/list`, which is the place to read them rather than a copy here that can
+disagree.
+
+This table is the **one** normative list. `README.md` states the count and
+points here; the MCP server `instructions` name the categories; nothing
+enumerates the tools a third time. All three are drift-tested against
+`korg_mcp::tools::tools()` by `crates/korg-mcp/tests/docs_drift.rs`.
+
+| Category | Tools |
+|---|---|
+| Work items | `create_work_item`, `get_work_item`, `update_work_item`, `list_work_items`, `survey_work_items` |
+| Cards | `create_card`, `update_card`, `list_cards` |
+| Comments | `add_comment`, `list_comments`, `update_comment`, `delete_comment` |
+| Reading-list links | `create_link`, `list_links`, `update_link`, `mark_link_read` |
+| Relationships | `relate`, `unrelate`, `neighbors` |
+| Topics | `create_topic`, `get_topic`, `update_topic`, `list_topics`, `search_topics`, `archive_topic` |
+| Daily planning | `create_daily_plan_item`, `list_daily_plan`, `move_daily_plan_item`, `reorder_daily_plan`, `set_daily_plan_completion`, `delete_daily_plan_item`, `daily_plan_history` |
+| Sprint proposals | `propose_sprint`, `list_proposals`, `get_proposal`, `update_proposal` |
+| Reports | `create_report`, `list_reports`, `get_report` |
+| Projects and areas | `list_projects`, `create_project`, `update_project`, `list_areas`, `create_area` |
+
+Two tools are not what their names suggest:
+
+- `mark_link_read` is **deprecated** — `update_link` sets the read flag,
+  disposition and tags in one transaction, which is what an agent recording a
+  decision about a captured URL actually wants.
+- `create_report` upserts: a re-run for the same `(source, date)` replaces the
+  previous run's `finding` edges transactionally rather than accumulating them
+  (D-7).
+
+`update_project` takes `status`, `machines`, `deploy_to`, `category`,
+`description`, `gh_repo` and `cn_path` — everything but the name. `cn_path` is
+load-bearing: it is how an agent finds a project's working copy on disk.
 
 ## Where the contract lives
 

@@ -61,8 +61,14 @@ health check, and point an MCP client at `http://<host>:8090/mcp`.
 | `DATABASE_URL`     | yes      | —                | PostgreSQL connection string.                             |
 | `KORG_TIMEZONE`    | yes      | —                | DST-aware IANA timezone used for daily lifecycle boundaries (for example `Etc/UTC`). Startup rejects missing/invalid values. |
 | `KORG_LISTEN_ADDR` | no       | `0.0.0.0:8080`   | Address/port the server binds to.                         |
-| `KORG_WEB_DIR`     | no       | —                | Path to the built SvelteKit bundle; UI is served when set.|
+| `KORG_WEB_DIR`     | no       | `/app/web/build` | Path to the built SvelteKit bundle; UI is served when the directory exists. The default is the in-container path, so a Docker run needs nothing set. |
 | `KORG_LOG`         | no       | `info`           | `tracing` env-filter (e.g. `korg_api=debug`).             |
+| `KORG_CORS_ORIGINS`| no       | —                | Comma-separated origins allowed to call the API cross-origin. Needed only for the UI dev server (`pnpm dev` on :5173) hitting an API on another host; the deployed single-process setup is same-origin and needs none. |
+
+`crates/korg-mcp/tests/docs_drift.rs` fails if `korg-api` or `korg-core` reads a
+variable this table does not list. The importer's own variables
+(`KORG_DATABASE_URL`, `KORG_ADMIN_URL`, `KORG_SNAPSHOTS`, `KORG_RESET_CONFIRM`)
+are documented in [migration.md](migration.md) and drift-tested there.
 
 ## Running with Docker
 
@@ -113,7 +119,7 @@ produces (it hashes them before and after regenerating, so it is indifferent to
 whether you have committed yet):
 
 ```bash
-just check      # fmt, gen freshness, clippy -D warnings, full test suite
+just check      # fmt, gen freshness, svelte-check + eslint, clippy, tests
 ```
 
 ## Tests
@@ -124,6 +130,37 @@ cargo test --workspace         # or: just test  (requires Docker)
 
 The Rust integration tests provision disposable PostgreSQL containers, so Docker
 must be running and the daemon reachable.
+
+### Snapshot-backed suites (`KORG_SNAPSHOT_TESTS`)
+
+Three `korg-migrate` suites (`read_sources`, `import_smoke`, `fidelity`) restore
+`snapshots/*.dump` — frozen `pg_dump`s of the legacy kwi/kcard databases. Those
+dumps are gitignored and machine-local, so they cannot exist on a fresh clone or
+a CI runner. `KORG_SNAPSHOT_TESTS` decides what happens:
+
+| Value | Behaviour |
+| --- | --- |
+| unset | Run if `snapshots/kwi.dump` and `snapshots/kcard.dump` are both present, otherwise skip with a message. |
+| `1` | Required — missing dumps are a failure, not a skip. This is what `just verify-import` sets. |
+| `0` | Skipped even when the dumps exist. CI sets this. |
+
+The default is the useful one: `cargo test --workspace` is green on a clean
+checkout, and stays fully covered on a machine that has run `just snapshot`,
+without anyone remembering a flag.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request: `cargo fmt
+--check`, the generated-file freshness check, `cargo clippy -D warnings`,
+`cargo test --workspace`, then `pnpm check` and `pnpm lint` in a second job.
+
+`just check` is the local mirror of that workflow — run it before pushing. The
+two are meant to stay identical; a gate in only one of them is a gate that will
+drift.
+
+The Playwright e2e suite is deliberately out of CI for now: it needs a built
+bundle, a running `korg-api` and a database, i.e. most of a deployment. Run it
+by hand as below.
 
 End-to-end UI tests (Playwright/Chromium) run against a live `korg-api`:
 

@@ -20,6 +20,9 @@ async fn count(pool: &PgPool, table: &str) -> i64 {
 
 #[tokio::test]
 async fn import_smoke_counts_match_sources() {
+    if common::skip_snapshot_suite("import_smoke") {
+        return;
+    }
     let (pg, kwi_pool, kcard_pool) = common::staged_sources().await;
     let korg = common::migrate_korg(&pg).await;
 

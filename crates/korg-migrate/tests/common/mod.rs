@@ -54,6 +54,46 @@ pub fn snapshots_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../snapshots")
 }
 
+/// Decide whether a snapshot-backed suite should run, and say so if not.
+///
+/// These three suites (S4/S5/S6) restore `snapshots/*.dump` — frozen pg_dumps
+/// of the legacy kwi/kcard databases. The dumps are gitignored and
+/// machine-local, so on a clean checkout `cargo test --workspace` used to fail
+/// on a missing file rather than on anything about korg (F-13).
+///
+/// `KORG_SNAPSHOT_TESTS` decides:
+///
+/// - **`1`** — required. Missing dumps fail loudly, which is what a run that
+///   deliberately asked for these suites wants.
+/// - **`0`** — skipped even if the dumps are present.
+/// - **unset** — run iff the dumps are present. A clean checkout is green; a
+///   machine that has run `just snapshot` keeps the coverage without anyone
+///   having to remember a flag.
+///
+/// Returns `true` when the caller should return early. Rust has no native skip,
+/// so the message on stdout (visible with `--nocapture`, and always in CI's
+/// summary of a passing run) is how a skip is distinguishable from a pass.
+pub fn skip_snapshot_suite(suite: &str) -> bool {
+    let dumps_present =
+        snapshots_dir().join("kwi.dump").exists() && snapshots_dir().join("kcard.dump").exists();
+    match std::env::var("KORG_SNAPSHOT_TESTS").as_deref() {
+        Ok("1") => false,
+        Ok("0") => {
+            println!("skipping {suite}: KORG_SNAPSHOT_TESTS=0");
+            true
+        }
+        _ if dumps_present => false,
+        _ => {
+            println!(
+                "skipping {suite}: no snapshots in {} — run `just snapshot`, \
+                 or set KORG_SNAPSHOT_TESTS=1 to require them",
+                snapshots_dir().display()
+            );
+            true
+        }
+    }
+}
+
 async fn create_db(admin: &PgPool, name: &str) {
     sqlx::query(&format!("CREATE DATABASE {name}"))
         .execute(admin)

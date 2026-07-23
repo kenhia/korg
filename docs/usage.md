@@ -26,45 +26,45 @@ covers:
 All endpoints are unauthenticated (single-user, trusted-network posture) and
 rooted at `/api`. Responses are JSON.
 
-| Method & path                          | Description                          |
-| -------------------------------------- | ------------------------------------ |
-| `GET    /api/health`                   | Liveness check.                      |
-| `GET    /api/projects`                 | List projects.                       |
-| `POST   /api/projects`                 | Create a project.                    |
-| `GET    /api/projects/recent`          | Most recently used project.          |
-| `GET    /api/work-items`               | List work items: `{items,total,limit,offset}`; filters `project`, `archived`, `limit`, `offset`. |
-| `POST   /api/work-items`               | Create a work item.                  |
-| `GET    /api/work-items/survey`        | Slim, paginated work-item projection (no content/details) for cross-project surveys. |
-| `GET    /api/work-items/:wi_number`    | Fetch a work item with inlined comments (same shape as the MCP tool). |
-| `PATCH  /api/work-items/:wi_number`    | Update a work item.                  |
-| `GET    /api/areas`                    | List areas.                          |
-| `POST   /api/areas`                    | Create an area.                      |
-| `GET    /api/cards`                    | List cards (enveloped); filters `status`, `project`, `archived`. |
-| `POST   /api/cards`                    | Create a card.                       |
-| `PATCH  /api/cards/:node_id`           | Update a card.                       |
-| `GET    /api/nodes/:node_id/comments`  | List a node's comments (work item or card). |
-| `POST   /api/nodes/:node_id/comments`  | Add a comment to a node.             |
-| `DELETE /api/comments/:id`             | Delete a comment.                    |
-| `GET    /api/links`                    | List links (enveloped); filters `disposition`, `read`, `archived`. |
-| `POST   /api/links`                    | Create a link.                       |
-| `PATCH  /api/links/:node_id`           | Update a link.                       |
-| `GET/POST /api/topics`                 | List/search (`?q=`, enveloped) or create topics. |
-| `GET/PATCH /api/topics/:node_id`       | Fetch or update a topic.             |
-| `POST /api/topics/:node_id/archive`    | Archive or restore a topic.          |
-| `GET/POST /api/daily-plan`             | List an inclusive range or plan a source node. |
-| `PATCH /api/daily-plan/:node_id/completion` | Complete/uncomplete an item using server time. |
-| `DELETE /api/daily-plan/:node_id`      | Delete an item from an open day.     |
-| `PUT /api/daily-plan/:date/order`      | Replace an open day's item order.    |
-| `POST /api/daily-plan/:node_id/move`   | Move an open item or copy a past item. |
-| `GET /api/daily-plan/history`          | Historical range or `week`, `month`, `90days`, `year` preset. |
-| `POST   /api/relationships`            | Create a generalized relationship.   |
-| `DELETE /api/relationships/:id`        | Delete a relationship.               |
-| `GET    /api/nodes/:id`                | Kind-agnostic preview of any node by id (powers find-by-ID + the preview panel); 404 if none. |
-| `GET    /api/nodes/:id/neighbors`      | A node's edges: `{items,total,limit,truncated}`, optional `label`/`kind`/`limit` (see [api.md](api.md#relationships)). |
-| `GET    /api/proposals`                | List sprint proposals (filters `status`, `project`). |
-| `POST   /api/proposals`                | Propose a sprint: title + summary + covered `work_item_numbers` in one call. |
-| `GET    /api/proposals/:node_id`       | Proposal detail: covered work items + comments. |
-| `PATCH  /api/proposals/:node_id`       | Update a proposal (status, rank, pinned, archive). |
+Path parameter names below match the router exactly, because
+`crates/korg-mcp/tests/docs_drift.rs` compares this table against the route
+registrations in `korg-api` and fails on either a route missing here or a row
+describing a route that no longer exists.
+
+| Method(s) | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/health` | Liveness check. |
+| `GET`, `POST` | `/api/projects` | List or create projects. |
+| `GET` | `/api/projects/recent` | Most recently used project. |
+| `PATCH` | `/api/projects/:name` | Update project metadata (everything but the name). |
+| `GET` | `/api/projects/:name/plan` | A project's work items plus their `depends_on` edges, for plan/frontier views. |
+| `GET`, `POST` | `/api/work-items` | List (`{items,total,limit,offset}`; filters `project`, `archived`, `limit`, `offset`) or create. |
+| `GET` | `/api/work-items/survey` | Slim, paginated work-item projection (no content/details) for cross-project surveys. |
+| `GET`, `PATCH` | `/api/work-items/:wi_number` | Fetch with inlined comments (same shape as the MCP tool), or update. |
+| `GET`, `POST` | `/api/areas` | List or create areas. |
+| `GET`, `POST` | `/api/cards` | List cards (enveloped; filters `status`, `project`, `archived`) or create. |
+| `PATCH` | `/api/cards/:node_id` | Update a card. |
+| `GET`, `POST` | `/api/nodes/:node_id/comments` | List or add comments on a node of any kind. |
+| `PATCH`, `DELETE` | `/api/comments/:id` | Edit or delete a comment. |
+| `GET`, `POST` | `/api/links` | List links (enveloped; filters `disposition`, `read`, `archived`) or create. |
+| `PATCH` | `/api/links/:node_id` | Update a link: disposition, read flag and tags in one transaction. |
+| `GET`, `POST` | `/api/topics` | List/search (`?q=`, enveloped) or create topics. |
+| `GET`, `PATCH` | `/api/topics/:node_id` | Fetch or update a topic. |
+| `POST` | `/api/topics/:node_id/archive` | Archive or restore a topic. |
+| `GET`, `POST` | `/api/daily-plan` | List an inclusive range or plan a source node. |
+| `GET` | `/api/daily-plan/history` | Historical range or `week`, `month`, `90days`, `year` preset. |
+| `DELETE` | `/api/daily-plan/:node_id` | Delete an item from an open day. |
+| `PATCH` | `/api/daily-plan/:node_id/completion` | Complete/uncomplete an item using server time. |
+| `POST` | `/api/daily-plan/:node_id/move` | Move an open item or copy a past item. |
+| `PUT` | `/api/daily-plan/:plan_date/order` | Replace an open day's item order. |
+| `POST` | `/api/relationships` | Create a generalized relationship. |
+| `DELETE` | `/api/relationships/:id` | Delete a relationship. |
+| `GET` | `/api/nodes/:id` | Kind-agnostic preview of any node by id (powers find-by-ID + the preview panel); 404 if none. |
+| `GET` | `/api/nodes/:id/neighbors` | A node's edges: `{items,total,limit,truncated}`, optional `label`/`kind`/`limit` (see [api.md](api.md#relationships)). |
+| `GET`, `POST` | `/api/proposals` | List sprint proposals (filters `status`, `project`), or propose one: title + summary + covered `work_item_numbers` in a single call. |
+| `GET`, `PATCH` | `/api/proposals/:node_id` | Proposal detail (covered work items + comments), or update status/rank/pinned/archived. |
+| `GET` | `/api/reports` | List agent reports (filters `source`, `limit`; newest first). |
+| `GET` | `/api/reports/:node_id` | One report with its findings and comments. |
 
 Example:
 
@@ -126,9 +126,9 @@ Point any MCP client at:
 http://<host>:8090/mcp
 ```
 
-It exposes tools for work items, cards, reading-list links, generalized
-cross-kind relationships, topics, source-linked daily planning, and agent-planning sprint
-proposals, backed directly by `korg-core`.
+The full tool list, by category, is the
+[tool catalogue](api.md#tool-catalogue) in api.md — the one place it is written
+down, drift-tested against the code.
 
 List the available tools with a raw request:
 
@@ -175,6 +175,30 @@ Names are resolved, never created, and an unknown one is a 400 that names
 
 Comments are editable (WI #232): ✎ in the UI, `update_comment` MCP tool,
 `PATCH /api/comments/:id`. `created` is preserved; `updated` advances.
+
+## Reports
+
+A **report** is one automated agent's writeup for one day: `source` (the
+reporter's id, e.g. `kmon`), `report_date`, a `status` of `ok | attention |
+problem`, a one-line `summary` for the list view, a markdown `body`, an optional
+`model`, an `escalated` flag, and a set of **findings** — work items the run
+turned up, linked by the `finding` edge (see the
+[label registry](api.md#label-registry)).
+
+`create_report` is an **upsert keyed on `(source, report_date)`**. A re-run the
+same day replaces the body *and* the finding set — findings you omit are
+unlinked — while keeping the same `node_id`, so comments and any links made to
+the report survive the re-run (D-7). The response echoes `findings_linked`:
+`wi_number`s that did not resolve are dropped silently, so compare it against
+what you asked for.
+
+Reads are symmetric across transports: `list_reports` / `GET /api/reports`
+(newest first, summary fields only, optional `source` filter) and `get_report` /
+`GET /api/reports/:node_id` (full body plus the linked finding work items).
+
+Writing is MCP-only by design — there is no `POST /api/reports`. Reports are
+written by agents, which speak MCP; the REST side exists so the UI and `curl`
+can read them.
 
 ## Data model in brief
 

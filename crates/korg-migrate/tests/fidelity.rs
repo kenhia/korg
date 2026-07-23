@@ -79,6 +79,9 @@ struct KorgProject {
 
 #[tokio::test]
 async fn import_is_faithful_to_sources() {
+    if common::skip_snapshot_suite("fidelity") {
+        return;
+    }
     let (pg, kwi_pool, kcard_pool) = common::staged_sources().await;
     let korg = common::migrate_korg(&pg).await;
 

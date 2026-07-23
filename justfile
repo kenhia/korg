@@ -18,13 +18,24 @@ gen:
     cargo test -p korg-core --lib export_bindings
     UPDATE_SCHEMA_SNAPSHOT=1 cargo test -p korg-mcp --test schema
 
-# Everything CI enforces, in the order that fails fastest.
-check: fmt-check gen-check
+# Everything CI enforces, in the order that fails fastest. Mirrors
+# .github/workflows/ci.yml — keep the two in step.
+#
+# The korg-migrate snapshot suites run only if snapshots/*.dump are present;
+# see KORG_SNAPSHOT_TESTS in docs/setup.md.
+check: fmt-check gen-check web-check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
 
 fmt-check:
     cargo fmt --all --check
+
+# svelte-check + eslint over the web app. Runs after gen-check because
+# svelte-check type-checks the TypeScript `just gen` writes.
+web-check:
+    pnpm --dir web install --frozen-lockfile
+    pnpm --dir web check
+    pnpm --dir web lint
 
 # Assert the checked-in generated files are what the generator produces right
 # now — i.e. that regenerating changes nothing.
@@ -54,9 +65,11 @@ snapshot:
     bash scripts/snapshot.sh
 
 # Run the kwi+kcard -> korg import and verify fidelity invariants F1-F7. [S6]
-# Prerequisite: `just snapshot` (produces snapshots/*.dump).
+# Prerequisite: `just snapshot` (produces snapshots/*.dump). KORG_SNAPSHOT_TESTS=1
+# because asking for this recipe is asking for the suite: missing snapshots must
+# fail here, not skip.
 verify-import:
-    cargo test -p korg-migrate --test fidelity
+    KORG_SNAPSHOT_TESTS=1 cargo test -p korg-migrate --test fidelity
 
 # Import kwi+kcard from snapshots into korg (set KORG_DATABASE_URL). Pass
 # --reset to TRUNCATE *every* node kind (work items, cards, links, topics,

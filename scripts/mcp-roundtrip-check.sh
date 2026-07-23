@@ -6,13 +6,17 @@
 set -euo pipefail
 U="${1:-${KORG_MCP_URL:-https://kubsdb.encke-wahoo.ts.net:5674/mcp}}"
 hdr=(-H "Content-Type: application/json" -H "Accept: application/json, text/event-stream")
+# One protocol version across the repo — README's curl example used 2025-06-18
+# while this script asked for 2025-03-26, which told two different stories about
+# what korg speaks (F-12). rmcp accepts either; pick one and say so.
+PROTO=2025-06-18
 
 # initialize must return serverInfo.name == korg-mcp
 init=$(curl -fsS -X POST "$U" "${hdr[@]}" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"check","version":"1"}}}')
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"'"$PROTO"'","capabilities":{},"clientInfo":{"name":"check","version":"1"}}}')
 echo "$init" | grep -q '"name":"korg-mcp"' || { echo "FAIL: initialize did not return korg-mcp" >&2; exit 1; }
 
-# tools/list must expose at least 16 tools incl. list_work_items
+# tools/list must advertise the tool surface, list_work_items among it
 tools=$(curl -fsS -X POST "$U" "${hdr[@]}" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
 echo "$tools" | grep -q '"list_work_items"' || { echo "FAIL: list_work_items not advertised" >&2; exit 1; }

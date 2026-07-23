@@ -626,13 +626,7 @@ impl ServerHandler for KorgServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("korg-mcp", env!("CARGO_PKG_VERSION")))
-            .with_instructions(
-                "korg MCP server — unified work items, cards, reading-list links, \
-                  generalized relationships, topics, and source-linked daily planning, over Postgres. \
-                  Mutations validate their target and return the updated entity; errors are isError \
-                  results carrying {message, code} where code is one of invalid_input, not_found, \
-                  conflict, internal.",
-            )
+            .with_instructions(crate::server_instructions())
     }
 
     async fn list_tools(
