@@ -21,9 +21,12 @@
 
 name: CI
 
+# Branches are gated through their pull request; `main` is gated on the merge
+# commit. Listing every branch under `push` as well would run each job twice for
+# any branch with a PR open, which is exactly what it sounds like.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
 
 env:
@@ -86,8 +89,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Reads the pinned version from web/package.json's packageManager field.
+      # Reads the pinned version from web/package.json's `packageManager` field,
+      # so the version lives in exactly one place. The path must be spelled out:
+      # the action looks at the repo root by default, and `defaults.run
+      # .working-directory` applies to `run` steps only, never to action inputs.
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
 
       - uses: actions/setup-node@v4
         with:
