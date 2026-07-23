@@ -108,7 +108,9 @@ writes to the same place `just gen` does instead of leaving a stale copy in
 `crates/korg-core/bindings/`.
 
 Then read the diff — every line of the snapshot is a change agents see. `just
-check` (and CI) fail if the committed output is stale:
+check` fails if the generated files are not what the generator currently
+produces (it hashes them before and after regenerating, so it is indifferent to
+whether you have committed yet):
 
 ```bash
 just check      # fmt, gen freshness, clippy -D warnings, full test suite

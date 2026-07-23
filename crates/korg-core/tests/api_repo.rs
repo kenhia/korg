@@ -33,7 +33,9 @@ async fn fresh_korg() -> (impl Sized, PgPool) {
 fn wi(title: &str, project_id: i64) -> NewWorkItem {
     NewWorkItem {
         project_id: Some(project_id),
+        project: None,
         area_id: None,
+        area: None,
         wi_type: "task".into(),
         wi_status: "open".into(),
         wi_tshirt: "Unknown".into(),
@@ -55,6 +57,7 @@ async fn api_repo_links_cards_projects() {
         &pool,
         NewLink {
             project_id: None,
+            project: None,
             category: None,
             tags: vec![],
             url: "https://example.com".into(),
@@ -81,6 +84,7 @@ async fn api_repo_links_cards_projects() {
         &pool,
         NewCard {
             project_id: None,
+            project: None,
             category: None,
             tags: vec![],
             status: "Backlog".into(),

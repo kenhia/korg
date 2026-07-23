@@ -19,14 +19,34 @@ gen:
     UPDATE_SCHEMA_SNAPSHOT=1 cargo test -p korg-mcp --test schema
 
 # Everything CI enforces, in the order that fails fastest.
-check: fmt-check
-    just gen
-    git diff --exit-code -- web/src/lib/generated crates/korg-mcp/tests/tools_schema.json
+check: fmt-check gen-check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
 
 fmt-check:
     cargo fmt --all --check
+
+# Assert the checked-in generated files are what the generator produces right
+# now — i.e. that regenerating changes nothing.
+#
+# This compares the files against *themselves* before and after, not against
+# git. Comparing against git (`just gen && git diff --exit-code`) is the usual
+# CI idiom and works on a clean checkout, but it also fails on a working tree
+# that has legitimately-regenerated-but-not-yet-committed output, which is the
+# normal state halfway through a sprint. Hashing sidesteps the question of what
+# git happens to know.
+gen-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    paths=(web/src/lib/generated crates/korg-mcp/tests/tools_schema.json)
+    fingerprint() { find "${paths[@]}" -type f | sort | xargs sha256sum; }
+    before=$(fingerprint)
+    just gen
+    if [ "$before" != "$(fingerprint)" ]; then
+        echo "error: generated files are stale — 'just gen' changed them." >&2
+        echo "       review the diff (every schema line is a change agents see), then commit." >&2
+        exit 1
+    fi
 
 # Snapshot the frozen kwi + kcard source databases (read-only). [S3]
 # Requires KCARD_DATABASE_URL (and optionally KWI_DATABASE_URL) in the env.

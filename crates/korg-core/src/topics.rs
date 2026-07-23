@@ -16,6 +16,9 @@ use crate::repo::{ArchivedFilter, Page, PageQuery};
 pub struct NewTopic {
     #[serde(default)]
     pub project_id: Option<i64>,
+    /// Project name — the alternative to `project_id` (see list_projects). Never pass both.
+    #[serde(default)]
+    pub project: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
     #[serde(default)]
@@ -78,12 +81,14 @@ fn topic_not_found(node_id: i64) -> anyhow::Error {
 
 pub async fn create_topic(pool: &PgPool, new: NewTopic) -> Result<Topic> {
     let name = validate_name(&new.name)?;
+    let project_id =
+        crate::repo::resolve_project(pool, new.project_id, new.project.as_deref()).await?;
     let mut tx = pool.begin().await?;
     let node_id: i64 = sqlx::query(
         "INSERT INTO node (kind, project_id, category, tags) \
          VALUES ('topic', $1, $2, $3) RETURNING id",
     )
-    .bind(new.project_id)
+    .bind(project_id)
     .bind(new.category)
     .bind(new.tags)
     .fetch_one(&mut *tx)

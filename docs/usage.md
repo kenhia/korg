@@ -95,7 +95,7 @@ machine-readable; MCP tool errors carry the same pair as
 
 | `code` | HTTP | Meaning |
 | ------ | ---- | ------- |
-| `invalid_input` | 400 | A value the caller supplied is not acceptable — unknown status, t-shirt size, `wi_type`, card status, disposition, unparseable date, an area outside the work item's project, an unresolvable parent. |
+| `invalid_input` | 400 | A value the caller supplied is not acceptable — unknown status, t-shirt size, `wi_type`, card status, disposition, unparseable date, an area outside the work item's project, an unresolvable parent, or a selector that does not resolve (unknown `project`/`project_id`/`area`/`area_id`, or an id *and* a name passed together). |
 | `not_found` | 404 | The named or keyed entity does not exist — including single-item reads, which 404 rather than answering `200 null`. |
 | `conflict` | 409 | Well-formed but at odds with server-enforced state (frozen past, stale reorder). |
 | `internal` | 500 | A genuine server fault. Only this class should ever be retried blindly. |
@@ -164,6 +164,12 @@ Items rail shows only active+maintenance projects unless "show all" is
 checked, renders names in stable per-name colors, and the ✎ control opens
 an edit panel (everything editable except the name). Agents:
 `update_project` MCP tool / `PATCH /api/projects/:name`.
+
+**Writes take a project by name or by id** (WI #575): pass either `project`
+(the name) or `project_id`, never both — and likewise `area` or `area_id`.
+Names are resolved, never created, and an unknown one is a 400 that names
+`list_projects` as the remedy. Full rules in
+[api.md](api.md#selecting-a-project-or-an-area).
 
 ## Comments
 
