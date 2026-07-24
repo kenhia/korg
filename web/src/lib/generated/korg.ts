@@ -111,7 +111,16 @@ export type ProposalDetail = {
 /**
  * Covered work items, ordered by wi_number.
  */
-covered: Array<CoveredRef>, comments: Array<Comment>, comments_truncated: boolean, node_id: number, title: string, summary: string, status: string, rank: string, pinned: boolean, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
+covered: Array<CoveredRef>, comments: Array<Comment>, comments_truncated: boolean, 
+/**
+ * The proposal's non-`covers` edges, inlined (LB-3). `covers` is excluded
+ * because `covered` already carries it.
+ */
+related: Array<RelatedRef>, 
+/**
+ * True when there are more such edges than were inlined (call `neighbors`).
+ */
+related_truncated: boolean, node_id: number, title: string, summary: string, status: string, rank: string, pinned: boolean, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
 /**
  * Comments on this proposal (WI #535).
  */
@@ -132,6 +141,26 @@ comment_count: number,
  * saves the Planning page a `neighbors` call per row just to show chips.
  */
 covered_count: number, created: string, updated: string, };
+
+/**
+ * A neighbor as a focused read inlines it (LB-3, D-20): a compact edge ref
+ * carrying enough to render and decide — the neighbor's `title` and
+ * `wi_number` — without a second round-trip. The generalization of `covered` /
+ * inlined `comments` from one label / comments to every edge.
+ */
+export type RelatedRef = { rel_id: number, node_id: number, 
+/**
+ * Present when the neighbor is a work item — its user-facing handle.
+ */
+wi_number: number | null, kind: string, 
+/**
+ * The neighbor's title/summary/name, resolved across kinds.
+ */
+title: string, label: string, direction: "out" | "in", 
+/**
+ * Whether `direction` carries meaning (registry-undirected labels: false).
+ */
+directed: boolean, };
 
 export type ReportFinding = { wi_number: number, title: string, wi_status: string, };
 
@@ -167,7 +196,16 @@ export type WorkItemDetail = { comments: Array<Comment>,
 /**
  * True when there are more comments than were inlined (call `list_comments`).
  */
-comments_truncated: boolean, wi_number: number, node_id: number, project: string | null, area: string | null, wi_type: string, wi_status: string, wi_tshirt: string, sprint: string | null, title: string, content: string, details: string | null, category: string | null, tags: Array<string>, parent: number | null, archived: boolean, 
+comments_truncated: boolean, 
+/**
+ * The item's edges, inlined (LB-3): covers-IN reveals which proposal covers
+ * it, plus depends_on / related-to / finding. Capped and label-ordered.
+ */
+related: Array<RelatedRef>, 
+/**
+ * True when there are more edges than were inlined (call `neighbors`).
+ */
+related_truncated: boolean, wi_number: number, node_id: number, project: string | null, area: string | null, wi_type: string, wi_status: string, wi_tshirt: string, sprint: string | null, title: string, content: string, details: string | null, category: string | null, tags: Array<string>, parent: number | null, archived: boolean, 
 /**
  * Number of comments on this work item (WI #392) — the hint that tells an
  * agent "this row has discussion; fetch it".

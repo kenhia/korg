@@ -458,3 +458,81 @@ async fn internal_writers_stamp_their_operation_as_origin() {
             .unwrap();
     assert_eq!(origin.as_deref(), Some("propose_sprint"));
 }
+
+/// LB-3 (D-20): a focused read inlines the node's edges, so an agent reading a
+/// work item cannot silently miss that it is covered or depended on. Each ref
+/// carries the neighbor's title (and wi_number when it is a work item). The
+/// proposal read excludes `covers` (already inlined as `covered`) but carries
+/// its other edges.
+#[tokio::test]
+async fn focused_reads_inline_related_context() {
+    let (_c, pool) = fresh_korg().await;
+    let a = create_work_item(&pool, wi("covered item")).await.unwrap();
+    let dep = create_work_item(&pool, wi("a dependency")).await.unwrap();
+
+    // `a` depends on `dep`; a proposal covers `a`.
+    relate(&pool, a.node_id, dep.node_id, "depends_on", None)
+        .await
+        .unwrap();
+    let p = create_proposal(
+        &pool,
+        NewProposal {
+            project_id: None,
+            project: None,
+            category: None,
+            tags: vec![],
+            title: "the sprint".into(),
+            summary: "s".into(),
+            rank: Decimal::ZERO,
+            pinned: false,
+            covers: vec![a.wi_number],
+        },
+    )
+    .await
+    .unwrap();
+
+    // get_work_item(a) inlines both edges, no second round-trip.
+    let d = repo::get_work_item_detail(&pool, a.wi_number)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!d.related_truncated);
+    let cov = d
+        .related
+        .iter()
+        .find(|r| r.label == "covers")
+        .expect("covers edge inlined on the work item");
+    assert_eq!(cov.direction, "in", "the proposal covers the item");
+    assert_eq!(cov.kind, "sprint_proposal");
+    assert_eq!(cov.title, "the sprint", "carries the proposal's title");
+    let dp = d
+        .related
+        .iter()
+        .find(|r| r.label == "depends_on")
+        .expect("depends_on inlined");
+    assert_eq!(dp.direction, "out");
+    assert_eq!(
+        dp.wi_number,
+        Some(dep.wi_number),
+        "work-item neighbor carries its wi_number"
+    );
+    assert_eq!(dp.title, "a dependency");
+
+    // get_proposal(p) excludes covers (already in `covered`) but inlines others.
+    relate(&pool, p.row.node_id, dep.node_id, "related-to", None)
+        .await
+        .unwrap();
+    let pd = repo::get_proposal_detail(&pool, p.row.node_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        pd.related.iter().all(|r| r.label != "covers"),
+        "covers is excluded from proposal.related (it is in `covered`)"
+    );
+    assert!(
+        pd.related.iter().any(|r| r.label == "related-to"),
+        "non-covers edges are inlined on the proposal"
+    );
+    assert_eq!(pd.covered.len(), 1, "covers still reported via `covered`");
+}

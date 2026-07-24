@@ -4,7 +4,7 @@
     api,
     type ProjectRow,
     type WorkItemRow,
-    type Neighbor,
+    type RelatedRef,
   } from "$lib/api";
   import {
     PROJECT_STATUSES,
@@ -61,7 +61,7 @@
 
   let detail = $state<WorkItemRow | null>(null);
   let cursor = $state<number | null>(null);
-  let related = $state<Neighbor[]>([]);
+  let related = $state<RelatedRef[]>([]);
   let currentAreas = $state<{ id: number; name: string }[]>([]);
   let detailAreas = $state<{ id: number; name: string }[]>([]);
 
@@ -348,18 +348,21 @@
     editing = false;
     related = [];
     detailAreas = [];
-    related = await loadNeighbors(item.node_id);
+    // get_work_item inlines the related-context block (LB-3), so the detail
+    // panel reads its relationships from the same fetch — no separate neighbors
+    // call. The list row already carries content, so this is one request, not
+    // two.
+    const full = await attempt(() => api.workItem(item.wi_number), "Load work item");
+    if (full) {
+      detail = full;
+      related = full.related;
+    }
     detailAreas = item.project ? await loadAreas(item.project) : [];
   }
 
-  // Best-effort background refreshes. These are follow-up reads after an action
-  // that already succeeded and reported itself, so a failure here is reported
-  // once rather than replacing the view with an error.
-  async function loadNeighbors(nodeId: number) {
-    const r = await attempt(() => api.neighbors(nodeId), "Load relationships");
-    return r?.items ?? [];
-  }
-
+  // Best-effort background refresh: a follow-up read after an action that already
+  // succeeded and reported itself, so a failure here is reported once rather than
+  // replacing the view with an error.
   async function loadAreas(project: string) {
     const r = await attempt(() => api.areas(project), "Load areas");
     return r ?? [];
@@ -373,7 +376,7 @@
     );
     if (u) {
       detail = u;
-      related = await loadNeighbors(u.node_id);
+      related = u.related;
     }
   }
 
@@ -444,23 +447,23 @@
     if (!created) return;
     relTarget = "";
     relAdding = false;
-    related = await loadNeighbors(node_id);
+    await refreshDetail();
   }
 
   // Removing an edge cannot be undone from the UI (re-adding needs the label
   // and target again), so it confirms — see the ConfirmButton at the call site.
   async function removeRel(relId: number) {
     if (!detail) return;
-    const node_id = detail.node_id;
     const r = await attempt(() => api.unrelate(relId), "Remove relationship");
     if (!r) return;
-    related = await loadNeighbors(node_id);
+    await refreshDetail();
   }
 
-  function relatedLabel(n: Neighbor): string {
-    const wi = items.find((i) => i.node_id === n.node_id);
-    if (wi) return `#${wi.wi_number} ${wi.title}`;
-    return `${n.kind} #${n.node_id}`;
+  // The inlined ref carries the neighbor's own title and wi_number, so this no
+  // longer has to find the node in the loaded list — and it renders neighbors
+  // that are not work items (e.g. the covering proposal) correctly.
+  function relatedLabel(n: RelatedRef): string {
+    return n.wi_number != null ? `#${n.wi_number} ${n.title}` : n.title;
   }
 
   function moveCursor(delta: number) {
