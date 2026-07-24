@@ -763,7 +763,7 @@
     "name": "mark_link_read"
   },
   {
-    "description": "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these four labels and no others: `covers` (proposal -> work item), `finding` (report -> work item), `depends_on` (dependent -> dependency) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. An unregistered label is invalid_input naming the registry and the near-miss; `covers`/`finding` also validate both endpoint kinds. Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected).",
+    "description": "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these five labels and no others: `covers` (proposal -> work item), `finding` (report -> work item), `depends_on` (dependent -> dependency), and `has_handoff` (node -> handoff; normally written by create_handoff, but relate attaches an existing handoff to another node) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. An unregistered label is invalid_input naming the registry and the near-miss; `covers`, `finding`, and `has_handoff` also validate endpoint kinds (`has_handoff`'s right end must be a handoff). Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected).",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1486,6 +1486,136 @@
       "type": "object"
     },
     "name": "update_proposal"
+  },
+  {
+    "description": "Create a handoff -- a durable, cross-machine context document -- and attach it to the work it describes in ONE call. `related_node_ids` are the nodes it belongs to (work items, a sprint proposal, a report, another handoff); each becomes a `has_handoff` edge. REQUIRED context, not optional related reading: the handoff surfaces automatically in those nodes' get_work_item/get_proposal `related` block. Rejects an empty `related_node_ids` unless you pass `allow_standalone` (so a forgotten link can't orphan it), and rejects the whole create if any id does not resolve (isError `not_found` -- no partial insert). Returns the handoff plus the owner ids linked.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_standalone": {
+          "default": false,
+          "description": "Opt in to a handoff with no owners. Off by default so a forgotten link\nstep cannot silently orphan a handoff (plan Write contract).",
+          "type": "boolean"
+        },
+        "body": {
+          "description": "The full handoff document, Markdown.",
+          "type": "string"
+        },
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "description": "Project name — the alternative to `project_id` (see list_projects). Never pass both.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "related_node_ids": {
+          "default": [],
+          "description": "Nodes this handoff describes — its owners. Each becomes a `has_handoff`\nedge (owner -> handoff). Rejected if any id does not resolve (the whole\ncreate rolls back — a handoff must not silently lose an owner).",
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "tags": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "body",
+        "summary",
+        "title"
+      ],
+      "type": "object"
+    },
+    "name": "create_handoff"
+  },
+  {
+    "description": "Fetch one handoff by node_id: title, summary, full Markdown `body`, and the nodes it is attached to (`related`, both directions, capped with `related_truncated`). isError with code `not_found` if there is none. This is the authoritative read once a `has_handoff` edge points you here.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_handoff"
+  },
+  {
+    "description": "Partially update a handoff by its node_id; returns the updated handoff (isError with code `not_found` if that node is missing or is not a handoff). Only the fields you pass change (title, summary, body, tags, archived). Relationship changes go through relate/unrelate, not here.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "body": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "summary": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "update_handoff"
   },
   {
     "description": "List projects, including metadata: status (active|maintenance|inactive|archived), machines (where the working copy lives), deploy_to (where it deploys), category.",

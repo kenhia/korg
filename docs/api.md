@@ -31,6 +31,7 @@ enumerates the tools a third time. All three are drift-tested against
 | Daily planning | `create_daily_plan_item`, `list_daily_plan`, `move_daily_plan_item`, `reorder_daily_plan`, `set_daily_plan_completion`, `delete_daily_plan_item`, `daily_plan_history` |
 | Sprint proposals | `propose_sprint`, `list_proposals`, `get_proposal`, `update_proposal` |
 | Reports | `create_report`, `list_reports`, `get_report` |
+| Handoffs | `create_handoff`, `get_handoff`, `update_handoff` |
 | Projects and areas | `list_projects`, `create_project`, `update_project`, `list_areas`, `create_area` |
 
 Two tools are not what their names suggest:
@@ -189,7 +190,7 @@ Missing single-item reads are 404 / `isError` `not_found`, never `200 null`
 
 The same two-level rule extends from comments to **edges**: a focused read
 inlines the node's relationships so an agent reading a work item cannot silently
-miss that it is covered, depended on, or (later) handed off — the invisible-edge
+miss that it is covered, depended on, or handed off — the invisible-edge
 failure of review L-6.
 
 `get_work_item` and `get_proposal` carry `related: RelatedRef[]` and an exact
@@ -208,6 +209,24 @@ failure of review L-6.
   and carries the proposal's other edges.
 - `neighbors` stays the generic floor: unfiltered, higher-limit, for everything
   the inlined block deliberately caps or omits.
+
+### Handoffs
+
+A **handoff** is a first-class node — title, summary, Markdown `body` — carrying
+durable, cross-machine context (a contract, a state dump, a "here's where I left
+off") for the work it describes. It is deliberately **not** a work item: it has
+no status, size, or lifecycle to leak into backlog, survey, or planning.
+
+- `create_handoff(title, summary, body, related_node_ids, …)` writes the node
+  and one `has_handoff` edge per owner in one transaction (owner → handoff). It
+  **rejects** an empty `related_node_ids` unless `allow_standalone` is set — a
+  forgotten link must not silently orphan a handoff — and rejects the whole
+  create if any owner id does not resolve (`not_found`, no partial insert).
+- Handoffs need **no bespoke read field**. A `has_handoff` edge surfaces in its
+  owners' `get_work_item` / `get_proposal` `related` block like any other edge
+  (titled, so the reader learns *what* was handed off without a fetch). Once a
+  ref points you at one, `get_handoff(node_id)` returns the full `body` plus the
+  nodes it is attached to. Relationship changes go through `relate`/`unrelate`.
 
 ## Relationships
 
@@ -228,6 +247,7 @@ label not in it.
 | `finding` | directed | report **reported** work item | `report` → `workitem` |
 | `depends_on` | directed | dependent **depends on** dependency | any → any |
 | `related-to` | **undirected** | the two nodes are related | any → any |
+| `has_handoff` | directed | node **has** handoff | any → `handoff` |
 
 **Directed** means the stored orientation carries meaning, so the reverse edge
 is a *different* fact: `A depends_on B` and `B depends_on A` together are a
@@ -248,8 +268,8 @@ the registry exists to prevent.
 
 **Extending it** is one registry entry in `korg_core::relationships` plus
 `just gen`, which propagates the new label to the API, the MCP tool
-descriptions, and the web picker in one step. (The handoff sprint's
-`has_handoff` will be the first to travel this path.)
+descriptions, and the web picker in one step. `has_handoff` (sprint 025) was the
+first to travel this path.
 
 ### Reading edges
 

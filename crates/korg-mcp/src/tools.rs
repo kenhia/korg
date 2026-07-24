@@ -16,8 +16,8 @@ use korg_core::config::KorgConfig;
 use korg_core::error::{ErrorClass, ErrorCode};
 use korg_core::ops;
 use korg_core::repo::{
-    self, CardPatch, LinkPatch, NewCard, NewLink, NewProposal, NewReport, NewWorkItem,
-    ProjectPatch, ProposalPatch, WorkItemPatch,
+    self, CardPatch, HandoffPatch, LinkPatch, NewCard, NewHandoff, NewLink, NewProposal, NewReport,
+    NewWorkItem, ProjectPatch, ProposalPatch, WorkItemPatch,
 };
 use korg_core::{daily_plan, topics};
 use rmcp::handler::server::ServerHandler;
@@ -195,7 +195,7 @@ pub fn tools() -> Vec<Tool> {
         tool::<ops::ListLinks>("list_links", "List reading-list links as {items, total, limit, offset}, ordered by node_id. Archived links are EXCLUDED by default."),
         tool2::<ops::NodeId, LinkPatch>("update_link", "Update a reading-list link in ONE transaction: disposition, read flag, tags -- any combination. This is how an agent records what it decided about a captured URL (migration 0004's intended workflow). Returns the updated link; isError `not_found` if the node is missing or is not a link; an invalid disposition changes nothing."),
         tool::<MarkLinkReadArgs>("mark_link_read", "DEPRECATED -- use update_link, which does this plus disposition and tags in one transaction. Marks a reading-list link read or unread; returns the updated link."),
-        tool::<ops::Relate>("relate", "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these four labels and no others: `covers` (proposal -> work item), `finding` (report -> work item), `depends_on` (dependent -> dependency) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. An unregistered label is invalid_input naming the registry and the near-miss; `covers`/`finding` also validate both endpoint kinds. Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected)."),
+        tool::<ops::Relate>("relate", "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these five labels and no others: `covers` (proposal -> work item), `finding` (report -> work item), `depends_on` (dependent -> dependency), and `has_handoff` (node -> handoff; normally written by create_handoff, but relate attaches an existing handoff to another node) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. An unregistered label is invalid_input naming the registry and the near-miss; `covers`, `finding`, and `has_handoff` also validate endpoint kinds (`has_handoff`'s right end must be a handoff). Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected)."),
         tool2::<ops::NodeId, ops::Neighbors>("neighbors", "List the nodes linked to a node (any kind), with labels. Returns {items, total, limit, truncated}. Each item has `rel_id` (pass to `unrelate`), `direction` (\"out\" = the queried node is the edge's left, so the label reads queried->neighbor; \"in\" = the reverse) and `directed` -- when `directed` is false the label is registry-undirected (e.g. related-to) and you MUST treat the edge as symmetric, ignoring `direction`. Filter server-side with `label` and/or `kind` instead of pulling every edge: e.g. label=\"covers\", kind=\"workitem\" for a proposal's work items. Ordering is neighbor node_id then rel_id."),
         tool::<ops::Id>("unrelate", "Remove a relationship edge by its id (the `rel_id` from `neighbors`, or the id returned by `relate`). Returns {deleted: bool} — false means there was no such edge."),
         tool::<topics::NewTopic>("create_topic", "Create a reusable planning topic. Returns the created topic."),
@@ -218,6 +218,9 @@ pub fn tools() -> Vec<Tool> {
         tool::<ops::ListProposals>("list_proposals", "List sprint proposals: pinned first, then rank, then node_id (a stable order -- equal ranks no longer shuffle between calls). Each row carries `covered_count` and `comment_count`; call get_proposal for the covered work items themselves. Filter by `status` and/or `project` (name)."),
         tool::<ops::NodeId>("get_proposal", "Fetch one sprint proposal by node_id with everything needed to start it: the proposal fields, `covered` (the work items it covers -- wi_number, node_id, title, wi_status, wi_tshirt, project, comment_count -- ordered by wi_number), and inlined comments (up to 10, with `comments_truncated`). This replaces the old list_proposals + neighbors + list_work_items dance. isError with code `not_found` if there is none."),
         tool2::<ops::NodeId, ProposalPatch>("update_proposal", "Partially update a sprint proposal by its node_id; returns the updated proposal (isError with code `not_found` if that node is missing or is not a proposal). Only the fields you pass are changed. Use this for status transitions (proposed -> active -> done/declined), reordering (rank), pinning, or archiving."),
+        tool::<NewHandoff>("create_handoff", "Create a handoff -- a durable, cross-machine context document -- and attach it to the work it describes in ONE call. `related_node_ids` are the nodes it belongs to (work items, a sprint proposal, a report, another handoff); each becomes a `has_handoff` edge. REQUIRED context, not optional related reading: the handoff surfaces automatically in those nodes' get_work_item/get_proposal `related` block. Rejects an empty `related_node_ids` unless you pass `allow_standalone` (so a forgotten link can't orphan it), and rejects the whole create if any id does not resolve (isError `not_found` -- no partial insert). Returns the handoff plus the owner ids linked."),
+        tool::<ops::NodeId>("get_handoff", "Fetch one handoff by node_id: title, summary, full Markdown `body`, and the nodes it is attached to (`related`, both directions, capped with `related_truncated`). isError with code `not_found` if there is none. This is the authoritative read once a `has_handoff` edge points you here."),
+        tool2::<ops::NodeId, HandoffPatch>("update_handoff", "Partially update a handoff by its node_id; returns the updated handoff (isError with code `not_found` if that node is missing or is not a handoff). Only the fields you pass change (title, summary, body, tags, archived). Relationship changes go through relate/unrelate, not here."),
         tool::<NoArgs>("list_projects", "List projects, including metadata: status (active|maintenance|inactive|archived), machines (where the working copy lives), deploy_to (where it deploys), category."),
         tool::<ops::CreateProject>("create_project", "Create a project by name (idempotent — returns the existing id if it already exists). Returns its id."),
         tool2::<ops::ProjectName, ProjectPatch>("update_project", "Update a project's metadata by name (the name itself is immutable), returning the updated project: status (active|maintenance|inactive|archived), machines, deploy_to, category, description, gh_repo, cn_path. Omitted fields are unchanged."),
@@ -587,6 +590,22 @@ impl KorgServer {
             "update_proposal" => {
                 let (a, patch) = parse_args2::<ops::NodeId, ProposalPatch>(args)?;
                 respond(repo::update_proposal(pool, a.node_id, patch).await)
+            }
+
+            // --- handoffs ---
+            "create_handoff" => {
+                let new: NewHandoff = parse_args(args)?;
+                respond(repo::create_handoff(pool, new).await)
+            }
+            "get_handoff" => {
+                let a: ops::NodeId = parse_args(args)?;
+                respond_found(repo::get_handoff(pool, a.node_id).await, || {
+                    format!("no handoff with node_id {}", a.node_id)
+                })
+            }
+            "update_handoff" => {
+                let (a, patch) = parse_args2::<ops::NodeId, HandoffPatch>(args)?;
+                respond(repo::update_handoff(pool, a.node_id, patch).await)
             }
 
             // --- projects and areas ---

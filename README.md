@@ -64,7 +64,7 @@ installed; point an MCP client at the URL:
 http://<host>:8090/mcp
 ```
 
-It exposes 44 tools backed directly by `korg-core`. The full list, by category,
+It exposes 47 tools backed directly by `korg-core`. The full list, by category,
 is the [tool catalogue](docs/api.md#tool-catalogue) — the one place it is
 written down, so this sentence carries only the count and a drift test keeps
 even that honest.

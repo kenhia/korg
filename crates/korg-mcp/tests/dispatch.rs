@@ -130,6 +130,13 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
     .await
     .expect("report");
 
+    // A handoff attached to the subject work item — one to read, one to update.
+    let mut new_handoff = new::handoff("a handoff");
+    new_handoff.related_node_ids = vec![wi.node_id];
+    let handoff = repo::create_handoff(pool, new_handoff)
+        .await
+        .expect("handoff");
+
     // One daily-plan item per tool that mutates one, each on its own day, so
     // `reorder` sees exactly the day it owns and `delete` cannot strand `move`.
     async fn plan(
@@ -264,6 +271,21 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
         (
             "update_proposal",
             json!({"node_id": proposal.row.node_id, "status": "active"}),
+        ),
+        // --- handoffs ---
+        (
+            "create_handoff",
+            json!({
+                "title": "handed off by the fence",
+                "summary": "s",
+                "body": "b",
+                "related_node_ids": [wi.node_id],
+            }),
+        ),
+        ("get_handoff", json!({"node_id": handoff.handoff.node_id})),
+        (
+            "update_handoff",
+            json!({"node_id": handoff.handoff.node_id, "body": "revised by the fence"}),
         ),
         // --- projects and areas ---
         ("list_projects", json!({})),

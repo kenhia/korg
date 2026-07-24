@@ -84,6 +84,8 @@ describing a route that no longer exists.
 | `GET`, `PATCH` | `/api/proposals/:node_id` | Proposal detail (covered work items + comments), or update status/rank/pinned/archived. |
 | `GET` | `/api/reports` | List agent reports (filters `source`, `limit`; newest first). |
 | `GET` | `/api/reports/:node_id` | One report with its findings and comments. |
+| `POST` | `/api/handoffs` | Create a handoff and attach it to the nodes it describes (`has_handoff` edges) in one call. |
+| `GET`, `PATCH` | `/api/handoffs/:node_id` | One handoff (Markdown body + the nodes it is attached to), or update title/summary/body/tags/archived. |
 
 Example:
 

@@ -74,7 +74,7 @@ async fn mcp_http_end_to_end() {
     .await;
     assert_eq!(st, StatusCode::OK);
     let tools = tl["result"]["tools"].as_array().expect("tools array");
-    assert_eq!(tools.len(), 44, "expected 44 tools, got {}", tools.len());
+    assert_eq!(tools.len(), 47, "expected 47 tools, got {}", tools.len());
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     assert!(names.contains(&"create_work_item"));
     assert!(names.contains(&"list_work_items"));
@@ -88,6 +88,9 @@ async fn mcp_http_end_to_end() {
     assert!(names.contains(&"create_topic"));
     assert!(names.contains(&"create_daily_plan_item"));
     assert!(names.contains(&"daily_plan_history"));
+    assert!(names.contains(&"create_handoff"));
+    assert!(names.contains(&"get_handoff"));
+    assert!(names.contains(&"update_handoff"));
     assert!(!names.contains(&"generate_slots"));
     let create_plan = tools
         .iter()

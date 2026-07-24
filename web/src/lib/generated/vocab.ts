@@ -35,5 +35,6 @@ export const RELATIONSHIP_LABELS = [
   { label: "finding", directed: true, reads: "report reported work item as a finding" },
   { label: "depends_on", directed: true, reads: "dependent depends on dependency" },
   { label: "related-to", directed: false, reads: "the two nodes are related (no direction)" },
+  { label: "has_handoff", directed: true, reads: "node has handoff" },
 ] as const;
 export type RelationshipLabel = (typeof RELATIONSHIP_LABELS)[number]["label"];

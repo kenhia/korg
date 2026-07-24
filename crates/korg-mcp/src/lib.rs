@@ -13,7 +13,7 @@ pub mod tools;
 pub fn server_instructions() -> &'static str {
     "korg MCP server — one typed-node data model over Postgres covering work items, cards, \
      comments, reading-list links, generalized relationships, topics, daily planning, \
-     sprint proposals, reports, and projects and areas. \
+     sprint proposals, reports, handoffs, and projects and areas. \
      Mutations validate their target and return the updated entity; errors are isError \
      results carrying {message, code} where code is one of invalid_input, not_found, \
      conflict, internal. Paginated collection reads (list_work_items, list_cards, \

@@ -70,6 +70,7 @@ const CATEGORIES: &[&str] = &[
     "Daily planning",
     "Sprint proposals",
     "Reports",
+    "Handoffs",
     "Projects and areas",
 ];
 
