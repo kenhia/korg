@@ -115,3 +115,23 @@ inlined block on a live focused read (WI #568 shows its coverer) and
 After LB-3 the linking layer is enforced (LB-2), attributed (LB-2), and
 **visible from the read path** (LB-3) — the ground the handoff sprint was
 waiting for.
+
+## Deployed 2026-07-24
+
+- **Image**: `korg:e26030b14d08` — revision
+  `e26030b14d08d726315ad900518b8869f2ec2be2` (the squash-merge of PR #25).
+- **Rollback target**: `korg:883f05a0bd3d` (LB-2). No migration (read-path
+  only), so an image re-tag fully reverts.
+- **CI**: green on the PR before merge (rust + web).
+- **Verified live** against the deployed API:
+  - `get_work_item(568).related` → one ref, `covers` [in] from the review
+    `sprint_proposal`, carrying the proposal's title — the item now reveals its
+    coverer in the focused read (the L-6 acceptance case); `related_truncated`
+    false.
+  - `get_proposal(599)` → `covered` = 2, `related` = 0, `covers` **excluded**
+    from `related` (it is already in `covered`).
+  - `post-deploy-check.sh --compare`: `OK` — every row count stable.
+
+This completes the `linking-2026-07` arc: **LB-1** true-up, **LB-2** enforcement
++ provenance, **LB-3** edge context in reads — all shipped and deployed
+2026-07-23/24.
