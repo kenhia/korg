@@ -179,6 +179,52 @@ async fn owner_reads_surface_the_handoff() {
     assert!(!labels.contains(&"covers"), "covers must stay in `covered`");
 }
 
+/// End-to-end acceptance (#613): an agent given ONLY a wi_number follows the
+/// documented read path — `get_work_item` reveals the `has_handoff` ref
+/// (untruncated), `get_handoff` returns the full body — so it cannot unknowingly
+/// miss required context, and can continue the work with no access to the
+/// original session.
+#[tokio::test]
+async fn acceptance_discover_and_read_from_a_bare_wi_number() {
+    let (_pg, pool) = fresh_korg().await;
+    let wi = korg_core::repo::create_work_item(&pool, new::work_item("resume me"))
+        .await
+        .unwrap();
+    korg_core::repo::create_handoff(&pool, {
+        let mut h = new::handoff("Resume contract");
+        h.body = "# Next\ndo the thing on machine B".into();
+        h.related_node_ids = vec![wi.node_id];
+        h
+    })
+    .await
+    .unwrap();
+    let server = server(pool);
+
+    // Given only the wi_number: the focused read cannot hide the handoff.
+    let detail = body(
+        &server
+            .call("get_work_item", args(json!({ "wi_number": wi.wi_number })))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(detail["related_truncated"], json!(false));
+    let href = detail["related"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["label"] == "has_handoff")
+        .expect("the handoff is discoverable from the work item alone");
+
+    // Follow the ref to the full body — the continue-elsewhere payload.
+    let full = body(
+        &server
+            .call("get_handoff", args(json!({ "node_id": href["node_id"] })))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(full["body"], "# Next\ndo the thing on machine B");
+}
+
 /// Response-size / truncation: a node with more handoffs than the cap inlines
 /// exactly the cap and flags the rest, so a busy node never blows the payload.
 #[tokio::test]

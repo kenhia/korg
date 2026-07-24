@@ -1307,6 +1307,23 @@ pub async fn get_node_preview(pool: &PgPool, id: i64) -> Result<Option<NodePrevi
                 }
             }
         }
+        "handoff" => {
+            // Sprint 026: the handoff "viewer" is this generic slide-over. The
+            // owning read (get_work_item/get_proposal) surfaces the has_handoff
+            // ref; clicking it opens this preview. A missing detail row leaves
+            // the default `handoff #<id>` title rather than a blank node.
+            if let Some(r) =
+                sqlx::query("SELECT title, summary, body FROM handoff WHERE node_id = $1")
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await?
+            {
+                p.title = r.get("title");
+                p.fields.push(field("Summary", r.get::<String, _>("summary")));
+                p.body = Some(r.get("body"));
+                p.body_label = Some("Handoff".into());
+            }
+        }
         _ => {}
     }
 

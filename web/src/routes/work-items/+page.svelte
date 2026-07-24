@@ -905,7 +905,15 @@
           {#each related as n (n.rel_id)}
             <li class="flex items-center gap-2">
               <span class={chip.tag} title={relationshipReads(n.label) ?? "caller-defined direction"}>{n.label}</span>
-              <span>{relatedLabel(n)}</span>
+              <!-- Open any neighbour in the shared preview (WI #611): the
+                   has_handoff ref opens the handoff — "see the handoff from the
+                   work it belongs to". -->
+              <button
+                type="button"
+                class="text-left hover:text-[var(--color-accent)] hover:underline"
+                title={`Preview ${relatedLabel(n)}`}
+                onclick={() => (previewNode = n.node_id)}
+              >{relatedLabel(n)}</button>
               <!-- Not undoable from here — re-adding needs the target and
                    label again — so it confirms (WI #549). -->
               <ConfirmButton

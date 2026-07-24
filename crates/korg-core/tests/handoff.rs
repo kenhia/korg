@@ -6,8 +6,8 @@
 //! the handoff's title, so no handoff-specific read field is needed.
 
 use korg_core::repo::{
-    create_handoff, create_proposal, create_work_item, get_handoff, get_work_item_detail,
-    update_handoff, HandoffPatch, NewHandoff, NewWorkItem, RepoError,
+    create_handoff, create_proposal, create_work_item, get_handoff, get_node_preview,
+    get_work_item_detail, update_handoff, HandoffPatch, NewHandoff, NewWorkItem, RepoError,
 };
 use korg_test_support::{fresh_korg, new};
 
@@ -205,6 +205,53 @@ async fn update_and_archive() {
     .unwrap();
     let full = get_handoff(&pool, id).await.unwrap().unwrap();
     assert!(full.row.archived);
+}
+
+/// Sprint 026 (#610): the generic node preview renders a handoff — title,
+/// summary field, Markdown body — so the slide-over IS the viewer.
+#[tokio::test]
+async fn node_preview_renders_the_handoff() {
+    let (_c, pool) = fresh_korg().await;
+    let item = create_work_item(&pool, wi("owner")).await.unwrap();
+    let created = create_handoff(
+        &pool,
+        NewHandoff {
+            body: "# State\nmarkdown body".into(),
+            related_node_ids: vec![item.node_id],
+            ..new::handoff("Generator contract")
+        },
+    )
+    .await
+    .unwrap();
+
+    let preview = get_node_preview(&pool, created.handoff.node_id)
+        .await
+        .unwrap()
+        .expect("preview exists");
+    assert_eq!(preview.kind, "handoff");
+    assert_eq!(preview.title, "Generator contract");
+    assert_eq!(preview.body.as_deref(), Some("# State\nmarkdown body"));
+    assert_eq!(preview.body_label.as_deref(), Some("Handoff"));
+    assert!(preview
+        .fields
+        .iter()
+        .any(|f| f.label == "Summary" && f.value == "Generator contract summary"));
+}
+
+/// A handoff node whose detail row is somehow absent still previews legibly
+/// (plan migration step 5) — the default `handoff #<id>` title, not a blank.
+#[tokio::test]
+async fn node_preview_missing_detail_is_legible() {
+    let (_c, pool) = fresh_korg().await;
+    let id: i64 = sqlx::query_scalar("INSERT INTO node (kind) VALUES ('handoff') RETURNING id")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let preview = get_node_preview(&pool, id).await.unwrap().expect("preview");
+    assert_eq!(preview.kind, "handoff");
+    assert_eq!(preview.title, format!("handoff #{id}"));
+    assert!(preview.body.is_none());
 }
 
 /// Updating a node that isn't a handoff is a clean not_found, not a silent
