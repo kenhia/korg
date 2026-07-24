@@ -193,8 +193,10 @@ Any node can link to any other through a single `relationship` edge:
 
 ### Label registry
 
-korg declares the labels it writes or interprets. The registry lives in
-`korg_core::relationships` and is the source this table is written from.
+korg declares — and, since LB-2, **enforces** — the labels it writes or
+interprets. The registry lives in `korg_core::relationships`, is the source
+this table is written from, and is the **complete set**: `relate` rejects any
+label not in it.
 
 | Label | Direction | Reads | Endpoints |
 |-------|-----------|-------|-----------|
@@ -202,7 +204,6 @@ korg declares the labels it writes or interprets. The registry lives in
 | `finding` | directed | report **reported** work item | `report` → `workitem` |
 | `depends_on` | directed | dependent **depends on** dependency | any → any |
 | `related-to` | **undirected** | the two nodes are related | any → any |
-| *anything else* | caller-defined | — | any → any |
 
 **Directed** means the stored orientation carries meaning, so the reverse edge
 is a *different* fact: `A depends_on B` and `B depends_on A` together are a
@@ -213,9 +214,18 @@ happened to pass and readers must ignore it — treat the edge as symmetric.
 There is no canonicalization: two nodes related to each other have one edge in
 some arbitrary orientation.
 
-**Free-form labels** are legal and korg stores your order faithfully. It just
-doesn't know what your label means, so it reports the direction as meaningful
-and leaves the interpretation to you.
+**The vocabulary is closed.** An unregistered label is `invalid_input` whose
+message names the registry and the near-miss (`unknown label 'related'; …; did
+you mean 'related-to'?`); a label with declared endpoint kinds (`covers`,
+`finding`) also validates both ends. This is enforced in `korg_core` — the
+single write path both transports share — deliberately **not** a DB trigger or
+CHECK, which would duplicate the vocabulary outside Rust and re-invite the drift
+the registry exists to prevent.
+
+**Extending it** is one registry entry in `korg_core::relationships` plus
+`just gen`, which propagates the new label to the API, the MCP tool
+descriptions, and the web picker in one step. (The handoff sprint's
+`has_handoff` will be the first to travel this path.)
 
 ### Reading edges
 
@@ -241,20 +251,49 @@ and leaves the interpretation to you.
 
 ### Writing edges
 
-`relate(left, right, label)` requires that both endpoints exist (`not_found`
-otherwise) and that they differ — self-edges are rejected (`invalid_input`),
-and the schema enforces it with `relationship_no_self_edge`. Re-creating an
-existing edge is a no-op that returns the same `rel_id`.
+`relate(left, right, label, origin?)` requires that both endpoints exist
+(`not_found` otherwise), that `label` is registered (`invalid_input` naming the
+registry and the near-miss otherwise), that endpoint kinds match a
+kind-constrained label, and that the endpoints differ — self-edges are rejected
+(`invalid_input`), and the schema enforces it with `relationship_no_self_edge`.
+Re-creating an existing edge is a no-op that returns the same `rel_id`; relating
+the reverse of an **undirected** edge dedups to the existing one rather than
+storing a mirror.
 
 `covers` and `finding` edges are written for you by `propose_sprint` /
 `create_report`; both insert the semantic orientation (proposal → work item,
 report → work item).
+
+Each edge records **provenance** (LB-2): `created` (now, on insert) and an
+optional self-reported `origin` — the web client sends `"web"`, `propose_sprint`
+and `create_report` stamp their own operation name, a skill sends its name.
+korg is no-auth HTTP, so `origin` is recorded, not verified; the re-relate no-op
+preserves the originals. Provenance is write-side only — no read surface exposes
+`created`/`origin` yet (there is no consumer; the handoff flow is the likely
+first).
 
 Every `covers` edge is `sprint_proposal → workitem` — there is no exception.
 (One used to exist: pre-0008 bundles were work items titled `Sprint: …`,
 standing in for a proposal kind that did not yet exist. Migration 0016
 converted those five into real archived-done proposals and re-pointed their
 edges, so the dual shape is gone — see History.)
+
+### Lifecycle invariants
+
+Two properties hold across the `covers` corpus and are maintained by
+**convention, not constraint** — recorded here so a reader knows what keeps them
+and what would break them (D-19; both zero-violation, verified 2026-07-23):
+
+- **At most one live covering proposal per work item.** A WI is covered by at
+  most one proposal in a non-terminal state — `refill-queue`'s survey skips WIs
+  already covered by a live proposal.
+- **Done proposals cover only terminal work items.** `sprint-ship`'s close-out
+  resolves a proposal's covered WIs as it marks the proposal done.
+
+These are deliberately not enforced in code: the write path stays a thin,
+single-edge operation, and the invariants are cheap to check and cheaply
+restored if a manual edit breaks one. If a future consumer needs them as a hard
+guarantee, that is the point to revisit — not before.
 
 ### History
 

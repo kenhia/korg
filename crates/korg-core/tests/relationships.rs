@@ -200,7 +200,7 @@ async fn self_edges_are_rejected_by_the_app_and_the_schema() {
     let (_c, pool) = fresh_korg().await;
     let a = create_work_item(&pool, wi("lonely")).await.unwrap();
 
-    let err = relate(&pool, a.node_id, a.node_id, "depends_on")
+    let err = relate(&pool, a.node_id, a.node_id, "depends_on", None)
         .await
         .unwrap_err();
     assert!(
@@ -243,10 +243,10 @@ async fn neighbors_filters_bounds_and_orders_stably() {
     )
     .await
     .unwrap();
-    relate(&pool, hub.node_id, dep.node_id, "depends_on")
+    relate(&pool, hub.node_id, dep.node_id, "depends_on", None)
         .await
         .unwrap();
-    relate(&pool, hub.node_id, dep.node_id, "related-to")
+    relate(&pool, hub.node_id, dep.node_id, "related-to", None)
         .await
         .unwrap();
 
@@ -318,4 +318,143 @@ async fn neighbors_filters_bounds_and_orders_stably() {
     let depends = all.items.iter().find(|n| n.label == "depends_on").unwrap();
     assert!(depends.directed);
     assert!(relationships::direction_is_meaningful("has_handoff"));
+}
+
+// --- LB-2: registry enforcement + provenance write path -------------------
+
+/// D-11: the vocabulary is closed. An unregistered label is invalid_input whose
+/// message names the whole registry and, for an obvious near-miss, suggests the
+/// real label — the sprint-017 principle that the error is the retry doc.
+#[tokio::test]
+async fn unknown_label_is_rejected_naming_the_vocabulary_and_near_miss() {
+    let (_c, pool) = fresh_korg().await;
+    let a = create_work_item(&pool, wi("a")).await.unwrap();
+    let b = create_work_item(&pool, wi("b")).await.unwrap();
+
+    let err = relate(&pool, a.node_id, b.node_id, "related", None)
+        .await
+        .unwrap_err();
+    let msg = match err.downcast_ref::<RepoError>() {
+        Some(RepoError::InvalidInput(m)) => m.clone(),
+        other => panic!("expected invalid_input, got {other:?}"),
+    };
+    assert!(
+        msg.contains("covers, finding, depends_on, related-to"),
+        "names the whole vocabulary: {msg}"
+    );
+    assert!(
+        msg.contains("did you mean 'related-to'"),
+        "suggests the near-miss: {msg}"
+    );
+}
+
+/// D-12: a kind-constrained label validates both endpoints. `covers` demands a
+/// sprint_proposal on the left; a work item there is invalid_input naming the
+/// expected kind. (create_proposal writes covers by construction and never
+/// reaches this path.)
+#[tokio::test]
+async fn covers_via_relate_validates_endpoint_kinds() {
+    let (_c, pool) = fresh_korg().await;
+    let a = create_work_item(&pool, wi("a")).await.unwrap();
+    let b = create_work_item(&pool, wi("b")).await.unwrap();
+
+    let err = relate(&pool, a.node_id, b.node_id, "covers", None)
+        .await
+        .unwrap_err();
+    let msg = match err.downcast_ref::<RepoError>() {
+        Some(RepoError::InvalidInput(m)) => m.clone(),
+        other => panic!("expected invalid_input, got {other:?}"),
+    };
+    assert!(
+        msg.contains("sprint_proposal") && msg.contains("left"),
+        "names the expected left kind: {msg}"
+    );
+}
+
+/// D-17: relate stamps `created` + the caller's `origin`, and the ON CONFLICT
+/// no-op preserves both on a re-relate (what LB-1's migration comment reserved).
+#[tokio::test]
+async fn relate_stamps_provenance_and_preserves_it_on_rerelate() {
+    let (_c, pool) = fresh_korg().await;
+    let a = create_work_item(&pool, wi("a")).await.unwrap();
+    let b = create_work_item(&pool, wi("b")).await.unwrap();
+
+    let id = relate(&pool, a.node_id, b.node_id, "related-to", Some("web"))
+        .await
+        .unwrap();
+    let created1: String =
+        sqlx::query_scalar("SELECT created::text FROM relationship WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let origin1: Option<String> =
+        sqlx::query_scalar("SELECT origin FROM relationship WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!created1.is_empty(), "created stamped on insert");
+    assert_eq!(origin1.as_deref(), Some("web"), "origin recorded as sent");
+
+    // Re-relate with a different origin: the no-op must keep the originals.
+    let id2 = relate(
+        &pool,
+        a.node_id,
+        b.node_id,
+        "related-to",
+        Some("sprint-ship"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(id2, id, "re-relate returns the same edge");
+    let created2: String =
+        sqlx::query_scalar("SELECT created::text FROM relationship WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let origin2: Option<String> =
+        sqlx::query_scalar("SELECT origin FROM relationship WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(created2, created1, "created preserved on re-relate");
+    assert_eq!(
+        origin2.as_deref(),
+        Some("web"),
+        "origin preserved on re-relate"
+    );
+}
+
+/// D-17: the internal edge writers stamp their operation name as origin, so
+/// every covers/finding edge is attributed even though no caller passed one.
+#[tokio::test]
+async fn internal_writers_stamp_their_operation_as_origin() {
+    let (_c, pool) = fresh_korg().await;
+    let hub = create_work_item(&pool, wi("hub")).await.unwrap();
+    create_proposal(
+        &pool,
+        NewProposal {
+            project_id: None,
+            project: None,
+            category: None,
+            tags: vec![],
+            title: "bundle".into(),
+            summary: "s".into(),
+            rank: Decimal::ZERO,
+            pinned: false,
+            covers: vec![hub.wi_number],
+        },
+    )
+    .await
+    .unwrap();
+
+    let origin: Option<String> =
+        sqlx::query_scalar("SELECT origin FROM relationship WHERE relationship = 'covers' LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(origin.as_deref(), Some("propose_sprint"));
 }

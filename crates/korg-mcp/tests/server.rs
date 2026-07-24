@@ -60,11 +60,11 @@ async fn mcp_surface_end_to_end() {
     );
     let link_node = link["node_id"].as_i64().unwrap();
 
-    // Cross-kind relationship work item <-> link.
+    // Cross-kind relationship work item <-> link (related-to permits any kinds).
     server
         .call(
             "relate",
-            args(json!({"left":wi_node,"right":link_node,"label":"references"})),
+            args(json!({"left":wi_node,"right":link_node,"label":"related-to"})),
         )
         .await
         .unwrap();
@@ -81,7 +81,7 @@ async fn mcp_surface_end_to_end() {
     assert_eq!(ns["truncated"], false);
     assert_eq!(items[0]["node_id"].as_i64(), Some(link_node));
     assert_eq!(items[0]["kind"], "link");
-    assert_eq!(items[0]["label"], "references");
+    assert_eq!(items[0]["label"], "related-to");
 
     // Reading list reflects the link.
     let links = body(&server.call("list_links", args(json!({}))).await.unwrap());
@@ -396,7 +396,7 @@ async fn mcp_coverage_gaps_end_to_end() {
         &server
             .call(
                 "relate",
-                args(json!({"left":card_node,"right":card2_node,"label":"blocks"})),
+                args(json!({"left":card_node,"right":card2_node,"label":"related-to"})),
             )
             .await
             .unwrap(),

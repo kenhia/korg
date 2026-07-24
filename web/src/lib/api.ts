@@ -359,7 +359,7 @@ export const api = {
 
   // relationships
   relate: (left: number, right: number, label: string) =>
-    http<{ id: number }>("POST", "/api/relationships", { left, right, label }),
+    http<{ id: number }>("POST", "/api/relationships", { left, right, label, origin: "web" }),
   unrelate: (id: number) =>
     http<{ deleted: boolean }>("DELETE", `/api/relationships/${id}`),
   neighbors: (

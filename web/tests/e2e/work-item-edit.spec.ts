@@ -34,16 +34,22 @@ test("edit, archive, and relate a work item", async ({ page }) => {
   await page.getByRole("button", { name: "Save" }).first().click();
   await expect(page.getByText("resolved", { exact: true }).first()).toBeVisible();
 
-  // Add a relationship A -> B. The label picker offers the registry labels and
-  // a "custom…" escape hatch, because korg accepts any label (WI #542).
+  // Add a relationship A -> B. The vocabulary is closed (LB-2, D-11): the
+  // picker offers exactly the registry labels — no "custom…" escape hatch, and
+  // the API would reject one anyway.
   await page.getByRole("button", { name: "+ Add" }).click();
   const labelPicker = page.getByLabel("Relationship label");
   await expect(labelPicker).toHaveValue("related-to");
-  await labelPicker.selectOption({ label: "custom…" });
-  await page.getByLabel("Custom relationship label").fill("blocks");
+  await expect(labelPicker.locator("option")).toHaveText([
+    "covers",
+    "finding",
+    "depends_on",
+    "related-to",
+  ]);
+  await labelPicker.selectOption({ label: "depends_on" });
   await page.getByPlaceholder("42").fill(bId);
   await page.getByPlaceholder("42").press("Enter");
-  await expect(page.getByText("blocks", { exact: true })).toBeVisible();
+  await expect(page.getByText("depends_on", { exact: true })).toBeVisible();
   await expect(page.getByText(new RegExp(`#${bId} `))).toBeVisible();
 
   // Remove it.

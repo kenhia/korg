@@ -280,6 +280,11 @@ pub struct Relate {
     pub right: i64,
     #[schemars(schema_with = "schema::non_empty")]
     pub label: String,
+    /// Self-reported provenance (D-17): who is writing this edge — the web
+    /// client sends `"web"`, a skill sends its name. Optional and unverified
+    /// (korg is no-auth HTTP); absent means unknown, stored NULL.
+    #[serde(default)]
+    pub origin: Option<String>,
 }
 
 /// `archive_topic` / `POST /api/topics/:node_id/archive`.

@@ -115,8 +115,9 @@ mod generate {
             ));
         }
         out.push_str(
-            "\n/** The relationship labels korg itself writes or interprets. Any other\n \
-             *  label is legal and its direction is caller-defined. */\nexport const \
+            "\n/** The complete, closed set of relationship labels korg accepts (LB-2):\n \
+             *  relate() rejects anything else. Extend it by adding a registry entry in\n \
+             *  korg-core and running `just gen`. */\nexport const \
              RELATIONSHIP_LABELS = [\n",
         );
         for spec in REGISTRY {
