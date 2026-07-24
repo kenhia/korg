@@ -191,3 +191,29 @@ viewer and skill consume this live surface (LB-1-before-LB-2 discipline).
   archival policy — all plan open questions, none blocking H-1.
 - Collection-level `handoff_count` on survey/list — intentionally skipped
   (2026-07-24 decision); revisit on a demonstrated miss.
+
+## Deployed 2026-07-24
+
+- **Image**: `korg:24495eb83ef8` — revision
+  `24495eb83ef84cce63745a408256656303e3a44a` (the squash-merge of PR #26).
+- **Rollback target**: `korg:e26030b14d08` (LB-3, image
+  `sha256:720e2c76c681`). Rollback is image-only; **0017 does not auto-revert**
+  on a re-tag — crossing it backward needs a dump restore (docs/operations.md),
+  though the migration is purely additive.
+- **Migration rehearsed first** against a restore of the 2026-07-24 nightly dump
+  in a local scratch container: version 17 applied, node/edge counts
+  byte-identical, a functional `create_handoff` on real data surfaced in the
+  owner's `related` block. The corrected kind list (0012's, +`handoff`) matched
+  production's live `node_kind_check` exactly.
+- **CI**: green on PR #26 (rust + web) before merge.
+- **Verified live** against the deployed API:
+  - `_sqlx_migrations` head = **17 (handoff)**; `handoff` table present;
+    `node_kind_check` includes `handoff`.
+  - `GET /api/handoffs/9999999` → `404 {"code":"not_found"}` — a clean 404 (not a
+    500) proves the route queries the now-existing table.
+  - MCP `tools/list` advertises `create_handoff` / `get_handoff` /
+    `update_handoff`.
+  - `post-deploy-check.sh --compare`: **OK** — every row count stable
+    (additive migration touched no data).
+
+Clears the ground for **H-2** (`korg:615`): web viewer, entry points, skill.
