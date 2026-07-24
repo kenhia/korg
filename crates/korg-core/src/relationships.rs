@@ -31,7 +31,7 @@ pub struct LabelSpec {
 
 /// Labels korg itself writes or interprets. Free-form labels stay legal —
 /// [`spec`] returns `None` for them and their direction is caller-defined.
-pub const REGISTRY: [LabelSpec; 4] = [
+pub const REGISTRY: [LabelSpec; 5] = [
     LabelSpec {
         label: "covers",
         directed: true,
@@ -60,6 +60,18 @@ pub const REGISTRY: [LabelSpec; 4] = [
         right_kind: None,
         reads: "the two nodes are related (no direction)",
     },
+    LabelSpec {
+        // Sprint 025: subject on the left, handoff on the right. Any node kind
+        // may own a handoff (work item, proposal, report, another handoff), so
+        // only the right endpoint is pinned. create_handoff writes the edge
+        // directly (orientation correct by construction); relate() enforces this
+        // for the generic MCP path (e.g. attaching an existing handoff later).
+        label: "has_handoff",
+        directed: true,
+        left_kind: None,
+        right_kind: Some("handoff"),
+        reads: "node has handoff",
+    },
 ];
 
 /// The registry entry for `label`, or `None` if it is a free-form label.
@@ -87,6 +99,10 @@ mod tests {
         assert!(spec("finding").unwrap().directed);
         assert!(spec("depends_on").unwrap().directed);
         assert!(!spec("related-to").unwrap().directed);
+        // has_handoff (sprint 025): any subject -> handoff, directed.
+        assert!(spec("has_handoff").unwrap().directed);
+        assert_eq!(spec("has_handoff").unwrap().left_kind, None);
+        assert_eq!(spec("has_handoff").unwrap().right_kind, Some("handoff"));
     }
 
     #[test]

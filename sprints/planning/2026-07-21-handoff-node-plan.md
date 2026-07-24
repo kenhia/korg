@@ -1,7 +1,43 @@
 # Handoff node plan
 
 Date: 2026-07-21
-Status: planned; begin after the korg deep review and resulting cleanup
+Status: reconciled 2026-07-24 against the shipped linking-2026-07 cleanup; filed
+as proposals korg:614 (H-1) and korg:615 (H-2). Ready to start.
+
+## Reconciliation (2026-07-24)
+
+The deep review and cleanup this plan was gated on shipped as the
+linking-2026-07 arc (sprints 021–024, LB-1/2/3), deployed 2026-07-24. The plan
+was reconciled against that architecture and filed as two proposals —
+`korg:614` (H-1: node, core model, API; WIs #606–609) and `korg:615` (H-2:
+surfaces — viewer, skill, docs; WIs #610–613), tag `handoff-2026-07`, H-1 at the
+top of Planning, H-2 `depends_on` H-1. Assumptions that changed:
+
+1. **Focused-read projections are already built, generically.** LB-3 (D-20)
+   added `related` + `related_truncated` to `get_work_item` and `get_proposal` —
+   the two-level contract this plan wanted, generalized over all edges. A
+   `has_handoff` edge surfaces there as a compact `RelatedRef` (title, kind,
+   label), capped at 25, truncation exact. The dedicated `handoffs` /
+   `handoffs_truncated` fields proposed below are therefore **dropped**: handoffs
+   ride the generic block; the full body is fetched with `get_handoff`.
+2. **`get_proposal` already exists** (Sprint 015). The plan proposed adding it;
+   it is inherited. The handoff work only ensures `has_handoff` edges appear in
+   its `related` block (which excludes `covers`, already in `covered`).
+3. **`has_handoff` registration is a one-line, enforced registry edit.** LB-2
+   (D-11/D-12) closed the vocabulary and enforces endpoint kinds in `relate()`.
+   One `LabelSpec` (left_kind: any, right_kind: `handoff`) plus `just gen` yields
+   enforcement, provenance (`origin`), and TS bindings for free. The review named
+   `has_handoff` the registry's first customer.
+4. **Collection-level `handoff_count` is skipped for now.** LB-3 touched only
+   focused reads; survey/list still carry no edge/handoff count. Given LB-3's
+   production measurement (edges sparse, densest node degree 9, focused read
+   inlines everything to 25), the collection "signal" is deferred until a
+   demonstrated miss justifies it.
+
+The Read-contract and Implementation-sequence sections below predate this
+reconciliation; where they conflict, this section governs. The remaining open
+questions (cap ordering, mutability vs. successor edges, standalone opt-in,
+archival policy) stand.
 
 ## Context
 
@@ -287,8 +323,10 @@ file.
 
 ## Questions after the deep review
 
-- Should focused reads inline complete bodies or compact references plus mandatory
-  follow-up reads? Decide using measured response sizes and agent failure risk.
+- **Resolved (see Reconciliation 2026-07-24).** Should focused reads inline
+  complete bodies or compact references plus mandatory follow-up reads? LB-3
+  settled it: compact `RelatedRef`s in the generic `related` block, body via
+  `get_handoff`, cap 25.
 - What cap and ordering should apply when several handoffs are attached?
 - Should a handoff be mutable in place, or should substantial revisions create a
   successor relationship for history?

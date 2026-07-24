@@ -19,8 +19,8 @@ use tower_http::trace::TraceLayer;
 use korg_core::config::KorgConfig;
 use korg_core::ops;
 use korg_core::repo::{
-    self, CardPatch, LinkPatch, NewCard, NewLink, NewProposal, NewWorkItem, ProjectPatch,
-    ProposalPatch, WorkItemPatch,
+    self, CardPatch, HandoffPatch, LinkPatch, NewCard, NewHandoff, NewLink, NewProposal,
+    NewWorkItem, ProjectPatch, ProposalPatch, WorkItemPatch,
 };
 use korg_core::{daily_plan, topics};
 use korg_mcp::tools::KorgServer;
@@ -90,6 +90,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/proposals", get(list_proposals).post(create_proposal))
         .route("/api/reports", get(list_reports))
         .route("/api/reports/:node_id", get(get_report))
+        .route("/api/handoffs", post(create_handoff))
+        .route(
+            "/api/handoffs/:node_id",
+            get(get_handoff).patch(update_handoff),
+        )
         .route(
             "/api/proposals/:node_id",
             get(get_proposal).patch(update_proposal),
@@ -697,6 +702,31 @@ async fn update_proposal(
 ) -> ApiResult {
     Ok(Json(json!(
         repo::update_proposal(&s.pool, node_id, patch).await?
+    )))
+}
+
+// --- handoffs (durable cross-agent context) --------------------------------
+
+async fn create_handoff(State(s): State<AppState>, Json(b): Json<NewHandoff>) -> ApiResult {
+    Ok(Json(json!(repo::create_handoff(&s.pool, b).await?)))
+}
+
+/// The authoritative "read this handoff" call — body plus the nodes it belongs
+/// to. A `has_handoff` edge in a work-item/proposal `related` block points here.
+async fn get_handoff(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
+    match repo::get_handoff(&s.pool, node_id).await? {
+        Some(full) => Ok(Json(json!(full))),
+        None => Err(not_found(format!("no handoff with node_id {node_id}"))),
+    }
+}
+
+async fn update_handoff(
+    State(s): State<AppState>,
+    Path(node_id): Path<i64>,
+    Json(patch): Json<HandoffPatch>,
+) -> ApiResult {
+    Ok(Json(json!(
+        repo::update_handoff(&s.pool, node_id, patch).await?
     )))
 }
 

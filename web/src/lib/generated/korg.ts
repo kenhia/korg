@@ -18,6 +18,39 @@ export type CoveredRef = { wi_number: number, node_id: number, title: string, wi
 
 export type DailyPlanItem = { node_id: number, plan_date: string, position: number, display: string, source_node_id: number, source_kind: string, source_title: string, completed_at: string | null, created_at: string, };
 
+/**
+ * The created handoff plus the owner node ids actually linked (deduped). Since
+ * create rejects any id that does not resolve, this echoes the request minus
+ * duplicates — the honest confirmation of what was attached.
+ */
+export type HandoffCreated = { related_node_ids: Array<number>, node_id: number, title: string, summary: string, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
+/**
+ * Comments on this handoff (nodes are comment-generic, 0007).
+ */
+comment_count: number, created: string, updated: string, };
+
+/**
+ * A handoff with its full Markdown body and the nodes it is attached to,
+ * inlined the LB-3 way (both directions, nothing excluded). This is the
+ * authoritative "read this handoff" call.
+ */
+export type HandoffFull = { body: string, 
+/**
+ * The nodes this handoff is attached to (has_handoff both ways, plus any
+ * other edges), inlined up to [`RELATED_CONTEXT_CAP`] (LB-3).
+ */
+related: Array<RelatedRef>, related_truncated: boolean, node_id: number, title: string, summary: string, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
+/**
+ * Comments on this handoff (nodes are comment-generic, 0007).
+ */
+comment_count: number, created: string, updated: string, };
+
+export type HandoffRow = { node_id: number, title: string, summary: string, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
+/**
+ * Comments on this handoff (nodes are comment-generic, 0007).
+ */
+comment_count: number, created: string, updated: string, };
+
 export type History = { from: string, to: string, total: number, completed: number, completion_rate: number, items: Array<DailyPlanItem>, };
 
 export type LinkRow = { node_id: number, url: string, title: string | null, read: boolean, disposition: string, category: string | null, tags: Array<string>, };

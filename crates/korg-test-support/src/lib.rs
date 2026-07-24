@@ -126,7 +126,7 @@ pub async fn count(pool: &PgPool, table: &str) -> i64 {
 /// would produce.
 pub mod new {
     use super::Decimal;
-    use korg_core::repo::{NewCard, NewLink, NewProposal, NewReport, NewWorkItem};
+    use korg_core::repo::{NewCard, NewHandoff, NewLink, NewProposal, NewReport, NewWorkItem};
 
     pub fn work_item(title: &str) -> NewWorkItem {
         NewWorkItem {
@@ -181,6 +181,22 @@ pub mod new {
             rank: Decimal::ZERO,
             pinned: false,
             covers: Vec::new(),
+        }
+    }
+
+    /// A handoff with one owner is the realistic case; tests that want more,
+    /// or the standalone opt-in, set `related_node_ids`/`allow_standalone`.
+    pub fn handoff(title: &str) -> NewHandoff {
+        NewHandoff {
+            project_id: None,
+            project: None,
+            category: None,
+            tags: Vec::new(),
+            title: title.into(),
+            summary: format!("{title} summary"),
+            body: String::new(),
+            related_node_ids: Vec::new(),
+            allow_standalone: false,
         }
     }
 
