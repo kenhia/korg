@@ -964,6 +964,104 @@ pub async fn neighbors(pool: &PgPool, node: i64, query: NeighborQuery) -> Result
     })
 }
 
+/// A neighbor as a focused read inlines it (LB-3, D-20): a compact edge ref
+/// carrying enough to render and decide — the neighbor's `title` and
+/// `wi_number` — without a second round-trip. The generalization of `covered` /
+/// inlined `comments` from one label / comments to every edge.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct RelatedRef {
+    pub rel_id: i64,
+    pub node_id: i64,
+    /// Present when the neighbor is a work item — its user-facing handle.
+    pub wi_number: Option<i64>,
+    pub kind: String,
+    /// The neighbor's title/summary/name, resolved across kinds.
+    pub title: String,
+    pub label: String,
+    #[ts(type = "\"out\" | \"in\"")]
+    pub direction: String,
+    /// Whether `direction` carries meaning (registry-undirected labels: false).
+    pub directed: bool,
+}
+
+/// Max edges inlined into a focused read before `related_truncated` trips
+/// (LB-3). Production's densest node has 9 edges; 25 inlines every current node
+/// in full and bounds the payload, truncating only the handoff-attached future.
+/// Past the cap the caller falls back to `neighbors` for the complete set.
+pub const RELATED_CONTEXT_CAP: i64 = 25;
+
+/// The inlined related-context block for a focused read (LB-3): up to
+/// [`RELATED_CONTEXT_CAP`] of `node`'s edges, ordered by `(label, node_id)` so
+/// structural labels (`covers`, `depends_on`, `finding`) survive truncation
+/// ahead of `related-to`, plus whether more were dropped. `exclude_label` omits
+/// a label already inlined elsewhere — `get_proposal` passes `covers`, which it
+/// carries as `covered`. Titles resolve in one query (no N+1); `directed` comes
+/// from the registry, exactly as `neighbors` computes it.
+pub async fn related_context(
+    pool: &PgPool,
+    node: i64,
+    exclude_label: Option<&str>,
+) -> Result<(Vec<RelatedRef>, bool)> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        rel_id: i64,
+        node_id: i64,
+        wi_number: Option<i64>,
+        kind: String,
+        title: String,
+        label: String,
+        direction: String,
+        total: i64,
+    }
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT r.id AS rel_id, \
+                other.id AS node_id, \
+                w.wi_number AS wi_number, \
+                other.kind AS kind, \
+                COALESCE(w.title, sp.title, cd.title, lk.title, lk.url, tp.name, rp.summary, \
+                         other.kind || ' #' || other.id) AS title, \
+                r.relationship AS label, \
+                CASE WHEN r.left_id = $1 THEN 'out' ELSE 'in' END AS direction, \
+                count(*) OVER() AS total \
+         FROM relationship r \
+         JOIN node other \
+           ON other.id = CASE WHEN r.left_id = $1 THEN r.right_id ELSE r.left_id END \
+         LEFT JOIN workitem w         ON w.node_id  = other.id \
+         LEFT JOIN sprint_proposal sp ON sp.node_id = other.id \
+         LEFT JOIN card cd            ON cd.node_id = other.id \
+         LEFT JOIN link lk            ON lk.node_id = other.id \
+         LEFT JOIN topic tp           ON tp.node_id = other.id \
+         LEFT JOIN report rp          ON rp.node_id = other.id \
+         WHERE (r.left_id = $1 OR r.right_id = $1) \
+           AND ($2::text IS NULL OR r.relationship <> $2) \
+         ORDER BY r.relationship, other.id \
+         LIMIT $3",
+    )
+    .bind(node)
+    .bind(exclude_label)
+    .bind(RELATED_CONTEXT_CAP)
+    .fetch_all(pool)
+    .await?;
+
+    let total = rows.first().map(|r| r.total).unwrap_or(0);
+    let related: Vec<RelatedRef> = rows
+        .into_iter()
+        .map(|r| RelatedRef {
+            directed: relationships::direction_is_meaningful(&r.label),
+            rel_id: r.rel_id,
+            node_id: r.node_id,
+            wi_number: r.wi_number,
+            kind: r.kind,
+            title: r.title,
+            label: r.label,
+            direction: r.direction,
+        })
+        .collect();
+    let truncated = total > related.len() as i64;
+    Ok((related, truncated))
+}
+
 /// All (left, right) edges with the given label where BOTH endpoints belong
 /// to the named project. Feeds the Plan view: with label `depends_on`, left
 /// depends on right.
@@ -1335,6 +1433,11 @@ pub struct WorkItemDetail {
     pub comments: Vec<Comment>,
     /// True when there are more comments than were inlined (call `list_comments`).
     pub comments_truncated: bool,
+    /// The item's edges, inlined (LB-3): covers-IN reveals which proposal covers
+    /// it, plus depends_on / related-to / finding. Capped and label-ordered.
+    pub related: Vec<RelatedRef>,
+    /// True when there are more edges than were inlined (call `neighbors`).
+    pub related_truncated: bool,
 }
 
 /// `get_work_item` plus inlined, capped comments (WI #392). `None` if the
@@ -1352,10 +1455,14 @@ pub async fn get_work_item_detail(pool: &PgPool, wi_number: i64) -> Result<Optio
     .fetch_all(pool)
     .await?;
     let comments_truncated = item.comment_count > WORKITEM_COMMENT_CAP;
+    // All of the item's edges — no label is inlined elsewhere on a work item.
+    let (related, related_truncated) = related_context(pool, item.node_id, None).await?;
     Ok(Some(WorkItemDetail {
         item,
         comments,
         comments_truncated,
+        related,
+        related_truncated,
     }))
 }
 
@@ -2106,6 +2213,11 @@ pub struct ProposalDetail {
     pub covered: Vec<CoveredRef>,
     pub comments: Vec<Comment>,
     pub comments_truncated: bool,
+    /// The proposal's non-`covers` edges, inlined (LB-3). `covers` is excluded
+    /// because `covered` already carries it.
+    pub related: Vec<RelatedRef>,
+    /// True when there are more such edges than were inlined (call `neighbors`).
+    pub related_truncated: bool,
 }
 
 /// `get_proposal` — the proposal, its covered work items, and capped comments.
@@ -2140,11 +2252,15 @@ pub async fn get_proposal_detail(pool: &PgPool, node_id: i64) -> Result<Option<P
     .fetch_all(pool)
     .await?;
     let comments_truncated = proposal.comment_count > WORKITEM_COMMENT_CAP;
+    // Everything except covers — that is already inlined as `covered`.
+    let (related, related_truncated) = related_context(pool, node_id, Some("covers")).await?;
     Ok(Some(ProposalDetail {
         proposal,
         covered,
         comments,
         comments_truncated,
+        related,
+        related_truncated,
     }))
 }
 

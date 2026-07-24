@@ -185,6 +185,30 @@ the tail via `list_comments`:
 Missing single-item reads are 404 / `isError` `not_found`, never `200 null`
 (D-6).
 
+### Related context (LB-3)
+
+The same two-level rule extends from comments to **edges**: a focused read
+inlines the node's relationships so an agent reading a work item cannot silently
+miss that it is covered, depended on, or (later) handed off — the invisible-edge
+failure of review L-6.
+
+`get_work_item` and `get_proposal` carry `related: RelatedRef[]` and an exact
+`related_truncated` flag. Each `RelatedRef` is a compact neighbor:
+`rel_id`, `node_id`, `wi_number` (when the neighbor is a work item), `kind`,
+`title` (resolved across kinds), `label`, `direction` (`"out"`/`"in"`), and
+`directed`.
+
+- The list is **capped at 25** and ordered by `(label, node_id)`, so if a node
+  ever exceeds the cap the structural labels (`covers`, `depends_on`, `finding`)
+  are inlined before `related-to`; `related_truncated` is exact, and the caller
+  falls back to `neighbors` for the whole set.
+- `get_work_item.related` carries **all** of the item's edges — the `covers`-IN
+  ref is how the reader learns which proposal covers it.
+- `get_proposal.related` **excludes `covers`** (already inlined as `covered`)
+  and carries the proposal's other edges.
+- `neighbors` stays the generic floor: unfiltered, higher-limit, for everything
+  the inlined block deliberately caps or omits.
+
 ## Relationships
 
 Any node can link to any other through a single `relationship` edge:
