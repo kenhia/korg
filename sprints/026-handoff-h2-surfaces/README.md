@@ -105,3 +105,23 @@ open a handoff from a work item's related block in the deployed UI; smoke-test
 the acceptance path. Completes the `handoff-2026-07` arc; Agent Space planning
 ([2026-07-23-agent-space-direction.md](../planning/2026-07-23-agent-space-direction.md))
 is sequenced after this.
+
+## Deployed 2026-07-24
+
+- **Image**: `korg:893e4bbe6069` — revision
+  `893e4bbe6069af94f988e79453473af9596019ba` (the squash-merge of PR #27).
+- **Rollback target**: `korg:24495eb83ef8` (H-1). **No migration**, so an image
+  re-tag fully reverts — no dump restore needed.
+- **CI**: green on PR #27 (rust + web) before merge.
+- **Verified live** against the deployed instance:
+  - `GET /api/nodes/619` (the korg-dash handoff migrated in #613) now returns
+    its real title, `body_label: "Handoff"`, and body — the #610 preview arm is
+    live (before H-2 it was a bare `handoff #619`). So the slide-over renders
+    handoffs, and with the browser-verified clickable refs the full
+    "click has_handoff → open the handoff" flow works from WI #618.
+  - `post-deploy-check.sh --compare`: **OK** — every row count stable.
+  - Deep link `/work-items` → 200 (UI served).
+
+This closes the `handoff-2026-07` arc: **H-1** node/core/API + **H-2** surfaces —
+both shipped and deployed 2026-07-24. Next: Agent Space planning, reconciled
+against this architecture.
