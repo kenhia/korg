@@ -76,6 +76,17 @@ where
         .ok_or_else(|| RepoError::NotFound(format!("no node with id {node_id}")).into())
 }
 
+/// The kind of a node, or `not_found` — existence and kind in one fetch, which
+/// keeps `relate`'s endpoint checks a `not_found` on a typo'd id rather than a
+/// raw FK violation surfaced as `internal` (WI #524).
+async fn node_kind(pool: &PgPool, node_id: i64) -> Result<String> {
+    sqlx::query_scalar::<_, String>("SELECT kind FROM node WHERE id = $1")
+        .bind(node_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no node with id {node_id}")).into())
+}
+
 // --- name-or-id selectors (WI #575) -----------------------------------------
 //
 // Every write that targets a project used to take a bare `project_id`, so an
@@ -123,6 +134,38 @@ async fn unknown_project(pool: &PgPool, name: &str) -> anyhow::Error {
         None => " — call list_projects (GET /api/projects) for the available names".into(),
     };
     RepoError::InvalidInput(format!("no project named '{name}'{hint}")).into()
+}
+
+/// An unregistered relationship label (D-11). The error names the whole
+/// registry and, when there is an obvious near-miss, suggests it — the
+/// sprint-017 principle that the error doubles as the retry instructions.
+///
+/// A "did you mean" is safe here where it is not for open project names: the
+/// registry is a closed, four-entry set, so every suggestion is a real label.
+/// The near-miss is case-insensitive exact, then a prefix overlap
+/// (`related` -> `related-to`); anything further is left to the named
+/// vocabulary rather than guessed at.
+fn unknown_label(label: &str) -> anyhow::Error {
+    let registered: Vec<&str> = relationships::REGISTRY.iter().map(|s| s.label).collect();
+    let lower = label.to_ascii_lowercase();
+    let suggestion = registered
+        .iter()
+        .find(|l| l.eq_ignore_ascii_case(label))
+        .or_else(|| {
+            registered
+                .iter()
+                .find(|l| l.starts_with(lower.as_str()) || lower.starts_with(**l))
+        })
+        .copied();
+    let hint = match suggestion {
+        Some(s) => format!("; did you mean '{s}'?"),
+        None => String::new(),
+    };
+    RepoError::InvalidInput(format!(
+        "unknown label '{label}'; registered labels are {}{hint}",
+        registered.join(", ")
+    ))
+    .into()
 }
 
 /// Look a project up by name.
@@ -776,31 +819,81 @@ pub const NEIGHBOR_LIMIT_DEFAULT: i64 = 100;
 /// Hard ceiling a caller may request.
 pub const NEIGHBOR_LIMIT_MAX: i64 = 500;
 
-pub async fn relate(pool: &PgPool, left: i64, right: i64, label: &str) -> Result<i64> {
+pub async fn relate(
+    pool: &PgPool,
+    left: i64,
+    right: i64,
+    label: &str,
+    origin: Option<&str>,
+) -> Result<i64> {
     // A node related to itself is meaningless under every registry label and
     // actively harmful under depends_on — it would block itself forever
     // (WI #532). Backed by relationship_no_self_edge since 0014.
     if left == right {
         return Err(RepoError::InvalidInput(format!("cannot relate node {left} to itself")).into());
     }
-    // Endpoints are checked up front so a typo'd node id is a 404, not a raw
-    // FK violation surfaced as a 500 (WI #524).
-    require_node(pool, left).await?;
-    require_node(pool, right).await?;
-    // Relationships are DIRECTED (sprint 008, supersedes WI #84's undirected
-    // canonicalization): the label reads left-to-right, e.g. left `depends_on`
-    // right. Exact duplicates still dedup via the unique constraint; the
-    // reverse orientation is a distinct edge. Labels with no meaningful
-    // direction simply ignore it, as all pre-008 consumers already did.
+    // Closed vocabulary (D-11): the label must be one korg declares. After
+    // LB-1 the corpus already conforms, so this needs no grandfather clause —
+    // enforced in core, the single write path both transports share, never a
+    // DB trigger (which would re-create the drift class B4 killed).
+    let spec = relationships::spec(label).ok_or_else(|| unknown_label(label))?;
+
+    // Endpoints are checked up front (and their kinds fetched) so a typo'd node
+    // id is a 404, not a raw FK violation surfaced as a 500 (WI #524).
+    let left_kind = node_kind(pool, left).await?;
+    let right_kind = node_kind(pool, right).await?;
+
+    // Endpoint kinds (D-12): a kind-constrained label (covers, finding)
+    // validates both ends. covers/finding written by create_proposal /
+    // upsert_report are correct by construction and never reach this path.
+    if let Some(expected) = spec.left_kind {
+        if left_kind != expected {
+            return Err(RepoError::InvalidInput(format!(
+                "label '{label}' requires a {expected} on the left, but node {left} is a {left_kind}"
+            ))
+            .into());
+        }
+    }
+    if let Some(expected) = spec.right_kind {
+        if right_kind != expected {
+            return Err(RepoError::InvalidInput(format!(
+                "label '{label}' requires a {expected} on the right, but node {right} is a {right_kind}"
+            ))
+            .into());
+        }
+    }
+
+    // L-10: a registry-undirected label (related-to) whose reverse edge already
+    // exists dedups to it instead of storing a mirror. Directed labels keep
+    // both orientations — A depends_on B and B depends_on A is a cycle, not a
+    // duplicate — so this only fires for the undirected case.
+    if !spec.directed {
+        let existing: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM relationship WHERE left_id = $1 AND right_id = $2 AND relationship = $3",
+        )
+        .bind(right)
+        .bind(left)
+        .bind(label)
+        .fetch_optional(pool)
+        .await?;
+        if let Some(id) = existing {
+            return Ok(id);
+        }
+    }
+
+    // Provenance (D-17): stamp created + self-reported origin on insert. The
+    // ON CONFLICT no-op touches only left_id, so re-relate preserves the
+    // original created/origin (what LB-1's migration comment reserved).
     let id: i64 = sqlx::query(
-        "INSERT INTO relationship (left_id, right_id, relationship) \
-         VALUES ($1, $2, $3) \
+        "INSERT INTO relationship (left_id, right_id, relationship, created, origin) \
+         VALUES ($1, $2, $3, now(), $4) \
          ON CONFLICT (left_id, right_id, relationship) DO UPDATE SET left_id = relationship.left_id \
          RETURNING id",
     )
     .bind(left)
     .bind(right)
     .bind(label)
+    .bind(origin)
     .fetch_one(pool)
     .await?
     .get("id");
@@ -1897,10 +1990,12 @@ pub async fn create_proposal(pool: &PgPool, new: NewProposal) -> Result<Proposal
 
     // Semantic orientation: proposal -> work item (WI #531). This used to
     // insert (least, greatest), which recorded id ordering instead of meaning.
+    // Provenance (D-17): origin is this writer's operation name; the ON CONFLICT
+    // no-op preserves created/origin on a re-propose.
     for &target in &covered {
         sqlx::query(
-            "INSERT INTO relationship (left_id, right_id, relationship) \
-             VALUES ($1, $2, 'covers') \
+            "INSERT INTO relationship (left_id, right_id, relationship, created, origin) \
+             VALUES ($1, $2, 'covers', now(), 'propose_sprint') \
              ON CONFLICT (left_id, right_id, relationship) DO UPDATE SET left_id = relationship.left_id",
         )
         .bind(node_id)
@@ -2558,11 +2653,13 @@ pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
     .execute(&mut *tx)
     .await?;
 
-    // Semantic orientation: report -> work item (WI #531).
+    // Semantic orientation: report -> work item (WI #531). Provenance (D-17):
+    // origin is this writer's operation name; ON CONFLICT preserves the
+    // original created/origin on re-report.
     for &target in &resolved {
         sqlx::query(
-            "INSERT INTO relationship (left_id, right_id, relationship) \
-             VALUES ($1, $2, 'finding') \
+            "INSERT INTO relationship (left_id, right_id, relationship, created, origin) \
+             VALUES ($1, $2, 'finding', now(), 'create_report') \
              ON CONFLICT (left_id, right_id, relationship) DO UPDATE SET left_id = relationship.left_id",
         )
         .bind(node_id)

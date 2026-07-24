@@ -96,19 +96,25 @@ async fn api_repo_links_cards_projects() {
     assert_eq!(a_items[0].project.as_deref(), Some("alpha"));
 }
 
-/// WI #84 — `relate` must be idempotent and symmetric so the Link Up page can
-/// re-link freely without spawning duplicate edges. Dedup is scoped per label.
+/// WI #84 + LB-2 (D-11 / L-10): `relate` dedups within a label so the Link Up
+/// page can re-link freely. For a registry-*undirected* label the reverse
+/// orientation dedups to the same edge too (LB-2's L-10 nicety); a *directed*
+/// label keeps both orientations, because A depends_on B and B depends_on A is
+/// a cycle, not a duplicate.
 #[tokio::test]
-async fn relate_idempotent() {
+async fn relate_dedup_semantics() {
     let (_c, pool) = fresh_korg().await;
     let p = create_project(&pool, "proj").await.unwrap();
     let a = create_work_item(&pool, wi("a", p)).await.unwrap().node_id;
     let b = create_work_item(&pool, wi("b", p)).await.unwrap().node_id;
 
-    // Edges are DIRECTED (sprint 008): exact duplicates dedup, the reverse
-    // orientation is a distinct edge, and neighbors reports which end you are.
-    relate(&pool, a, b, "related-to").await.unwrap();
-    relate(&pool, a, b, "related-to").await.unwrap();
+    // Exact duplicate — same orientation, same label — is one edge, same id.
+    let first = relate(&pool, a, b, "related-to", None).await.unwrap();
+    let again = relate(&pool, a, b, "related-to", None).await.unwrap();
+    assert_eq!(
+        first, again,
+        "exact duplicate relate returns the same edge id"
+    );
 
     let na = neighbors(&pool, a, Default::default()).await.unwrap().items;
     assert_eq!(na.len(), 1, "exact duplicate relate must not add edges");
@@ -118,19 +124,34 @@ async fn relate_idempotent() {
     assert_eq!(nb.len(), 1, "the edge is visible from the other end too");
     assert_eq!(nb[0].direction, "in", "b is the edge's right");
 
-    relate(&pool, b, a, "related-to").await.unwrap();
+    // Undirected reverse (L-10): related-to is symmetric, so relating b->a
+    // dedups to the existing edge instead of storing a mirror.
+    let reversed = relate(&pool, b, a, "related-to", None).await.unwrap();
+    assert_eq!(
+        reversed, first,
+        "undirected reverse dedups to the same edge"
+    );
     assert_eq!(
         neighbors(&pool, a, Default::default())
             .await
             .unwrap()
             .items
             .len(),
-        2,
-        "reverse orientation is a distinct directed edge"
+        1,
+        "undirected reverse must not add a mirror edge"
     );
 
-    // A different label between the same pair is a distinct edge.
-    relate(&pool, a, b, "scheduled").await.unwrap();
-    let na2 = neighbors(&pool, a, Default::default()).await.unwrap().items;
-    assert_eq!(na2.len(), 3, "dedup is scoped per (orientation, label)");
+    // Directed reverse: depends_on is directional, so a->b and b->a are two
+    // distinct edges, each its own label between the pair.
+    relate(&pool, a, b, "depends_on", None).await.unwrap();
+    relate(&pool, b, a, "depends_on", None).await.unwrap();
+    assert_eq!(
+        neighbors(&pool, a, Default::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        3,
+        "related-to + depends_on out + depends_on in = 3 distinct edges from a"
+    );
 }

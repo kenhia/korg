@@ -112,7 +112,7 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
 
     // A relationship to delete, and a label from the registry so `relate`'s
     // fixture cannot drift out of the vocabulary.
-    let doomed_rel = repo::relate(pool, wi.node_id, card.node_id, "related-to")
+    let doomed_rel = repo::relate(pool, wi.node_id, card.node_id, "related-to", None)
         .await
         .expect("relationship");
 

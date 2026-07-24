@@ -242,11 +242,13 @@ async fn api_end_to_end() {
     assert_eq!(all["total"], 1, "…but still reachable with archived=all");
 
     // Daily plan items remain ordinary nodes for generalized relationships.
+    // The label must be a registry entry now (LB-2); related-to permits any
+    // node kinds on either end.
     let (st, _) = req(
         &router,
         "POST",
         "/api/relationships",
-        Some(json!({"left":planned_node,"right":card_node,"label":"scheduled"})),
+        Some(json!({"left":planned_node,"right":card_node,"label":"related-to"})),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
@@ -261,7 +263,7 @@ async fn api_end_to_end() {
     assert_eq!(ns["items"][0]["kind"], "card");
     assert_eq!(ns["total"], 1);
     assert_eq!(ns["truncated"], false);
-    // The card stays where it is (Active), not forced anywhere by scheduling.
+    // The card stays where it is (Active), not forced anywhere by the edge.
     let (_st, cards) = req(&router, "GET", "/api/cards", None).await;
     assert_eq!(cards["items"][0]["status"], "Active");
 

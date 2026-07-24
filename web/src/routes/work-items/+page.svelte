@@ -139,16 +139,9 @@
   // relationships
   let relAdding = $state(false);
   let relTarget = $state("");
+  // The vocabulary is closed (LB-2, D-11): the picker offers exactly the
+  // registry and the API rejects anything else — no custom escape hatch.
   let relLabel = $state<string>(DEFAULT_RELATIONSHIP_LABEL);
-  // The registry names the labels korg interprets; any other label is legal,
-  // so the picker keeps a custom escape hatch rather than only offering these.
-  const CUSTOM_LABEL = "\u0000custom";
-  let relCustom = $state("");
-  const relLabelValue = $derived(
-    relLabel === CUSTOM_LABEL
-      ? relCustom.trim() || DEFAULT_RELATIONSHIP_LABEL
-      : relLabel,
-  );
 
   // WI #260 — find any node by id. A work item resolves to a navigate +
   // highlight (jump to its project, flash the row); any other kind opens the
@@ -442,7 +435,7 @@
     const wn = parseInt(relTarget, 10);
     if (!wn) return;
     const node_id = detail.node_id;
-    const label = relLabelValue;
+    const label = relLabel;
     const created = await attempt(async () => {
       const target = await api.workItem(wn);
       if (!target) throw new Error(`No work item #${wn}`);
@@ -896,13 +889,9 @@
       </div>
       {#if relAdding}
         <div class="mb-2 flex flex-wrap items-center gap-2 text-sm">
-          <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none" aria-label="Relationship label" title={relationshipReads(relLabelValue) ?? "caller-defined direction"} bind:value={relLabel}>
+          <select class="rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none" aria-label="Relationship label" title={relationshipReads(relLabel) ?? "caller-defined direction"} bind:value={relLabel}>
             {#each KNOWN_RELATIONSHIP_LABELS as spec (spec.label)}<option value={spec.label}>{spec.label}</option>{/each}
-            <option value={CUSTOM_LABEL}>custom…</option>
           </select>
-          {#if relLabel === CUSTOM_LABEL}
-            <input class="w-24 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none" placeholder="label" aria-label="Custom relationship label" bind:value={relCustom} />
-          {/if}
           <span class="text-xs text-[var(--color-muted)]">→ work item #</span>
           <input class="w-20 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none" placeholder="42" bind:value={relTarget} onkeydown={(e) => e.key === "Enter" && addRel()} />
           <button class="rounded bg-[var(--color-accent-soft)] px-2 py-1 text-xs hover:bg-[var(--color-accent)]" onclick={addRel}>Add</button>

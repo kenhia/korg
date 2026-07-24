@@ -27,8 +27,9 @@ export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 export const ERROR_CODES = ["invalid_input", "not_found", "conflict", "internal"] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
-/** The relationship labels korg itself writes or interprets. Any other
- *  label is legal and its direction is caller-defined. */
+/** The complete, closed set of relationship labels korg accepts (LB-2):
+ *  relate() rejects anything else. Extend it by adding a registry entry in
+ *  korg-core and running `just gen`. */
 export const RELATIONSHIP_LABELS = [
   { label: "covers", directed: true, reads: "proposal covers work item" },
   { label: "finding", directed: true, reads: "report reported work item as a finding" },

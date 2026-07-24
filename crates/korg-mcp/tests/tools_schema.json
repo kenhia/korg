@@ -763,7 +763,7 @@
     "name": "mark_link_read"
   },
   {
-    "description": "Create a relationship edge between any two nodes. The label reads left-to-right. Known labels and their direction: `covers` (proposal -> work item), `finding` (report -> work item), `depends_on` (dependent -> dependency) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. Any other label is allowed and its direction is caller-defined: korg stores your order faithfully without interpreting it. Exact duplicates dedup. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected).",
+    "description": "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these four labels and no others: `covers` (proposal -> work item), `finding` (report -> work item), `depends_on` (dependent -> dependency) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. An unregistered label is invalid_input naming the registry and the near-miss; `covers`/`finding` also validate both endpoint kinds. Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected).",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -774,6 +774,13 @@
         "left": {
           "format": "int64",
           "type": "integer"
+        },
+        "origin": {
+          "description": "Self-reported provenance (D-17): who is writing this edge — the web\nclient sends `\"web\"`, a skill sends its name. Optional and unverified\n(korg is no-auth HTTP); absent means unknown, stored NULL.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "right": {
           "format": "int64",
