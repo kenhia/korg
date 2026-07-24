@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { dndzone, type DndEvent } from "svelte-dnd-action";
-  import { api, type ProposalRow } from "$lib/api";
+  import { api, type ProposalRow, type RelatedRef } from "$lib/api";
   import type { ProposalStatus } from "$lib/generated/vocab";
   import { chip, midRank } from "$lib/domain";
   import NodePreview from "$lib/components/NodePreview.svelte";
@@ -36,6 +36,9 @@
   let projectFilter = $state(ALL_PROJECTS);
   let proposalsRaw = $state<ProposalRow[]>([]);
   let covers = $state<Record<number, Covered[]>>({});
+  // Non-`covers` edges from the LB-3 block (WI #611) — `has_handoff` especially,
+  // so a proposal's handoffs are reachable from its Planning card.
+  let relatedByProposal = $state<Record<number, RelatedRef[]>>({});
   let loading = $state(true);
   let loadError = $state<unknown>(null);
   let copiedId = $state<number | null>(null);
@@ -89,6 +92,9 @@
       wi_number: c.wi_number,
       title: c.title,
     }));
+    // get_proposal.related already excludes `covers` (those are `covered`), so
+    // this is has_handoff / depends_on / related-to.
+    relatedByProposal[proposalNodeId] = detail?.related ?? [];
   }
 
   async function load() {
@@ -237,6 +243,18 @@
             title={`Preview #${c.wi_number} — ${c.title}`}
             onclick={() => openPreview(c.wi_number)}
           >#{c.wi_number} {c.title}</button>
+        {/each}
+      </div>
+    {/if}
+    {#if relatedByProposal[p.node_id]?.length}
+      <div class="mt-1 flex flex-wrap gap-1">
+        {#each relatedByProposal[p.node_id] as r (r.rel_id)}
+          <button
+            class="rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] hover:bg-[var(--color-accent-soft)]"
+            class:border-[var(--color-accent)]={r.label === "has_handoff"}
+            title={`Preview: ${r.label} — ${r.title}`}
+            onclick={() => (previewNode = r.node_id)}
+          >{r.label === "has_handoff" ? "📄" : r.label} {r.title}</button>
         {/each}
       </div>
     {/if}

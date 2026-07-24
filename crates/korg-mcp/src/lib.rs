@@ -21,5 +21,9 @@ pub fn server_instructions() -> &'static str {
      the unpaginated ones (list_proposals, list_reports, list_projects, list_areas, \
      list_comments, list_daily_plan) return a bare array. All exclude \
      archived rows unless you ask for them. Writes take a project or area by name \
-     (`project`/`area`) or by id (`project_id`/`area_id`), never both."
+     (`project`/`area`) or by id (`project_id`/`area_id`), never both. \
+     A `has_handoff` edge in a focused read (get_work_item/get_proposal) is \
+     required context: get_handoff and read it before acting on the work — it \
+     carries durable state another session left for you, not optional related \
+     reading."
 }
