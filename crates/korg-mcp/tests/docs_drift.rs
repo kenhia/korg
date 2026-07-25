@@ -145,6 +145,76 @@ fn the_server_instructions_name_every_category() {
     }
 }
 
+/// The tool names inside the parenthesised list following `prefix` in the
+/// server instructions.
+fn named_in_instructions(prefix: &str) -> BTreeSet<String> {
+    let text = korg_mcp::server_instructions();
+    let at = text
+        .find(prefix)
+        .unwrap_or_else(|| panic!("server_instructions no longer says {prefix:?}"));
+    let rest = &text[at + prefix.len()..];
+    let open = rest.find('(').expect("a parenthesised list follows");
+    let close = rest.find(')').expect("the list closes");
+    rest[open + 1..close]
+        .split(',')
+        .map(|n| n.trim().to_string())
+        .collect()
+}
+
+/// `docs/api.md`'s shape table and the MCP instructions must classify the
+/// collection reads the same way (WI #579).
+///
+/// These are the two places korg tells an agent what a list returns, and they
+/// are written for different readers — the table for someone reading the docs,
+/// the instructions for a client that will never read them. Sprint 020 found
+/// the instructions claiming an envelope five reads never return; it fixed both
+/// texts, and this keeps them fixed *together*, so correcting one and forgetting
+/// the other is a failing test rather than a discrepancy an agent trips over.
+///
+/// The stronger fence — claim against actual wire shape — lives in
+/// `dispatch.rs::collection_reads_return_the_shape_the_instructions_promise`,
+/// which needs a database. This one is pure text and runs anywhere.
+#[test]
+fn the_collection_read_shapes_agree_across_docs_and_instructions() {
+    let api = read("docs/api.md");
+    let mut documented_paginated = BTreeSet::new();
+    let mut documented_bare = BTreeSet::new();
+    for line in section(&api, "## Collection reads")
+        .into_iter()
+        .filter(|l| l.starts_with('|'))
+    {
+        let mut cells = line.trim_matches('|').split('|');
+        let (Some(shape), Some(reads)) = (cells.next(), cells.next()) else {
+            continue;
+        };
+        // The other two rows (neighbors, daily_plan_history) carry their own
+        // shapes and are deliberately not summarised in the instructions.
+        if shape.contains("items, total, limit, offset") {
+            documented_paginated = backticked(reads).into_iter().collect();
+        } else if shape.contains("bare array") {
+            documented_bare = backticked(reads).into_iter().collect();
+        }
+    }
+    assert!(
+        !documented_paginated.is_empty() && !documented_bare.is_empty(),
+        "docs/api.md's `## Collection reads` shape table no longer has a \
+         `{{items, total, limit, offset}}` row and a `bare array` row"
+    );
+
+    assert_eq!(
+        documented_paginated,
+        named_in_instructions("Paginated collection reads"),
+        "docs/api.md and the MCP server instructions disagree about which \
+         collection reads are paginated"
+    );
+    assert_eq!(
+        documented_bare,
+        named_in_instructions("the unpaginated ones"),
+        "docs/api.md and the MCP server instructions disagree about which \
+         collection reads return a bare array"
+    );
+}
+
 #[test]
 fn the_readme_tool_count_is_right() {
     let readme = read("README.md");

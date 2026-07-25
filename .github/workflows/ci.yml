@@ -18,6 +18,15 @@
 # Everything else — including the Rust integration tests, which spin up
 # throwaway Postgres containers via testcontainers — runs on the hosted runner's
 # Docker daemon with no extra setup.
+#
+# Action majors are kept on versions that target Node natively (WI #578). Every
+# run used to warn that checkout and pnpm/action-setup "target Node.js 20 but are
+# being forced to run on Node.js 24" — harmless while GitHub's shim lasts, but it
+# is noise that hides a real warning, and it stops being harmless when the shim
+# goes away. checkout@v7, pnpm/action-setup@v6 and setup-node@v7 all declare
+# `using: node24`; Swatinem/rust-cache@v2 already did, which is why it was never
+# named in the warning. When bumping these, check that pnpm/action-setup still
+# takes `package_json_file` — see the note on that step.
 
 name: CI
 
@@ -44,7 +53,7 @@ jobs:
     name: rust (fmt, generated files, clippy, tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
@@ -87,17 +96,17 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Reads the pinned version from web/package.json's `packageManager` field,
       # so the version lives in exactly one place. The path must be spelled out:
       # the action looks at the repo root by default, and `defaults.run
       # .working-directory` applies to `run` steps only, never to action inputs.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           package_json_file: web/package.json
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm

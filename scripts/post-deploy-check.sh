@@ -6,7 +6,9 @@
 #   bash scripts/post-deploy-check.sh --compare  /tmp/korg-baseline.json   # after
 #   bash scripts/post-deploy-check.sh                                      # checks only
 #
-#   KORG_URL   default https://kubsdb.encke-wahoo.ts.net:5674
+#   KORG_URL      default https://kubsdb.encke-wahoo.ts.net:5674
+#   KORG_DB_SSH   host holding the postgres container, default kubsdb;
+#                 set empty to skip the schema section entirely
 #
 # Exit 0 == healthy.
 #
@@ -30,10 +32,20 @@
 #     explained a +1 that would otherwise have looked like a new archived filter
 #     dropping data — the real cause was a work item created in the UI mid-build.
 #     A decrease is the direction worth stopping for, and that is called out.
+#
+#   * The schema section (WI #584) is gathered over SSH, not HTTP, and is
+#     OPTIONAL — it skips with a note if the host is unreachable, so this script
+#     still runs against a local instance. korg applies migrations automatically
+#     at container start, so a deploy can move schema state while every REST row
+#     count stays identical; sprint 020 shipped a migration whose entire contract
+#     was to leave the node id sequence alone, and verifying that meant psql over
+#     SSH by hand. A rewound sequence is the case that matters: it is invisible
+#     until the next write collides with an id already in use.
 
 set -euo pipefail
 
 U="${KORG_URL:-https://kubsdb.encke-wahoo.ts.net:5674}"
+DB_SSH="${KORG_DB_SSH-kubsdb}"
 MODE=none
 FILE=
 
@@ -41,7 +53,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --baseline) MODE=baseline; FILE="${2:?--baseline needs a file}"; shift 2 ;;
     --compare)  MODE=compare;  FILE="${2:?--compare needs a file}";  shift 2 ;;
-    -h|--help)  sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help)  sed -n '2,14p' "$0"; exit 0 ;;
     *)          U="$1"; shift ;;
   esac
 done
@@ -72,6 +84,33 @@ counts() {
         --argjson t "$topic" --argjson p "$proposal" --argjson r "$report" \
         --argjson j "$project" \
     '{work_items:$w, cards:$c, links:$l, topics:$t, proposals:$p, reports:$r, projects:$j}'
+}
+
+# ---------------------------------------------------------------------------
+# Schema state, over SSH — the half no REST count can see (WI #584).
+#
+# Prints a JSON object, or nothing (non-zero) when the DB host is unreachable,
+# `ssh` is missing, or KORG_DB_SSH is empty. Callers treat that as "skip", never
+# as failure: this script has to keep working against a local instance.
+#
+# kubsdb's login shell is fish, which mis-parses $() and $$-quoting — hence
+# `ssh … bash -s` with a quoted heredoc, per docs/operations.md. The container is
+# `postgresql` and the read-only role is `korg`.
+# ---------------------------------------------------------------------------
+schema() {
+  [[ -n "$DB_SSH" ]] || return 1
+  command -v ssh >/dev/null || return 1
+  ssh -o ConnectTimeout=5 -o BatchMode=yes "$DB_SSH" bash -s <<'REMOTE' 2>/dev/null
+docker exec postgresql psql -U korg -d korg -tAc "
+  select json_build_object(
+    'migrations',    (select count(*)    from _sqlx_migrations),
+    'migration_max', (select max(version) from _sqlx_migrations),
+    'node_count',    (select count(*)    from node),
+    'node_min',      (select min(id)     from node),
+    'node_max',      (select max(id)     from node),
+    'seq_last',      (select last_value  from node_id_seq),
+    'seq_called',    (select is_called   from node_id_seq))"
+REMOTE
 }
 
 echo "== korg post-deploy check: $U"
@@ -130,21 +169,34 @@ AFTER=$(curl -fsS -X PATCH "$U/api/projects/$NAME" \
 ok "idempotent write (project '$NAME' status=$STATUS)"
 
 # ---------------------------------------------------------------------------
-# 4. Baseline / compare
+# 4. Schema state — optional, and never fatal when simply unavailable.
+# ---------------------------------------------------------------------------
+echo "-- schema"
+if SCHEMA=$(schema) && [[ -n "$SCHEMA" ]] && jq -e . <<<"$SCHEMA" >/dev/null 2>&1; then
+  jq -r 'to_entries[] | "  ok   \(.key): \(.value)"' <<<"$SCHEMA"
+else
+  SCHEMA=
+  echo "  --   skipped (no psql over ssh${DB_SSH:+ to $DB_SSH})"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Baseline / compare
 # ---------------------------------------------------------------------------
 case "$MODE" in
   baseline)
-    echo "$SNAP" > "$FILE"
+    jq -n --argjson c "$SNAP" --argjson s "${SCHEMA:-null}" '{counts:$c, schema:$s}' > "$FILE"
     echo "-- baseline written to $FILE"
     ;;
   compare)
     [[ -f "$FILE" ]] || fail "no baseline at $FILE — run with --baseline before deploying"
+    # Pre-#584 baselines are a bare counts object; `.counts // .` reads both.
+    BEFORE_COUNTS=$(jq -c '.counts // .' "$FILE")
+    BEFORE_SCHEMA=$(jq -c '.schema // null' "$FILE")
     echo "-- counts vs baseline ($FILE)"
-    DIFF=$(jq -n --slurpfile b "$FILE" --argjson a "$SNAP" '
-      $b[0] as $before
-      | [ $a | keys[] as $k
-          | { kind: $k, before: ($before[$k] // 0), after: $a[$k],
-              delta: ($a[$k] - ($before[$k] // 0)) } ]')
+    DIFF=$(jq -n --argjson before "$BEFORE_COUNTS" --argjson a "$SNAP" '
+      [ $a | keys[] as $k
+        | { kind: $k, before: ($before[$k] // 0), after: $a[$k],
+            delta: ($a[$k] - ($before[$k] // 0)) } ]')
     jq -r '.[] | "  \(if .delta < 0 then "LOST" elif .delta > 0 then "  +" else "  =" end) \(.kind): \(.before) -> \(.after) (\(if .delta > 0 then "+" else "" end)\(.delta))"' <<<"$DIFF"
     if jq -e 'any(.[]; .delta < 0)' <<<"$DIFF" >/dev/null; then
       echo
@@ -153,6 +205,30 @@ case "$MODE" in
       echo "deploy good — see docs/operations.md for the read-only query path and" >&2
       echo "the restore procedure." >&2
       exit 1
+    fi
+
+    if [[ -n "$SCHEMA" && "$BEFORE_SCHEMA" != "null" ]]; then
+      echo "-- schema vs baseline"
+      jq -rn --argjson b "$BEFORE_SCHEMA" --argjson a "$SCHEMA" '
+        $a | keys[] as $k
+        | "  \(if ($b[$k] == $a[$k]) then "  =" else "  ~" end) \($k): \($b[$k]) -> \($a[$k])"'
+      # Reported, not asserted — except downward, matching the count diff above.
+      # A migration going missing means the running image is older than the
+      # database; a rewound sequence hands out ids that already exist, which
+      # stays invisible until the next write collides.
+      if jq -ne --argjson b "$BEFORE_SCHEMA" --argjson a "$SCHEMA" \
+           '($a.migrations < $b.migrations) or ($a.seq_last < $b.seq_last)' >/dev/null; then
+        echo
+        echo "WARNING: schema state moved BACKWARDS across this deploy." >&2
+        echo "  migrations:  $(jq -r '.migrations' <<<"$BEFORE_SCHEMA") -> $(jq -r '.migrations' <<<"$SCHEMA")" >&2
+        echo "  node_id_seq: $(jq -r '.seq_last' <<<"$BEFORE_SCHEMA") -> $(jq -r '.seq_last' <<<"$SCHEMA")" >&2
+        echo "A dropped migration means the deployed image is older than the schema" >&2
+        echo "it is talking to. A rewound sequence will collide on the next insert." >&2
+        echo "See docs/operations.md before declaring this deploy good." >&2
+        exit 1
+      fi
+    elif [[ -n "$SCHEMA" ]]; then
+      echo "-- schema vs baseline: baseline has none (taken before WI #584, or with no DB access)"
     fi
     ;;
 esac

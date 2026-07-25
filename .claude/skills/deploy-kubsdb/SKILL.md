@@ -114,10 +114,16 @@ and re-run step 3 — `docker start` cannot repair the missing network.
    The second tag means the previous image keeps a meaningful name after
    `korg:latest` moves, so `docker images korg` reads as a deploy history
    instead of a list of `<none>`.
-2. **Ship** over SSH (no registry — save the image and load it remotely):
+2. **Ship** over SSH (no registry — save the image and load it remotely). Send
+   **both** refs: `docker save` accepts several and the archive is
+   content-addressed, so the SHA tag costs nothing extra to transfer.
    ```bash
-   docker save korg:latest | ssh kubsdb 'docker load'
+   docker save korg:latest "korg:${REV:0:12}" | ssh kubsdb 'docker load'
    ```
+   Shipping only `korg:latest` (what this step used to do) left the SHA tag on
+   the build host alone, so the previous image on kubsdb became `<none>` the
+   moment `latest` moved — quietly removing the named rollback target the
+   Rollback section below depends on (WI #584).
 3. **Recreate** the container, reusing the existing env (piped through bash):
    ```bash
    ssh kubsdb bash -s <<'EOF'
@@ -153,9 +159,29 @@ and re-run step 3 — `docker start` cannot repair the missing network.
 ## Rollback
 
 Old images stay in kubsdb's local store — `docker images korg` lists them, and
-since the build tags each one `korg:<short-sha>`, that list is readable. To
-revert, recreate the container from the previous image (from preflight step 5)
-using the same step-3 command with that tag in place of `korg:latest`.
+since step 2 now ships the `korg:<short-sha>` tag alongside `latest`, that list
+is readable *on the host that needs it*. To revert, recreate the container from
+the previous image (from preflight step 5) using the same step-3 command with
+that tag in place of `korg:latest`.
+
+Before WI #584, only `latest` was shipped, so each previous image went `<none>`
+the moment a new deploy moved the tag — and several sprint notes recorded a
+`korg:<sha>` rollback target that did not exist on kubsdb. The images themselves
+survived as dangling layers, so the names were recoverable from the label each
+one carries; sprint 027 restored them with:
+
+```bash
+ssh kubsdb bash -s <<'EOF'
+for id in $(docker images -aq --filter "dangling=true") $(docker images -q korg); do
+  rev=$(docker inspect "$id" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null)
+  case "$rev" in ""|"<no value>") continue ;; esac
+  docker image inspect "korg:${rev:0:12}" >/dev/null 2>&1 || docker tag "$id" "korg:${rev:0:12}"
+done
+EOF
+```
+
+Worth knowing if an old target is ever missing again — the revision label makes
+an untagged image self-identifying.
 
 Rollback is image-only. It does **not** undo a schema migration — korg applies
 those automatically at startup. Going back across a migration boundary needs a

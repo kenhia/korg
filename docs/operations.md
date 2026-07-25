@@ -186,8 +186,8 @@ It does **not** prove the deploy did what you wanted — a container running las
 week's image passes it happily.
 
 `scripts/post-deploy-check.sh` is the real check. It exercises the read paths on
-both transports, does an idempotent write, and diffs per-kind row counts against
-a baseline captured before the deploy:
+both transports, does an idempotent write, and diffs per-kind row counts **and
+schema state** against a baseline captured before the deploy:
 
 ```bash
 # Before deploying:
@@ -202,6 +202,22 @@ deploy it explained a +1 discrepancy that would otherwise have looked like a new
 archived-rows filter dropping data; the real cause was a work item created in the
 UI mid-build. Without a baseline, that is a scary unexplained number at the exact
 moment you are deciding whether to roll back.
+
+The **schema section** (WI #584) covers what no row count can see. korg applies
+migrations automatically at container start, so a deploy can move schema state
+while every REST total stays identical — sprint 020 shipped a migration whose
+entire contract was to leave the node id sequence alone, and verifying that meant
+psql over SSH by hand. The check now records the migration count and max version,
+`node` min/max/count, and the `node_id_seq` state, reporting every change and
+**failing** on the two that are never benign: a migration count that dropped (the
+running image is older than the schema it is talking to) or a rewound sequence
+(the next insert collides with an id already in use).
+
+It reads that over SSH, so it needs the DB host — `KORG_DB_SSH`, default
+`kubsdb`. Set it empty to skip the section; it also skips itself, with a note and
+no failure, when the host is unreachable, so the script still runs against a
+local instance. A baseline captured without schema access compares counts only
+and says so.
 
 Beyond that, verify what the *sprint* changed — that is per-sprint work no fixed
 script can do for you (`sprint-ship` Phase 7).

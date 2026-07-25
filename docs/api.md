@@ -133,8 +133,17 @@ the same envelope", which was true of four of them:
 
 The bare-array reads are the ones with no natural paging story — the proposal
 queue is short and hand-ordered, a project has a handful of areas, a node has a
-handful of comments, a day has a handful of plan items. Whether they *should*
-be enveloped anyway for uniformity is open: **WI #579**.
+handful of comments, a day has a handful of plan items.
+
+**Decided (WI #579, 2026-07-24): they stay bare.** Enveloping them for
+uniformity would put a `total` that always equals `items.length` and a `limit`
+that never clips on every one of those reads, and would touch both transports,
+the generated types and every web caller to say nothing new. The cost of the
+split is that an agent must know which is which — so this table and the MCP
+`instructions` are now fenced against each other and against the wire shape
+(`docs_drift.rs::the_collection_read_shapes_agree_across_docs_and_instructions`
+and `dispatch.rs::collection_reads_return_the_shape_the_instructions_promise`).
+A new collection read that is not classified here fails the build.
 
 **Archived rows are excluded by default.** This is deliberate (D-3): the common
 question is "what is live", and the old behaviour silently mixed archived rows

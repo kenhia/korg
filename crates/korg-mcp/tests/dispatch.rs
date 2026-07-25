@@ -30,7 +30,7 @@ use time::macros::date;
 use time::Date;
 
 mod common;
-use common::{args, server};
+use common::{args, body, server};
 
 /// The pinned "today" — `common::server` fixes the clock here, and the daily
 /// plan refuses to write to dates in the past, so every plan date below is on
@@ -373,4 +373,105 @@ fn the_relate_fixture_uses_a_registered_label() {
         relationships::spec("covers").is_some(),
         "the dispatch fixture for `relate` uses an unregistered label"
     );
+}
+
+/// The tool names inside the parenthesised list that follows `prefix` in the
+/// server instructions — the normative claim, read as data.
+fn named_in_instructions(prefix: &str) -> Vec<String> {
+    let text = korg_mcp::server_instructions();
+    let at = text
+        .find(prefix)
+        .unwrap_or_else(|| panic!("server_instructions no longer says {prefix:?}"));
+    let rest = &text[at + prefix.len()..];
+    let open = rest.find('(').expect("a parenthesised list follows");
+    let close = rest.find(')').expect("the list closes");
+    rest[open + 1..close]
+        .split(',')
+        .map(|n| n.trim().to_string())
+        .collect()
+}
+
+/// Collection reads return the shape the instructions promise (WI #579).
+///
+/// The `instructions` string is the only overview an MCP client sees before it
+/// calls anything, and sprint 020 caught it claiming an envelope five reads
+/// never return — found the hard way, by a test asserting `body["items"]`
+/// against a bare array. Sprint 020 corrected the prose; this is the fence that
+/// keeps it corrected, because prose about shapes is exactly the kind of fact
+/// that rots silently.
+///
+/// Ken's decision (2026-07-24, WI #579): the unpaginated reads STAY bare —
+/// `total`/`limit`/`offset` are noise on a read that never pages — so what
+/// needed defending was the claim, not the shape.
+///
+/// Both halves matter. Completeness: every advertised collection read is
+/// classified, so a new one cannot ship undocumented. Correctness: each
+/// classification matches what the tool actually returns over the wire.
+#[tokio::test]
+async fn collection_reads_return_the_shape_the_instructions_promise() {
+    let paginated = named_in_instructions("Paginated collection reads");
+    let bare = named_in_instructions("the unpaginated ones");
+
+    // `list_*` plus the survey are exactly the collection reads the instructions
+    // summarise. `neighbors` and `daily_plan_history` carry their own shapes and
+    // are named in docs/api.md's four-shape table instead.
+    let classified: BTreeSet<&str> = paginated
+        .iter()
+        .chain(bare.iter())
+        .map(String::as_str)
+        .collect();
+    let advertised: BTreeSet<String> = korg_mcp::tools::tools()
+        .iter()
+        .map(|t| t.name.to_string())
+        .filter(|n| n.starts_with("list_") || n == "survey_work_items")
+        .collect();
+    let unclassified: Vec<&String> = advertised
+        .iter()
+        .filter(|n| !classified.contains(n.as_str()))
+        .collect();
+    assert!(
+        unclassified.is_empty(),
+        "these collection reads are advertised but the server instructions do not \
+         say what shape they return: {unclassified:?}"
+    );
+    let phantom: Vec<&&str> = classified
+        .iter()
+        .filter(|n| !advertised.contains(**n))
+        .collect();
+    assert!(
+        phantom.is_empty(),
+        "the server instructions name collection reads that are not advertised: {phantom:?}"
+    );
+
+    let (_pg, pool) = fresh_korg().await;
+    let fixtures = fixtures(&pool).await;
+    let server = server(pool);
+
+    for name in &paginated {
+        let value = body(
+            &server
+                .call(name, args(fixtures[name.as_str()].clone()))
+                .await
+                .unwrap(),
+        );
+        let has_envelope = ["items", "total", "limit", "offset"]
+            .iter()
+            .all(|k| value.get(k).is_some());
+        assert!(
+            has_envelope,
+            "`{name}` is documented as paginated but returned {value}"
+        );
+    }
+    for name in &bare {
+        let value = body(
+            &server
+                .call(name, args(fixtures[name.as_str()].clone()))
+                .await
+                .unwrap(),
+        );
+        assert!(
+            value.is_array(),
+            "`{name}` is documented as a bare array but returned {value}"
+        );
+    }
 }
