@@ -114,3 +114,33 @@ to fail on purpose before being kept. The e2e acceptance ran against a throwaway
 a clean image re-tag to `korg:893e4bbe6069` (sprint 026). This sprint's own
 deploy is the first to exercise the fixed `docker save` (both tags reaching the
 host) and the schema baseline end to end.
+
+## Deployed 2026-07-25
+
+- **Image**: `korg:a325ace77648` — revision
+  `a325ace7764864a42ebe2829db57d5459c237eaa` (the squash-merge of PR #28).
+- **Rollback target**: `korg:893e4bbe6069` (sprint 026). No migration, so an
+  image re-tag fully reverts.
+- **CI**: green on PR #28 (run 30145048213) and on main (run 30145167065).
+- **#584 proved itself in flight.** `docker save` reported `Loaded image:
+  korg:latest` **and** `Loaded image: korg:a325ace77648`, and
+  `docker image inspect korg:a325ace77648` on kubsdb resolved with no manual
+  step — the first deploy for which that is true. The schema section also ran
+  for the first time on both ends of a real deploy.
+- **#578 verified on both surfaces** (branch-green does not imply main-green):
+  zero "target Node.js / forced to run on Node" matches in either full log. Two
+  unrelated deprecation lines remain and are named on the WI — Vite's CJS API
+  (from svelte-check) and `punycode` DEP0040 (inside rust-cache's own process);
+  neither is an action runtime.
+- **Verified live**:
+  - `post-deploy-check.sh --compare`: **OK** — every row count stable *and*
+    schema stable (migrations 17, `node_id_seq` 626 unchanged, which is the
+    correct result for a sprint with no migration).
+  - #579's fenced contract holds against production: the live MCP `instructions`
+    classify exactly the documented five paginated / six bare reads, and
+    `/api/work-items` + `/api/cards` answer with envelopes while
+    `/api/proposals`, `/api/reports` and `/api/projects` answer with bare arrays.
+
+This sprint changed no runtime code — the fences, deploy tooling, e2e spec and CI
+config are all build- and ops-side — so the live checks confirm the deploy is
+faithful rather than exercising new behaviour.
