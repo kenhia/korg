@@ -17,6 +17,7 @@ import {
   RELATIONSHIP_LABELS,
   WI_STATUSES,
   type CardStatus,
+  type ProjectCategory,
   type RelationshipLabel,
   type WiStatus,
 } from "./generated/vocab";
@@ -79,6 +80,69 @@ export function isCut(status: string): boolean {
 /** Board columns in order, excluding the collapsed `Cut` strip. */
 export function activeCardStatuses(): CardStatus[] {
   return CARD_STATUSES.filter((s) => s !== CUT);
+}
+
+// --- project categories -----------------------------------------------------
+
+/**
+ * The hue each project category paints in the Work Items rail (WI #678).
+ *
+ * This replaces `projColor(name)`, which hashed the project *name* to
+ * `hsl(hash % 360, 55%, 62%)`. Deterministic, but arbitrary and non-scaling:
+ * run over the live projects it put 20 of 31 within 12 degrees of another
+ * (klams 326 / feedhub 327 were one degree apart) while leaving whole arcs
+ * empty — nothing in 3-42, 211-246 or 250-292, and nine piled into 316-355.
+ * "It feels random" because it was.
+ *
+ * Two things follow from *why* Ken wants this, and both invert the hash's
+ * goals. The rail is the one place a long list of all active projects appears
+ * at once, and it is scanned vertically — so the colors have to separate
+ * against their *neighbours* in a list, not merely in isolation. And
+ * same-category projects sharing one color is the feature, not a collision to
+ * design away: the grouping is the thing being scanned for.
+ *
+ * The hues are "whatever project X is colored today", resolved against the old
+ * hash, so several projects visibly change color (korg, kyac, kvllm,
+ * hv-simulator, gh-kenhia) — expected, not a bug. `EVAL` is the one new color,
+ * placed at the midpoint of the widest remaining gap (250-345).
+ *
+ * Typed `Record<ProjectCategory, number>` on purpose: adding a category to
+ * korg-core's `PROJECT_CATEGORIES` and running `just gen` breaks this file
+ * until its hue is chosen, which is the whole "one registry edit plus its
+ * color" contract.
+ */
+const CATEGORY_HUE: Record<ProjectCategory, number> = {
+  Ops: 42,
+  Infrastructure: 64,
+  AI: 157,
+  Dashboard: 192,
+  Fun: 250,
+  EVAL: 297,
+  Other: 345,
+};
+
+/**
+ * The rail color for a project, or `undefined` for "render with no color".
+ *
+ * Inactive and archived projects get no color at all — not the `Other` color
+ * (WI #678, decided 2026-07-26). Ken's taxonomy covers the *active* set because
+ * that is the set he scans, so colourlessness doubles as a signal that a
+ * project is not live. A project with no category is likewise uncoloured: it is
+ * genuinely uncategorised — `create_project` takes only a name — rather than
+ * belonging to a catch-all. `Other` exists for ACTIVE projects outside the
+ * taxonomy.
+ *
+ * An off-vocabulary category (a database that predates migration 0018) falls
+ * through to `undefined` rather than throwing.
+ */
+export function projectRailColor(p: {
+  status: string;
+  category: string | null;
+}): string | undefined {
+  if (p.status !== "active" && p.status !== "maintenance") return undefined;
+  if (p.category === null) return undefined;
+  const hue = CATEGORY_HUE[p.category as ProjectCategory];
+  return hue === undefined ? undefined : `hsl(${hue} 55% 62%)`;
 }
 
 // --- daily plan sources -----------------------------------------------------

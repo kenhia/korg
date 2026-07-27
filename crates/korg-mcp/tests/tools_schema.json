@@ -1649,6 +1649,16 @@
       "additionalProperties": false,
       "properties": {
         "category": {
+          "enum": [
+            "AI",
+            "Dashboard",
+            "EVAL",
+            "Fun",
+            "Infrastructure",
+            "Ops",
+            "Other",
+            null
+          ],
           "type": [
             "string",
             "null"

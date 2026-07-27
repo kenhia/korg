@@ -17,7 +17,7 @@ pub use crate::error::RepoError;
 use crate::ops::{self, schema};
 use crate::relationships;
 use crate::vocab::{self, CARD_STATUSES, LINK_DISPOSITIONS, PROPOSAL_STATUSES, REPORT_STATUSES};
-pub use crate::vocab::{PROJECT_STATUSES, WI_STATUSES};
+pub use crate::vocab::{PROJECT_CATEGORIES, PROJECT_STATUSES, WI_STATUSES};
 
 fn validate_status(value: &str, allowed: &[&str], what: &str) -> Result<()> {
     Ok(vocab::validate(value, allowed, what)?)
@@ -1704,12 +1704,19 @@ pub struct ProjectPatch {
     #[serde(default)]
     pub deploy_to: Option<Vec<String>>,
     #[serde(default, deserialize_with = "ops::double_option")]
+    #[schemars(schema_with = "schema::project_category")]
     pub category: Option<Option<String>>,
 }
 
 pub async fn update_project(pool: &PgPool, id: i64, patch: &ProjectPatch) -> Result<ProjectRow> {
     if let Some(v) = &patch.status {
         validate_status(v, &PROJECT_STATUSES, "project status")?;
+    }
+    // Setting a category validates against the closed vocabulary (WI #678);
+    // clearing it (inner None) stays legal, since `create_project` takes only a
+    // name and every project therefore starts uncategorised.
+    if let Some(Some(v)) = &patch.category {
+        validate_status(v, &PROJECT_CATEGORIES, "project category")?;
     }
     let mut tx = pool.begin().await?;
     let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM project WHERE id = $1")

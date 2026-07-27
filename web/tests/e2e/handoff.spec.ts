@@ -24,6 +24,12 @@ test("open a handoff from a work item's related block", async ({ page, request }
   expect(h.ok()).toBeTruthy();
 
   await page.goto("/work-items");
+  // These work items have no project, and the page lands on whichever project
+  // was touched most recently — so on a database where another spec just wrote
+  // one, the row is filtered out and this fails for reasons that have nothing
+  // to do with handoffs. "All projects" makes the seeded row visible whatever
+  // else is in the database.
+  await page.getByRole("button", { name: "All projects" }).click();
   await page.getByRole("row", { name: new RegExp(wiTitle) }).click();
   await expect(page.getByRole("heading", { name: wiTitle })).toBeVisible();
 
@@ -64,4 +70,61 @@ test("open a handoff from a proposal card on Planning", async ({ page, request }
   await expect(panel).toBeVisible();
   await expect(panel.getByText(hTitle)).toBeVisible();
   await expect(panel.getByText("proposal context")).toBeVisible();
+});
+
+// WI #621 — the slide-over is the quick peek and the entry point to a full
+// page: a long handoff is unreadable at max-w-md, and commenting on one needs
+// somewhere to put the thread. The body stays read-only; a comment is the only
+// thing a reader can write.
+test("open a handoff on its own page and comment on it", async ({ page, request }) => {
+  const stamp = Date.now();
+  const wiTitle = `page owner ${stamp}`;
+  const hTitle = `page handoff ${stamp}`;
+
+  const wi = await (
+    await request.post("/api/work-items", { data: { title: wiTitle, content: "body" } })
+  ).json();
+  const h = await (
+    await request.post("/api/handoffs", {
+      data: {
+        title: hTitle,
+        summary: "read me on a real page",
+        body: "## Decisions\nthe long form body",
+        related_node_ids: [wi.node_id],
+      },
+    })
+  ).json();
+
+  await page.goto("/work-items");
+  await page.getByRole("button", { name: "All projects" }).click();
+  await page.getByRole("row", { name: new RegExp(wiTitle) }).click();
+  await page.getByRole("button", { name: hTitle }).click();
+
+  // The control on the preview navigates to the dedicated route.
+  await page.getByTestId("open-handoff-page").click();
+  await expect(page).toHaveURL(new RegExp(`/handoffs/${h.node_id}$`));
+
+  await expect(page.getByRole("heading", { name: hTitle, level: 1 })).toBeVisible();
+  await expect(page.getByText("read me on a real page")).toBeVisible();
+  // Markdown is rendered, not shown as source.
+  await expect(page.getByRole("heading", { name: "Decisions" })).toBeVisible();
+
+  // The work it belongs to is reachable from here — arriving by URL is
+  // otherwise a dead end.
+  await expect(page.getByRole("button", { name: new RegExp(wiTitle) })).toBeVisible();
+
+  // The one thing a reader can write.
+  await page.getByTestId("comment-input").fill("picked this up on kai");
+  await page.getByTestId("comment-input").press("Control+Enter");
+  await expect(
+    page.getByTestId("comment-list").getByText("picked this up on kai"),
+  ).toBeVisible();
+
+  // A direct visit (bookmark, pasted URL) works the same — the route does not
+  // depend on having come through the slide-over.
+  await page.goto(`/handoffs/${h.node_id}`);
+  await expect(page.getByRole("heading", { name: hTitle, level: 1 })).toBeVisible();
+  await expect(
+    page.getByTestId("comment-list").getByText("picked this up on kai"),
+  ).toBeVisible();
 });

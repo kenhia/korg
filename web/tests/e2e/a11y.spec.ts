@@ -27,47 +27,74 @@ const ROUTES = [
   "/link-up",
 ];
 
+/** Scan the current page and return `[violations, printable detail]`. */
+async function scan(page: import("@playwright/test").Page) {
+  // The pages render their lists after a fetch; without this the scan can run
+  // against an empty shell and pass for the wrong reason.
+  await page.waitForLoadState("networkidle");
+
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    // `color-contrast` is disabled because axe-core mis-reads `oklch()`, and
+    // korg's entire palette is oklch (`app.css`).
+    //
+    // This is not a shrug — it was measured. axe reported `--color-muted` as
+    // #6e7076 giving 3.61:1 on `--color-surface`. The colour Chromium
+    // actually paints for `oklch(0.68 0.01 270)` is #96989f, sampled from a
+    // canvas round-trip, which is 6.21:1 on that same surface. Every
+    // `color-contrast` violation it raised against this theme was a false
+    // positive produced by the wrong foreground.
+    //
+    // Contrast is still checked — see `theme-contrast.spec.ts`, which reads
+    // the painted pixels rather than parsing the CSS, so it cannot make this
+    // mistake. Re-enable this rule if axe-core gains real oklch support.
+    .disableRules(["color-contrast"])
+    .analyze();
+
+  const serious = results.violations.filter(
+    (v) => v.impact === "serious" || v.impact === "critical",
+  );
+
+  // Name the offending selectors in the failure — "3 violations" sends you
+  // back to the browser, a list of nodes sends you to the line.
+  const detail = serious
+    .map(
+      (v) =>
+        `${v.impact} ${v.id}: ${v.help}\n    ${v.nodes
+          .map((n) => n.target.join(" "))
+          .slice(0, 5)
+          .join("\n    ")}`,
+    )
+    .join("\n  ");
+
+  return { serious, detail };
+}
+
 for (const route of ROUTES) {
   test(`no serious axe violations on ${route}`, async ({ page }) => {
     await page.goto(route);
-    // The pages render their lists after a fetch; without this the scan can run
-    // against an empty shell and pass for the wrong reason.
-    await page.waitForLoadState("networkidle");
-
-    const results = await new AxeBuilder({ page })
-      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-      // `color-contrast` is disabled because axe-core mis-reads `oklch()`, and
-      // korg's entire palette is oklch (`app.css`).
-      //
-      // This is not a shrug — it was measured. axe reported `--color-muted` as
-      // #6e7076 giving 3.61:1 on `--color-surface`. The colour Chromium
-      // actually paints for `oklch(0.68 0.01 270)` is #96989f, sampled from a
-      // canvas round-trip, which is 6.21:1 on that same surface. Every
-      // `color-contrast` violation it raised against this theme was a false
-      // positive produced by the wrong foreground.
-      //
-      // Contrast is still checked — see `theme-contrast.spec.ts`, which reads
-      // the painted pixels rather than parsing the CSS, so it cannot make this
-      // mistake. Re-enable this rule if axe-core gains real oklch support.
-      .disableRules(["color-contrast"])
-      .analyze();
-
-    const serious = results.violations.filter(
-      (v) => v.impact === "serious" || v.impact === "critical",
-    );
-
-    // Name the offending selectors in the failure — "3 violations" sends you
-    // back to the browser, a list of nodes sends you to the line.
-    const detail = serious
-      .map(
-        (v) =>
-          `${v.impact} ${v.id}: ${v.help}\n    ${v.nodes
-            .map((n) => n.target.join(" "))
-            .slice(0, 5)
-            .join("\n    ")}`,
-      )
-      .join("\n  ");
-
+    const { serious, detail } = await scan(page);
     expect(serious, `axe violations on ${route}:\n  ${detail}`).toEqual([]);
   });
 }
+
+// The route list above is every *static* route. korg's first per-node detail
+// route (WI #621) has to be seeded to render anything, so it gets its own case
+// rather than silently sitting outside the floor.
+test("no serious axe violations on a handoff page", async ({ page, request }) => {
+  const h = await (
+    await request.post("/api/handoffs", {
+      data: {
+        title: `a11y handoff ${Date.now()}`,
+        summary: "scanned by axe",
+        body: "## Heading\nbody text with a [link](https://example.com).",
+      },
+    })
+  ).json();
+
+  await page.goto(`/handoffs/${h.node_id}`);
+  const { serious, detail } = await scan(page);
+  expect(serious, `axe violations on /handoffs/:node_id:\n  ${detail}`).toEqual(
+    [],
+  );
+});

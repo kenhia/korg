@@ -19,10 +19,63 @@
     else s.add(opt);
     onchange(s);
   }
+
+  // A bare <details> only closes when you click its own summary again, so the
+  // five filters on the Work Items toolbar could all sit open at once and each
+  // needed dismissing by hand (WI #583). Tracking `open` in state lets an
+  // outside pointerdown or Escape close it, which is what every other dropdown
+  // does.
+  //
+  // Opening one filter closes the others for free: their summary is "outside"
+  // this one, so the same handler fires.
+  //
+  // `open` is one-way (state -> DOM) and the summary's own click is
+  // preventDefault'd, so this state is the only thing that ever opens or closes
+  // the panel. `bind:open` was the obvious first cut and it desyncs: the
+  // write-back rides the `toggle` event, and clicking filter B's summary while
+  // filter A is open leaves B's DOM open with B's state still false — so B's
+  // effect never registers and Escape does nothing. Caught by
+  // filter-dismiss.spec.ts. Two sources of truth for one boolean, and the
+  // native one wins silently.
+  let open = $state(false);
+  let root = $state<HTMLDetailsElement>();
+  let summary = $state<HTMLElement>();
+
+  $effect(() => {
+    if (!open) return;
+
+    // pointerdown, not click: dismissing on press matches native menus, and it
+    // fires even when the press lands on something that swallows the click.
+    // Capture phase so a stopPropagation() elsewhere cannot strand the panel.
+    function onPointerDown(e: PointerEvent) {
+      if (!root?.contains(e.target as Node)) open = false;
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      open = false;
+      // Escape unwinds to where the user was, so put focus back on the summary
+      // rather than dropping it on <body>.
+      summary?.focus();
+    }
+
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  });
 </script>
 
-<details class="relative">
+<details class="relative" data-testid={`filter-${label}`} {open} bind:this={root}>
+  <!-- Enter/Space on a focused <summary> dispatch a click, so preventing the
+       default toggle here still leaves the control keyboard-operable. -->
   <summary
+    bind:this={summary}
+    onclick={(e) => {
+      e.preventDefault();
+      open = !open;
+    }}
     class="flex cursor-pointer list-none items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-xs"
     class:text-[var(--color-accent)]={modified}
   >

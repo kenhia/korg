@@ -49,13 +49,35 @@ pub const REPORT_STATUSES: [&str; 3] = ["ok", "attention", "problem"];
 /// `active` + `maintenance` unless "show all" is on.
 pub const PROJECT_STATUSES: [&str; 4] = ["active", "maintenance", "inactive", "archived"];
 
+/// Project categories (WI #678). `project.category` has existed since 0011 but
+/// as free text, and it drifted the way free text does — the live corpus held
+/// `ai` x8, `AI` x1, `tooling` x3, `infra` x2, `fun` x2 and NULL x15. This
+/// closes the set the way LB-2 closed the relationship labels, and the Work
+/// Items rail colors from it instead of hashing the project *name* (which put
+/// 20 of 31 projects within 12 degrees of another while leaving whole arcs of
+/// the wheel empty).
+///
+/// Adding a category is one edit here plus its hue in `CATEGORY_HUE` in
+/// `web/src/lib/domain.ts`, then `just gen`. `EVAL` is the worked example:
+/// added 2026-07-26 for harness-evaluation projects that leaked into the real
+/// corpus, so that they are findable as a group.
+pub const PROJECT_CATEGORIES: [&str; 7] = [
+    "AI",
+    "Dashboard",
+    "EVAL",
+    "Fun",
+    "Infrastructure",
+    "Ops",
+    "Other",
+];
+
 /// Every vocabulary, as `(const name, TypeScript type name, values)`. Adding a
 /// set here is all it takes for the web app to see it: `just gen` writes them
 /// into `web/src/lib/generated/vocab.ts`, so the UI's status lists stop being a
 /// hand-kept copy that drifts (the old `api.ts` `WI_TYPES` had nine entries,
 /// six of which the server rejects).
 #[cfg(test)]
-const EXPORTED: [(&str, &str, &[&str]); 9] = [
+const EXPORTED: [(&str, &str, &[&str]); 10] = [
     ("WI_STATUSES", "WiStatus", &WI_STATUSES),
     ("WI_TYPES", "WiType", &WI_TYPES),
     ("WI_TSHIRTS", "WiTshirt", &WI_TSHIRTS),
@@ -64,6 +86,7 @@ const EXPORTED: [(&str, &str, &[&str]); 9] = [
     ("PROPOSAL_STATUSES", "ProposalStatus", &PROPOSAL_STATUSES),
     ("REPORT_STATUSES", "ReportStatus", &REPORT_STATUSES),
     ("PROJECT_STATUSES", "ProjectStatus", &PROJECT_STATUSES),
+    ("PROJECT_CATEGORIES", "ProjectCategory", &PROJECT_CATEGORIES),
     // Not a domain vocabulary but the same kind of fact: a closed set the
     // client must agree with. The web app branches on it to tell "you typed
     // something wrong" from "korg broke" (sprint 019).
