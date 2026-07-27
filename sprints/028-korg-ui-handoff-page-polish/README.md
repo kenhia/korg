@@ -170,3 +170,45 @@ is reported by the migration's own `RAISE NOTICE`.
 
 Rollback is a clean image re-tag: 0018 changes data in an existing column, not
 schema, so the previous image reads the same database.
+
+## Deployed 2026-07-27
+
+- **Image**: `korg:ac8dd731b6bb` — revision
+  `ac8dd731b6bb510201206ece18548e24839641be` (the squash-merge of PR #29).
+  Confirmed live: the container's `org.opencontainers.image.revision` label
+  matches `git rev-parse HEAD` exactly.
+- **Rollback target**: `korg:a325ace77648` (sprint 027). 0018 is data-only, so
+  an image re-tag fully reverts — no dump restore needed.
+- **CI**: green on PR #29 (rust 3m48s, web 34s).
+- **Rehearsal skipped** at Ken's call, on the strength of a pre-deploy read of
+  the live project list: all 32 production projects were named in the mapping,
+  so no project had been created since it was written and the migration had no
+  unmapped rows to converge to NULL.
+
+**Verified live:**
+
+- `post-deploy-check.sh --compare`: **OK**. Every row count unchanged
+  (work_items 474, cards 28, links 4, proposals 85, reports 23, projects 32),
+  `node_count` 620 and `node_id_seq` 703 both stable. Schema moved exactly one
+  step: `migrations 17 → 18`.
+- **The true-up landed exactly as predicted**, project for project — Ops 8,
+  AI 8, Dashboard 5, Infrastructure 5, Fun 3, EVAL 2, Other 1 = 32, with **zero
+  NULL and zero off-vocabulary**. The nine `ai` / one `AI` / three `tooling` /
+  two `infra` / two `fun` / fifteen NULL of the prior corpus are gone. The
+  migration emitted no `RAISE NOTICE`, which is the correct signal that nothing
+  was left uncategorised.
+- **#621's route works on a cold URL**: `GET /handoffs/619` → 200, so the
+  adapter-static SPA fallback serves the first dynamic route korg has ever had.
+  This was the one thing that could have passed every local check and still
+  broken in production, which is why the e2e spec asserts a direct visit rather
+  than only the in-app navigation. `GET /api/handoffs/619` returns the full
+  payload (2689-char body plus its `related` block); `/api/handoffs/999999`
+  still 404s, so the error contract is intact. `/plan` still 200s.
+
+#583 and the rail's colors and grouping are client-side and were not
+smoke-testable by curl; they are covered by `filter-dismiss.spec.ts` and by the
+category data above, and get their real look in the #622 session.
+
+Proposal `korg:623` deliberately stays **active** — #622 and #570 are still
+open under it, and `.korg-sprint-proposal` is left in place so the polish
+session's ship closes it out.
