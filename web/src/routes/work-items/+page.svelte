@@ -7,6 +7,7 @@
     type RelatedRef,
   } from "$lib/api";
   import {
+    PROJECT_CATEGORIES,
     PROJECT_STATUSES,
     WI_STATUSES,
     WI_TSHIRTS,
@@ -17,6 +18,7 @@
     KNOWN_RELATIONSHIP_LABELS,
     chip,
     isHiddenByDefault,
+    projectRailColor,
     relationshipReads,
   } from "$lib/domain";
   import { renderMarkdown } from "$lib/markdown";
@@ -34,16 +36,19 @@
   // WI #83 — persist the chosen project so it survives navigating away and
   // back (the page component remounts on client-side nav). SSR-safe.
   const STICKY_KEY = "korg.workitems.project";
-  function loadStickyProject(): string | null {
+  // WI #678 — the rail's grouping mode is a view preference, not a navigation
+  // step: it should survive the remount for the same reason the project does.
+  const STICKY_GROUP_KEY = "korg.workitems.groupByCategory";
+  function readSticky(key: string): string | null {
     try {
-      return typeof localStorage !== "undefined" ? localStorage.getItem(STICKY_KEY) : null;
+      return typeof localStorage !== "undefined" ? localStorage.getItem(key) : null;
     } catch {
       return null;
     }
   }
-  function saveStickyProject(name: string): void {
+  function writeSticky(key: string, value: string): void {
     try {
-      if (typeof localStorage !== "undefined") localStorage.setItem(STICKY_KEY, name);
+      if (typeof localStorage !== "undefined") localStorage.setItem(key, value);
     } catch {
       /* storage unavailable — non-fatal */
     }
@@ -90,13 +95,33 @@
     ),
   );
 
-  // Deterministic per-project hue — Ken tunes by eye later; hash keeps a
-  // name's color stable across sessions/machines.
-  function projColor(name: string): string {
-    let h = 0;
-    for (const ch of name) h = (h * 31 + ch.codePointAt(0)!) >>> 0;
-    return `hsl(${h % 360} 55% 62%)`;
-  }
+  // WI #678 — the rail groups by category on request. Alphabetical stays the
+  // default: colour runs read better when contiguous, but Ken already navigates
+  // this list by alphabetical position, so regrouping it is opt-in rather than
+  // something a colour change drags along with it.
+  let groupByCategory = $state(readSticky(STICKY_GROUP_KEY) === "1");
+
+  const projectGroups = $derived.by(() => {
+    const groups: { key: string; label: string; projects: ProjectRow[] }[] = [];
+    const placed = new Set<number>();
+    // Vocabulary order (alphabetical), not hue order: the point of grouping is
+    // that a category sits in a predictable place, and hue order would reshuffle
+    // the rail every time a hue is retuned.
+    for (const c of PROJECT_CATEGORIES) {
+      const ps = visibleProjects.filter((p) => p.category === c);
+      if (ps.length === 0) continue;
+      ps.forEach((p) => placed.add(p.id));
+      groups.push({ key: c, label: c, projects: ps });
+    }
+    // Everything the vocabulary didn't claim — no category, or a legacy value
+    // from a database that predates migration 0018 — lands here rather than
+    // vanishing from the rail.
+    const rest = visibleProjects.filter((p) => !placed.has(p.id));
+    if (rest.length > 0) {
+      groups.push({ key: "\u0000none", label: "Uncategorised", projects: rest });
+    }
+    return groups;
+  });
 
   function openEditProject(p: ProjectRow) {
     editProject = p;
@@ -257,7 +282,7 @@
     const [ps, recent] = await Promise.all([api.projects(), api.recentProject()]);
     projects = ps;
     if (current === ALL) {
-      const stored = loadStickyProject();
+      const stored = readSticky(STICKY_KEY);
       if (stored !== null && (stored === ALL || ps.some((p) => p.name === stored))) {
         current = stored;
       } else if (recent.project) {
@@ -336,7 +361,7 @@
 
   async function pick(name: string) {
     current = name;
-    saveStickyProject(name);
+    writeSticky(STICKY_KEY, name);
     detail = null;
     creating = false;
     await loadItems();
@@ -555,36 +580,29 @@
             class:bg-[var(--color-surface-hi)]={current === ALL}
             aria-current={current === ALL ? "true" : "false"}
             onclick={() => pick(ALL)}>All projects</button>
-          {#each visibleProjects as p (p.id)}
-            <div class="flex items-center" class:bg-[var(--color-surface-hi)]={current === p.name}>
-              <button
-                class="flex-1 px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-hi)]"
-                style="color: {projColor(p.name)}"
-                class:font-semibold={current === p.name}
-                aria-current={current === p.name ? "true" : "false"}
-                onclick={() => pick(p.name)}>{p.name}{#if p.status !== "active"}<span class="ml-1 text-xs text-[var(--color-muted)]">({p.status})</span>{/if}</button>
-              <button
-                class="px-1 py-2 text-[var(--color-muted)] hover:text-[var(--color-accent)]"
-                title={`Edit project ${p.name}`}
-                aria-label={`Edit project ${p.name}`}
-                onclick={() => (editProject?.id === p.id ? (editProject = null) : openEditProject(p))}
-              >✎</button>
-              <button
-                class="px-2 py-2 text-[var(--color-muted)] hover:text-[var(--color-accent)]"
-                title={`Add area to ${p.name}`}
-                aria-label={`Add area to ${p.name}`}
-                onclick={() => { areaAddFor = areaAddFor === p.name ? null : p.name; areaName = ""; areaDesc = ""; editProject = null; }}
-              >◇</button>
-            </div>
-          {/each}
+          {#if groupByCategory}
+            {#each projectGroups as g (g.key)}
+              <p class="border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1 text-[0.65rem] uppercase tracking-wide text-[var(--color-muted)]">{g.label}</p>
+              {#each g.projects as p (p.id)}{@render projectRow(p)}{/each}
+            {/each}
+          {:else}
+            {#each visibleProjects as p (p.id)}{@render projectRow(p)}{/each}
+          {/if}
         </nav>
         <label class="flex items-center gap-1 px-1 text-xs text-[var(--color-muted)]">
           <input type="checkbox" bind:checked={showAllProjects} /> show all projects
         </label>
+        <label class="flex items-center gap-1 px-1 text-xs text-[var(--color-muted)]">
+          <input
+            type="checkbox"
+            bind:checked={groupByCategory}
+            onchange={() => writeSticky(STICKY_GROUP_KEY, groupByCategory ? "1" : "0")}
+          /> by category
+        </label>
 
         {#if editProject}
           <div class="space-y-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-2 text-sm">
-            <p class="text-xs text-[var(--color-muted)]">Edit project <span style="color: {projColor(editProject.name)}">{editProject.name}</span></p>
+            <p class="text-xs text-[var(--color-muted)]">Edit project <span style={projectRailColor(editProject) ? `color: ${projectRailColor(editProject)}` : ""}>{editProject.name}</span></p>
             <label class="block text-xs text-[var(--color-muted)]">status
               <select class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm" bind:value={eStatus}>
                 {#each PROJECT_STATUSES as s (s)}<option value={s}>{s}</option>{/each}
@@ -596,8 +614,16 @@
             <label class="block text-xs text-[var(--color-muted)]">deploy to (comma-sep)
               <input class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" placeholder="kubsdb" bind:value={eDeploy} />
             </label>
+            <!-- A select over the generated vocabulary, with no custom escape
+                 hatch — the same treatment LB-2 gave the relationship labels
+                 (WI #678). "(none)" is a real option, not a placeholder:
+                 create_project takes only a name, so uncategorised is a state a
+                 project can legitimately be in and be returned to. -->
             <label class="block text-xs text-[var(--color-muted)]">category
-              <input class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={eCategory} />
+              <select class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm" bind:value={eCategory}>
+                <option value="">(none)</option>
+                {#each PROJECT_CATEGORIES as c (c)}<option value={c}>{c}</option>{/each}
+              </select>
             </label>
             <label class="block text-xs text-[var(--color-muted)]">description
               <input class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={eDescription} />
@@ -650,6 +676,32 @@
 
 {#snippet badge(text: string)}
   <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs">{text}</span>
+{/snippet}
+
+<!-- One rail entry. A snippet so the flat and grouped renderings above cannot
+     drift apart (WI #678). Projects with no colour keep the inherited text
+     colour rather than being painted a catch-all. -->
+{#snippet projectRow(p: ProjectRow)}
+  <div class="flex items-center" class:bg-[var(--color-surface-hi)]={current === p.name}>
+    <button
+      class="flex-1 px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-hi)]"
+      style={projectRailColor(p) ? `color: ${projectRailColor(p)}` : ""}
+      class:font-semibold={current === p.name}
+      aria-current={current === p.name ? "true" : "false"}
+      onclick={() => pick(p.name)}>{p.name}{#if p.status !== "active"}<span class="ml-1 text-xs text-[var(--color-muted)]">({p.status})</span>{/if}</button>
+    <button
+      class="px-1 py-2 text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+      title={`Edit project ${p.name}`}
+      aria-label={`Edit project ${p.name}`}
+      onclick={() => (editProject?.id === p.id ? (editProject = null) : openEditProject(p))}
+    >✎</button>
+    <button
+      class="px-2 py-2 text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+      title={`Add area to ${p.name}`}
+      aria-label={`Add area to ${p.name}`}
+      onclick={() => { areaAddFor = areaAddFor === p.name ? null : p.name; areaName = ""; areaDesc = ""; editProject = null; }}
+    >◇</button>
+  </div>
 {/snippet}
 
 {#snippet listView()}

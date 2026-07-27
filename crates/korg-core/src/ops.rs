@@ -159,6 +159,12 @@ pub mod schema {
     pub fn project_status(_: &mut SchemaGenerator) -> Schema {
         enumerated(&vocab::PROJECT_STATUSES)
     }
+    /// Nullable because null *clears* the category here rather than meaning
+    /// "no filter": `create_project` takes only a name, so a project genuinely
+    /// has none until someone sets it (WI #678).
+    pub fn project_category(_: &mut SchemaGenerator) -> Schema {
+        nullable_enumerated(&vocab::PROJECT_CATEGORIES)
+    }
 
     /// Fractional rank. Arrives as a JSON number and is stored as a `Decimal`.
     pub fn rank(_: &mut SchemaGenerator) -> Schema {

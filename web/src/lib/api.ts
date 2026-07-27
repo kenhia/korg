@@ -13,6 +13,7 @@ import type {
   CardRow,
   Comment,
   DailyPlanItem,
+  HandoffFull,
   History,
   LinkRow,
   MoveOutcome,
@@ -394,4 +395,11 @@ export const api = {
       tags: string[];
     }>,
   ) => http<ProposalRow>("PATCH", `/api/proposals/${node_id}`, patch),
+
+  // handoffs. The authoritative read: body plus the nodes it is attached to,
+  // which is strictly more than the generic /api/nodes/:id preview carries —
+  // the reason the reading page (WI #621) has its own route rather than a
+  // generic one. Read-only from the web; authoring is API/skill-driven.
+  handoff: (node_id: number) =>
+    httpMaybe<HandoffFull>("GET", `/api/handoffs/${node_id}`),
 };

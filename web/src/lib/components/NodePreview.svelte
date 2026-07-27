@@ -56,12 +56,25 @@
   class="max-w-md"
 >
   <div data-testid="node-preview-panel">
-    <div class="mb-3">
+    <div class="mb-3 flex items-center gap-2">
       {#if node}
         <span
           class="rounded bg-[var(--color-accent-soft)] px-1.5 py-0.5 text-xs uppercase tracking-wide text-[var(--color-accent)]"
           >{node.kind}</span
         >
+        <!-- Handoffs get a full page (WI #621). The slide-over stays the quick
+             peek and becomes its entry point: a long handoff is unreadable at
+             max-w-md, and commenting on one needs somewhere to put the thread.
+             Only handoffs have a detail route today, so only they show this. -->
+        {#if node.kind === "handoff"}
+          <a
+            class="ml-auto rounded border border-[var(--color-border)] px-2 py-0.5 text-xs hover:bg-[var(--color-accent-soft)]"
+            href={`/handoffs/${nodeId}`}
+            data-testid="open-handoff-page"
+            title="Open this handoff on its own page, with comments"
+            onclick={onClose}>Open full page ↗</a
+          >
+        {/if}
       {/if}
     </div>
 

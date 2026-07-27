@@ -24,6 +24,9 @@ export type ReportStatus = (typeof REPORT_STATUSES)[number];
 export const PROJECT_STATUSES = ["active", "maintenance", "inactive", "archived"] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 
+export const PROJECT_CATEGORIES = ["AI", "Dashboard", "EVAL", "Fun", "Infrastructure", "Ops", "Other"] as const;
+export type ProjectCategory = (typeof PROJECT_CATEGORIES)[number];
+
 export const ERROR_CODES = ["invalid_input", "not_found", "conflict", "internal"] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 

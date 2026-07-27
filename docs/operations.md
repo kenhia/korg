@@ -59,6 +59,13 @@ deploy skill uses. Rollback is image-only: it does **not** undo a schema
 migration, and korg's migrations run automatically at startup. Rolling back
 across a migration boundary needs a restore (below), not a re-tag.
 
+Not every migration is such a boundary, and it is worth knowing which before
+you need to know it. A migration that only **changes data in existing columns**
+can be rolled back across with a plain re-tag, because the old image reads the
+same schema — 0018 (project categories) is one of these. A migration that
+changes the **schema** cannot — 0017 (handoff) is one of those, and crossing it
+backwards needs the dump restore. Each migration's header says which it is.
+
 ## Backups
 
 **korg's database is backed up nightly.** It is not optional and it is not

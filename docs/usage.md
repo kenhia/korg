@@ -20,6 +20,14 @@ covers:
   summary bundled with the work items they cover), drag-orderable by rank,
   with pin-to-top. Start/Decline/Done buttons drive the status lifecycle; a
   copy icon copies a `/start-sprint korg:<node_id>` prompt.
+- **Handoff pages** (`/handoffs/:node_id`) — korg's one per-node detail route
+  (WI #621). A handoff's `has_handoff` ref opens the slide-over preview
+  anywhere it appears; "Open full page ↗" on that preview navigates here, where
+  the Markdown body gets a real reading width and a comment thread. The body is
+  **read-only** — handoffs are authored through the API and the `handoff` skill
+  — so a reviewer responds with a comment rather than editing the document.
+  Not on the top nav; it is reached from the work the handoff belongs to, and
+  links back to it.
 
 ### Behaviour common to every page
 
@@ -188,9 +196,25 @@ Projects carry lifecycle metadata (WI #246): `status`
 (`active | maintenance | inactive | archived`), `machines` (where the
 working copy lives), `deploy_to` (where it deploys), `category`. The Work
 Items rail shows only active+maintenance projects unless "show all" is
-checked, renders names in stable per-name colors, and the ✎ control opens
-an edit panel (everything editable except the name). Agents:
-`update_project` MCP tool / `PATCH /api/projects/:name`.
+checked, and the ✎ control opens an edit panel (everything editable except
+the name). Agents: `update_project` MCP tool / `PATCH /api/projects/:name`.
+
+`category` is a **closed vocabulary** (WI #678):
+`AI | Dashboard | EVAL | Fun | Infrastructure | Ops | Other`. It was free text
+until migration 0018 and had drifted to `ai`/`AI`/`tooling`/`infra`/`fun`/NULL;
+`update_project` now validates it the way every other vocabulary is validated,
+and the edit panel offers a select rather than a text box. `null` is still
+legal — `create_project` takes only a name, so a project starts uncategorised.
+
+The rail **colors each project by its category**, replacing a hash of the
+project name that put 20 of 31 projects within 12 degrees of another. Only
+active and maintenance projects are colored; inactive, archived and
+uncategorised ones render with no color, which doubles as a signal that a
+project is not live. A **by category** checkbox groups the rail under category
+headings; the default stays alphabetical. Adding a category means one entry in
+korg-core's `PROJECT_CATEGORIES` plus its hue in `CATEGORY_HUE`
+(`web/src/lib/domain.ts`) — the map is typed over the generated vocabulary, so
+the build fails until the hue exists.
 
 **Writes take a project by name or by id** (WI #575): pass either `project`
 (the name) or `project_id`, never both — and likewise `area` or `area_id`.
