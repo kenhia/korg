@@ -50,11 +50,20 @@
   let pinnedBuf = $state<DndItem[]>([]);
   let queueBuf = $state<DndItem[]>([]);
 
-  const active = $derived(
-    proposalsRaw.filter((p) => p.status === "active").sort((a, b) => Number(a.rank) - Number(b.rank)),
+  // `proposalsRaw` holds every proposal; `scoped` is what the current project
+  // filter shows. They used to be the same thing, fetched pre-filtered — which
+  // is what broke the dropdown (see `load`).
+  const scoped = $derived(
+    projectFilter === ALL_PROJECTS
+      ? proposalsRaw
+      : proposalsRaw.filter((p) => p.project === projectFilter),
   );
-  const done = $derived(proposalsRaw.filter((p) => p.status === "done"));
-  const declined = $derived(proposalsRaw.filter((p) => p.status === "declined"));
+
+  const active = $derived(
+    scoped.filter((p) => p.status === "active").sort((a, b) => Number(a.rank) - Number(b.rank)),
+  );
+  const done = $derived(scoped.filter((p) => p.status === "done"));
+  const declined = $derived(scoped.filter((p) => p.status === "declined"));
   let showDone = $state(false);
   let showDeclined = $state(false);
 
@@ -68,7 +77,7 @@
   }
 
   function rebuild() {
-    const proposed = proposalsRaw.filter((p) => p.status === "proposed");
+    const proposed = scoped.filter((p) => p.status === "proposed");
     pinnedBuf = proposed
       .filter((p) => p.pinned)
       .sort((a, b) => Number(a.rank) - Number(b.rank))
@@ -101,20 +110,27 @@
     loading = true;
     loadError = null;
     try {
-      proposalsRaw = await api.proposals(
-        undefined,
-        projectFilter === ALL_PROJECTS ? undefined : projectFilter,
-      );
-      if (projectFilter === ALL_PROJECTS) {
-        knownProjects = [
-          ...new Set(proposalsRaw.map((p) => p.project).filter((n): n is string => !!n)),
-        ].sort();
-      }
+      // Fetch UNFILTERED and scope in the client (WI #622).
+      //
+      // This used to ask the server for just the current project's proposals
+      // and rebuild the dropdown's options from the result — but a filtered
+      // fetch cannot contain the projects the filter excluded, so the option
+      // list was only ever correct on an unfiltered load. Return to Planning
+      // with a sticky project set and `onMount` restores it *before* the first
+      // load, so the rebuild was skipped entirely and the dropdown offered
+      // nothing but "All projects": no way back out without clearing it.
+      //
+      // The whole queue is 87 rows, so one unfiltered read is cheaper than the
+      // bug. Covers are still fetched only for what is on screen.
+      proposalsRaw = await api.proposals();
+      knownProjects = [
+        ...new Set(proposalsRaw.map((p) => p.project).filter((n): n is string => !!n)),
+      ].sort();
       rebuild();
       // Only proposals that actually cover something need a detail read;
       // `covered_count` on the row answers the rest.
       await Promise.all(
-        proposalsRaw.filter((p) => p.covered_count > 0).map((p) => loadCovers(p.node_id)),
+        scoped.filter((p) => p.covered_count > 0).map((p) => loadCovers(p.node_id)),
       );
     } catch (e) {
       loadError = e;
@@ -214,7 +230,18 @@
 </script>
 
 {#snippet card(p: ProposalRow)}
-  <div class="cursor-grab rounded bg-[var(--color-surface-hi)] p-3 active:cursor-grabbing" data-testid={`proposal-${p.node_id}`}>
+  <!-- WI #671 — an active proposal gets a border the eye lands on. The hue is
+       42, which is what Ken described as "the colour claude-cleo is in": that
+       was a name-hash accident when he wrote it, and is now the Ops category
+       colour from #678 — so it is stable rather than arbitrary, and reusing it
+       here keeps warm = "this is the live one", as on Today's target day.
+       The transparent border is always present so an active card does not
+       shift its neighbours by 2px when its status changes. -->
+  <div
+    class="cursor-grab rounded border-2 border-transparent bg-[var(--color-surface-hi)] p-3 active:cursor-grabbing"
+    style={p.status === "active" ? "border-color: hsl(42 55% 62%)" : ""}
+    data-testid={`proposal-${p.node_id}`}
+  >
     <div class="flex items-start justify-between gap-2">
       <div class="text-sm font-medium">{p.title}</div>
       <div class="flex shrink-0 items-center gap-1">

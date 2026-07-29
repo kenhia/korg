@@ -1,21 +1,28 @@
 <script lang="ts">
   import "../app.css";
+  import { dev } from "$app/environment";
   import { page } from "$app/stores";
   import Toaster from "$lib/components/Toaster.svelte";
 
   let { children } = $props();
 
+  // History and Topics left the top nav in sprint 029: both are things you
+  // reach *from* planning rather than destinations you start at, and Today now
+  // carries buttons for them. Their routes still exist and still work — they
+  // are just not competing for space with the pages Ken actually starts from.
+  // Ordered by how often Ken starts there, not by when each page was built
+  // (sprint 029). `Plan` is the dependency graph — a thing you consult, not a
+  // place you begin — so it sits at the end. `Link Up` left the bar entirely:
+  // linking nodes and slotting a work item are agent requests, not something
+  // he drives by hand. The route still exists for anyone holding the URL.
   const nav = [
     { href: "/", label: "Today" },
-    { href: "/history", label: "History" },
-    { href: "/topics", label: "Topics" },
-    { href: "/plan", label: "Plan" },
     { href: "/cards", label: "Cards" },
     { href: "/work-items", label: "Work Items" },
     { href: "/planning", label: "Planning" },
     { href: "/daily-reports", label: "Reports" },
     { href: "/reading-list", label: "Reading" },
-    { href: "/link-up", label: "Link Up" },
+    { href: "/plan", label: "Plan" },
   ];
 
   // Match on full path segments so /plan doesn't also light up on /planning
@@ -51,10 +58,18 @@
     <nav
       class="mx-auto flex max-w-[120rem] flex-wrap items-center gap-1 px-4 py-2"
     >
+      <!-- The dev loop and production look identical, and the dev server can be
+           pointed at the production API (KORG_API), so "am I about to write to
+           the real thing?" is a question the UI should answer rather than leave
+           to whichever tab you clicked last. `dev` is true only under
+           `vite dev`; the built bundle korg-api serves is always plain korg. -->
       <a
         href="/"
-        class="mr-4 text-lg font-semibold tracking-tight text-[var(--color-accent)]"
-        >korg</a
+        class="mr-4 text-lg font-semibold tracking-tight"
+        class:text-[var(--color-accent)]={!dev}
+        class:text-red-500={dev}
+        title={dev ? "Development server — not production" : undefined}
+        >{dev ? "korg-dev" : "korg"}</a
       >
       {#each nav as item (item.href)}
         <a

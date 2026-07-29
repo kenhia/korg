@@ -1,17 +1,19 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, type Snippet } from "svelte";
   import TopicPicker from "$lib/components/TopicPicker.svelte";
   import {
     api,
     type CardRow,
     type DailyPlanItem,
+    type ProposalRow,
+    type ReportRow,
     type Topic,
-    type WorkItemRow,
   } from "$lib/api";
-  import { isCut, isHiddenByDefault, kindLabel } from "$lib/domain";
+  import { chip, isCut, kindLabel, reportStatusPill } from "$lib/domain";
   import { attempt, notify, reportError } from "$lib/toast.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
   import ConfirmButton from "$lib/components/ConfirmButton.svelte";
+  import NodePreview from "$lib/components/NodePreview.svelte";
   import {
     addDays,
     isoDate,
@@ -26,36 +28,55 @@
   let items = $state<DailyPlanItem[]>([]);
   let topics = $state<Topic[]>([]);
   let cards = $state<CardRow[]>([]);
-  let workItems = $state<WorkItemRow[]>([]);
+  let proposals = $state<ProposalRow[]>([]);
+  // The most recent daily report, for the health pill beside the week heading.
+  // `list_reports` orders by report_date DESC, so the head of the list is it.
+  let latestReport = $state<ReportRow | null>(null);
   let loading = $state(true);
   let loadError = $state<unknown>(null);
   let sourceSearch = $state("");
   let trayDate = $state(isoDate(new Date()));
+  let previewNode = $state<number | null>(null);
+
+  // Proposals open, cards collapsed (Ken, 2026-07-29). Today is a planning
+  // overview: "which sprint am I on" is the question it should answer at a
+  // glance, and the card list is a long tray you open when you want it.
+  let showProposals = $state(true);
+  let showCards = $state(false);
 
   const days = $derived(weekDays(weekStart));
   const today = $derived(isoDate(new Date()));
-  const sources = $derived(
-    [
-      ...cards
-        .filter((card) => !card.archived && !isCut(card.status))
-        .map((card) => ({
-          node_id: card.node_id,
-          kind: "card",
-          title: card.title,
-        })),
-      ...workItems
-        .filter((item) => !item.archived && !isHiddenByDefault(item.wi_status))
-        .map((item) => ({
-          node_id: item.node_id,
-          kind: "work item",
-          title: `#${item.wi_number} ${item.title}`,
-        })),
-    ]
-      .filter((source) =>
-        source.title
-          .toLocaleLowerCase()
-          .includes(sourceSearch.toLocaleLowerCase()),
-      )
+
+  /** The target day, spelled the way the column header spells it. */
+  const targetLabel = $derived.by(() => {
+    const d = days.find((day) => isoDate(day) === trayDate);
+    if (!d) return trayDate;
+    const label = WEEKDAY_LABELS[(d.getDay() + 6) % 7];
+    return `${label} ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  });
+
+  function matches(title: string): boolean {
+    return title
+      .toLocaleLowerCase()
+      .includes(sourceSearch.toLocaleLowerCase());
+  }
+
+  // The tray is cards only as of sprint 029 — work items left it. They are
+  // still plannable (drag from anywhere that exposes one, and the API still
+  // takes them); they were simply drowning the list Ken actually picks from.
+  const cardSources = $derived(
+    cards
+      .filter((card) => !card.archived && !isCut(card.status))
+      .filter((card) => matches(card.title))
+      .slice(0, 40),
+  );
+
+  // Only the live queue: a done or declined proposal is not something you plan
+  // a day around.
+  const proposalSources = $derived(
+    proposals
+      .filter((p) => !p.archived && (p.status === "proposed" || p.status === "active"))
+      .filter((p) => matches(p.title))
       .slice(0, 40),
   );
 
@@ -67,12 +88,21 @@
   function frozen(date: string): boolean {
     return date < today;
   }
+  /** Saturday and Sunday, by position in the Mon-first week. */
+  function weekend(index: number): boolean {
+    return index >= 5;
+  }
+  // One colour per plannable kind. `sprint_proposal` needed its own rather than
+  // inheriting the catch-all, which would have made a planned sprint look like
+  // a topic.
+  const KIND_CLASSES: Record<string, string> = {
+    workitem: "bg-teal-950 text-teal-300",
+    card: "bg-violet-950 text-violet-300",
+    topic: "bg-amber-950 text-amber-300",
+    sprint_proposal: "bg-sky-950 text-sky-300",
+  };
   function kindClass(kind: DailyPlanItem["source_kind"]): string {
-    return kind === "workitem"
-      ? "bg-teal-950 text-teal-300"
-      : kind === "card"
-        ? "bg-violet-950 text-violet-300"
-        : "bg-amber-950 text-amber-300";
+    return KIND_CLASSES[kind] ?? "bg-[var(--color-surface-hi)] text-[var(--color-muted)]";
   }
 
   async function load() {
@@ -81,16 +111,19 @@
     try {
       const from = isoDate(weekStart);
       const to = isoDate(addDays(weekStart, 6));
-      const [plan, topicPage, cardPage, wiPage] = await Promise.all([
-        api.dailyPlan(from, to),
-        api.topics(),
-        api.cards(),
-        api.workItems(),
-      ]);
+      const [plan, topicPage, cardPage, proposalRows, reportRows] =
+        await Promise.all([
+          api.dailyPlan(from, to),
+          api.topics(),
+          api.cards(),
+          api.proposals(),
+          api.reports(),
+        ]);
       items = plan;
       topics = topicPage.items;
       cards = cardPage.items;
-      workItems = wiPage.items;
+      proposals = proposalRows;
+      latestReport = reportRows[0] ?? null;
       if (trayDate < today || trayDate < from || trayDate > to)
         trayDate = today >= from && today <= to ? today : from;
     } catch (cause) {
@@ -197,27 +230,59 @@
       >
         Daily plan
       </p>
-      <h1 class="text-2xl font-semibold">
-        Week of {weekStart.toLocaleDateString(undefined, {
-          month: "long",
-          day: "numeric",
-        })}
-      </h1>
+      <div class="flex flex-wrap items-center gap-4">
+        <h1 class="text-2xl font-semibold">
+          Week of {weekStart.toLocaleDateString(undefined, {
+            month: "long",
+            day: "numeric",
+          })}
+        </h1>
+        <!-- Latest daily-report status (Ken, 2026-07-29). Today is meant to be
+             the page you open for an overview, and "is anything wrong?" is part
+             of that overview. Links through to the report itself — the status
+             is the question, the report is the answer. Same pill as the Daily
+             Reports page, from one definition, so the colours cannot drift. -->
+        {#if latestReport}
+          <a
+            href="/daily-reports"
+            class={reportStatusPill(latestReport.status)}
+            data-testid="latest-report-status"
+            title={`Daily report ${latestReport.report_date} — ${latestReport.summary}`}
+            >{latestReport.status}</a
+          >
+        {/if}
+      </div>
     </div>
-    <div
-      class="flex items-center rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-1 text-sm"
-      aria-label="Week navigation"
-    >
-      <button
-        class="rounded px-3 py-1.5 hover:bg-[var(--color-surface-hi)]"
-        onclick={() => shiftWeek(-1)}>← Previous</button
-      ><button
-        class="rounded px-3 py-1.5 hover:bg-[var(--color-surface-hi)]"
-        onclick={resetWeek}>Today</button
-      ><button
-        class="rounded px-3 py-1.5 hover:bg-[var(--color-surface-hi)]"
-        onclick={() => shiftWeek(1)}>Next →</button
+    <div class="flex flex-wrap items-center gap-2">
+      <!-- History and Topics live here rather than the top nav (sprint 029):
+           they are things you step into from planning and come back from, not
+           destinations you start at. Both accept Esc to return. -->
+      <div
+        class="flex items-center rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-1 text-sm"
       >
+        <a
+          class="rounded px-3 py-1.5 hover:bg-[var(--color-surface-hi)]"
+          href="/history">History</a
+        ><a
+          class="rounded px-3 py-1.5 hover:bg-[var(--color-surface-hi)]"
+          href="/topics">Topics</a
+        >
+      </div>
+      <div
+        class="flex items-center rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-1 text-sm"
+        aria-label="Week navigation"
+      >
+        <button
+          class="rounded px-3 py-1.5 hover:bg-[var(--color-surface-hi)]"
+          onclick={() => shiftWeek(-1)}>← Previous</button
+        ><button
+          class="rounded px-3 py-1.5 hover:bg-[var(--color-surface-hi)]"
+          onclick={resetWeek}>Today</button
+        ><button
+          class="rounded px-3 py-1.5 hover:bg-[var(--color-surface-hi)]"
+          onclick={() => shiftWeek(1)}>Next →</button
+        >
+      </div>
     </div>
   </header>
   {#if loadError}
@@ -231,8 +296,13 @@
       {#each days as day, index (isoDate(day))}
         {@const date = isoDate(day)}
         {@const dayItems = itemsFor(date)}
+        <!-- Weekend columns carry a violet wash so the week has a visible
+             shape at a glance (sprint 029). Subtle on purpose: it should read
+             as "different kind of day", not as a status. -->
         <section
-          class="flex min-h-72 min-w-0 flex-col rounded-lg border bg-[var(--color-surface)]"
+          class={`flex min-h-72 min-w-0 flex-col rounded-lg border ${
+            weekend(index) ? "bg-violet-500/10" : "bg-[var(--color-surface)]"
+          }`}
           class:border-[var(--color-accent)]={date === today}
           class:border-[var(--color-border)]={date !== today}
           class:opacity-70={frozen(date)}
@@ -243,25 +313,55 @@
           }}
           ondrop={(event) => dropOnDay(event, date, dayItems.length)}
         >
+          <!-- The header is the target control (Ken, 2026-07-29). "Add to" was
+               already a dropdown down in the tray, but nothing about a dropdown
+               says "this is where things land" — clicking the day does. Amber
+               rather than green: green reads as *complete* on a page whose
+               items have completion checkboxes, and it would fight the blue
+               "today" border, which has to stay legible at the same time. -->
           <div
-            class="flex items-start justify-between border-b border-[var(--color-border)] px-3 py-2"
+            class={`flex items-start justify-between border-b border-[var(--color-border)] ${
+              date === trayDate && !frozen(date) ? "bg-amber-500/20" : ""
+            }`}
           >
-            <div>
-              <h2 class="text-sm font-semibold">{WEEKDAY_LABELS[index]}</h2>
-              <p class="text-xs text-[var(--color-muted)]">
+            <button
+              class="flex-1 px-3 py-2 text-left"
+              class:cursor-default={frozen(date)}
+              disabled={frozen(date)}
+              aria-pressed={date === trayDate}
+              title={frozen(date)
+                ? "Frozen — cannot be a target"
+                : `Add to ${WEEKDAY_LABELS[index]}`}
+              onclick={() => (trayDate = date)}
+            >
+              <h2
+                class="text-sm font-semibold"
+                class:text-amber-200={date === trayDate && !frozen(date)}
+              >
+                {WEEKDAY_LABELS[index]}
+              </h2>
+              <p
+                class="text-xs"
+                class:text-amber-200={date === trayDate && !frozen(date)}
+                class:text-[var(--color-muted)]={!(
+                  date === trayDate && !frozen(date)
+                )}
+              >
                 {day.toLocaleDateString(undefined, {
                   month: "short",
                   day: "numeric",
                 })}
               </p>
+            </button>
+            <div class="px-3 py-2">
+              {#if frozen(date)}<span
+                  class="rounded bg-[var(--color-bg)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-muted)]"
+                  >Frozen</span
+                >{:else if date === today}<span
+                  class="rounded bg-[var(--color-accent-soft)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide"
+                  >Today</span
+                >{/if}
             </div>
-            {#if frozen(date)}<span
-                class="rounded bg-[var(--color-bg)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-muted)]"
-                >Frozen</span
-              >{:else if date === today}<span
-                class="rounded bg-[var(--color-accent-soft)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide"
-                >Today</span
-              >{/if}
           </div>
           <ol class="flex-1 space-y-2 p-2" aria-label={`Plan for ${date}`}>
             {#each dayItems as item, itemIndex (item.node_id)}
@@ -338,56 +438,132 @@
       {/each}
     </div>
   {/if}
-  <section
-    class="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
-    aria-labelledby="source-tray-title"
-  >
-    <div class="mb-3 flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h2 id="source-tray-title" class="font-semibold">Cards & work items</h2>
-        <p class="text-xs text-[var(--color-muted)]">
-          Drag into an open day, or choose a day and use Add.
-        </p>
-      </div>
-      <div class="flex items-end gap-2">
-        <label class="text-xs text-[var(--color-muted)]"
-          >Add to <select
-            class="ml-1 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-[var(--color-text)]"
-            bind:value={trayDate}
-            >{#each days.filter((day) => !frozen(isoDate(day))) as day (isoDate(day))}<option
-                value={isoDate(day)}
-                >{WEEKDAY_LABELS[(day.getDay() + 6) % 7]}
-                {day.getDate()}</option
-              >{/each}</select
-          ></label
-        ><input
-          type="search"
-          aria-label="Search cards and work items"
-          class="w-64 rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none"
-          placeholder="Search sources…"
-          bind:value={sourceSearch}
-        />
-      </div>
-    </div>
-    <ul class="grid max-h-56 gap-2 overflow-auto sm:grid-cols-2 lg:grid-cols-4">
-      {#each sources as source (`${source.kind}-${source.node_id}`)}<li
-          class="flex cursor-grab items-center gap-2 rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-2 active:cursor-grabbing"
-          draggable="true"
-          ondragstart={(event) => dragSource(event, source.node_id)}
-        >
-          <span
-            class="rounded bg-[var(--color-surface-hi)] px-1 text-[10px] uppercase text-[var(--color-muted)]"
-            >{source.kind}</span
-          ><span
-            class="min-w-0 flex-1 line-clamp-2 break-words text-xs"
-            title={source.title}>{source.title}</span
-          ><button
-            class="rounded bg-[var(--color-accent-soft)] px-2 py-1 text-xs hover:bg-[var(--color-accent)]"
-            onclick={() => addSource(source.node_id, source.title)}>Add</button
-          >
-        </li>{:else}<li class="text-sm text-[var(--color-muted)]">
-          No matching active sources.
-        </li>{/each}
-    </ul>
-  </section>
+  <!-- One search across both trays; the target day is chosen by clicking a day
+       above, and echoed here so the answer is visible from wherever you are. -->
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <p class="text-xs text-[var(--color-muted)]">
+      Adding to <span class="font-semibold text-amber-200"
+        >{targetLabel}</span
+      > — click a day to change it, or drag straight into one.
+    </p>
+    <input
+      type="search"
+      aria-label="Search proposals and cards"
+      class="w-64 rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none"
+      placeholder="Search sources…"
+      bind:value={sourceSearch}
+    />
+  </div>
+
+  {@render tray(
+    "Proposals",
+    showProposals,
+    () => (showProposals = !showProposals),
+    proposalSources.length,
+    proposalList,
+  )}
+  {@render tray(
+    "Cards",
+    showCards,
+    () => (showCards = !showCards),
+    cardSources.length,
+    cardList,
+  )}
 </section>
+
+{#if previewNode != null}
+  <NodePreview nodeId={previewNode} onClose={() => (previewNode = null)} />
+{/if}
+
+<!-- Both trays are the same object: a collapsible panel with a count in its
+     header, so the count is readable while collapsed. -->
+{#snippet tray(
+  title: string,
+  open: boolean,
+  toggle: () => void,
+  count: number,
+  body: Snippet,
+)}
+  <section
+    class="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]"
+  >
+    <button
+      class="flex w-full items-center gap-2 px-4 py-3 text-left"
+      aria-expanded={open}
+      data-testid={`tray-toggle-${title.toLowerCase()}`}
+      onclick={toggle}
+    >
+      <span class="text-xs text-[var(--color-muted)]">{open ? "▾" : "▸"}</span>
+      <h2 class="font-semibold">{title}</h2>
+      <span class="text-xs text-[var(--color-muted)]">{count}</span>
+    </button>
+    {#if open}
+      <div class="px-4 pb-4">{@render body()}</div>
+    {/if}
+  </section>
+{/snippet}
+
+{#snippet proposalList()}
+  <ul class="grid max-h-56 gap-2 overflow-auto sm:grid-cols-2 lg:grid-cols-3">
+    {#each proposalSources as p (p.node_id)}
+      <li
+        class="flex cursor-grab items-start gap-2 rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-2 active:cursor-grabbing"
+        draggable="true"
+        ondragstart={(event) => dragSource(event, p.node_id)}
+      >
+        {#if p.project}<span class={`${chip.project} shrink-0`}>{p.project}</span
+          >{/if}
+        <span
+          class="min-w-0 flex-1 line-clamp-2 break-words text-xs"
+          title={p.title}>{p.title}</span
+        >
+        {@render quickView(p.node_id, p.title)}
+        <button
+          class="shrink-0 rounded bg-[var(--color-accent-soft)] px-2 py-1 text-xs hover:bg-[var(--color-accent)]"
+          onclick={() => addSource(p.node_id, p.title)}>Add</button
+        >
+      </li>
+    {:else}
+      <li class="text-sm text-[var(--color-muted)]">
+        No proposals in the queue{sourceSearch ? " match that search" : ""}.
+      </li>
+    {/each}
+  </ul>
+{/snippet}
+
+{#snippet cardList()}
+  <ul class="grid max-h-56 gap-2 overflow-auto sm:grid-cols-2 lg:grid-cols-4">
+    {#each cardSources as card (card.node_id)}
+      <li
+        class="flex cursor-grab items-start gap-2 rounded border border-[var(--color-border)] bg-[var(--color-bg)] p-2 active:cursor-grabbing"
+        draggable="true"
+        ondragstart={(event) => dragSource(event, card.node_id)}
+      >
+        <span
+          class="min-w-0 flex-1 line-clamp-2 break-words text-xs"
+          title={card.title}>{card.title}</span
+        >
+        {@render quickView(card.node_id, card.title)}
+        <button
+          class="shrink-0 rounded bg-[var(--color-accent-soft)] px-2 py-1 text-xs hover:bg-[var(--color-accent)]"
+          onclick={() => addSource(card.node_id, card.title)}>Add</button
+        >
+      </li>
+    {:else}
+      <li class="text-sm text-[var(--color-muted)]">
+        No active cards{sourceSearch ? " match that search" : ""}.
+      </li>
+    {/each}
+  </ul>
+{/snippet}
+
+<!-- "I will forget what this title encompasses" — the slide-over answers that
+     without leaving the page or losing the target day. -->
+{#snippet quickView(nodeId: number, title: string)}
+  <button
+    class="shrink-0 rounded px-1 py-1 text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+    title={`Preview ${title}`}
+    aria-label={`Preview ${title}`}
+    onclick={() => (previewNode = nodeId)}>👁</button
+  >
+{/snippet}

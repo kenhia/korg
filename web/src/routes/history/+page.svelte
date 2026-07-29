@@ -9,6 +9,7 @@
   import { kindLabel } from "$lib/domain";
   import { attempt } from "$lib/toast.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
+  import BackTo from "$lib/components/BackTo.svelte";
 
   const presets: { value: HistoryPreset; label: string }[] = [
     { value: "week", label: "Week" },
@@ -78,6 +79,7 @@
 
 <section class="space-y-5">
   <header>
+    <div class="mb-2"><BackTo href="/" label="← Today" /></div>
     <p
       class="text-xs font-medium uppercase tracking-[0.18em] text-[var(--color-accent)]"
     >

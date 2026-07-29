@@ -3,6 +3,7 @@
   import Comments from "$lib/components/Comments.svelte";
   import NodePreview from "$lib/components/NodePreview.svelte";
   import { renderMarkdown } from "$lib/markdown";
+  import { reportStatusPill } from "$lib/domain";
 
   let rows = $state<ReportRow[]>([]);
   let expanded = $state<Set<number>>(new Set());
@@ -11,12 +12,6 @@
   // Findings open the shared preview panel (WI #231) rather than navigating
   // away. A finding is a work item, so its node id equals its wi_number.
   let previewNode = $state<number | null>(null);
-
-  const statusStyle: Record<string, string> = {
-    ok: "bg-emerald-900/40 text-emerald-300 border-emerald-700",
-    attention: "bg-amber-900/40 text-amber-300 border-amber-700",
-    problem: "bg-red-900/40 text-red-300 border-red-700",
-  };
 
   async function load() {
     try {
@@ -77,11 +72,7 @@
       >
         <span class="text-[var(--color-muted)]">{expanded.has(r.node_id) ? "▾" : "▸"}</span>
         <span class="font-mono text-sm tabular-nums">{r.report_date}</span>
-        <span
-          class="rounded-full border px-2 py-0.5 text-xs font-medium uppercase tracking-wide {statusStyle[
-            r.status
-          ]}"
-        >
+        <span class={reportStatusPill(r.status)}>
           {r.status}
         </span>
         <span class="min-w-0 flex-1 truncate text-sm">{r.summary}</span>

@@ -10,12 +10,21 @@ the MCP endpoint.
 Browse to the address `korg-api` is serving (e.g. `http://<host>:8090`). The UI
 covers:
 
+- **Today** — the daily plan for the week, and the page to start from. Clicking
+  a day makes it the target for the Proposals and Cards trays below; dragging
+  into one works too. Carries the latest daily report's status, and buttons
+  through to History and Topics.
 - **Work Items** — create, edit, archive, set parent/area, and manage
   relationships and comments. Project selection is sticky across navigation.
+  Filters include tags (AND-combined, collapsed by default) and `Only Prop`,
+  which narrows the list to the work items a sprint proposal *covers* — the
+  `sprint` field is free text and usually empty, so the `covers` edges are the
+  only honest answer to "what is in this sprint".
 - **Cards** — kanban cards with status, rank, tags, comments, and clickable
   launch links for URL fields.
 - **Link Up** — relate any node to any other across kinds via the generalized
-  `relationship` edge.
+  `relationship` edge. **Not on the top nav** as of sprint 029 — linking and
+  slotting are agent requests in practice — but `/link-up` still serves.
 - **Planning** — the agent-planning queue: `sprint_proposal` nodes (a title +
   summary bundled with the work items they cover), drag-orderable by rank,
   with pin-to-top. Start/Decline/Done buttons drive the status lifecycle; a
@@ -262,8 +271,12 @@ any other through a single generalized `relationship` edge:
 - **link** — reading-list URL.
 - **topic** — reusable planning identity with searchable name/description.
 - **daily_plan_item** — ordered local-date occurrence linked to a work item,
-  card, or topic; keeps an immutable display snapshot and optional completion
-  timestamp. Past structure is frozen, while completion can be corrected.
+  card, topic, or sprint proposal; keeps an immutable display snapshot and
+  optional completion timestamp. Past structure is frozen, while completion can
+  be corrected. The plannable set is closed (`PLANNABLE_KINDS` in korg-core) —
+  anything else is refused rather than stored as an unresolvable reference.
+  `sprint_proposal` joined it in sprint 029, so "which sprint am I pushing on
+  today" is answerable by the planner.
 - **sprint_proposal** — an agent-planning proposal (title, summary, status,
   drag-orderable `rank`, `pinned`); covers work items via the same
   `relationship` mechanism, label `covers`, rather than a dedicated join

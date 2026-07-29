@@ -14,6 +14,7 @@
 
 import {
   CARD_STATUSES,
+  PROJECT_CATEGORIES,
   RELATIONSHIP_LABELS,
   WI_STATUSES,
   type CardStatus,
@@ -122,6 +123,37 @@ const CATEGORY_HUE: Record<ProjectCategory, number> = {
 };
 
 /**
+ * The order categories appear in when the rail is grouped (Ken, 2026-07-29).
+ *
+ * Deliberately *not* alphabetical, and not hue order. It runs roughly from the
+ * infrastructure Ken works in outward to the things he visits least, so the
+ * groups he reaches for are at the top of the rail where the eye lands — the
+ * same "scan by position" argument that motivated colouring at all. `EVAL` sits
+ * last because it exists to make an eval-sandbox leak findable, not to be
+ * navigated to.
+ *
+ * Reorder by editing this list. `satisfies` catches a typo'd name; anything in
+ * the vocabulary but missing here is appended below rather than dropped, so a
+ * category added later shows up in the rail even before someone places it.
+ */
+const RAIL_ORDER = [
+  "Infrastructure",
+  "Ops",
+  "AI",
+  "Dashboard",
+  "Fun",
+  "Other",
+  "EVAL",
+] as const satisfies readonly ProjectCategory[];
+
+export const CATEGORY_ORDER: readonly ProjectCategory[] = [
+  ...RAIL_ORDER,
+  ...PROJECT_CATEGORIES.filter(
+    (c) => !(RAIL_ORDER as readonly string[]).includes(c),
+  ),
+];
+
+/**
  * The rail color for a project, or `undefined` for "render with no color".
  *
  * Inactive and archived projects get no color at all — not the `Other` color
@@ -151,6 +183,9 @@ const KIND_LABELS: Record<string, string> = {
   workitem: "WI",
   card: "Card",
   topic: "Topic",
+  // Plannable since sprint 029 — "which sprint am I pushing on today" is the
+  // same kind of answer as "which card".
+  sprint_proposal: "Sprint",
 };
 
 /** The short chip label for a planned item's source kind. */
@@ -198,6 +233,33 @@ export function relationshipReads(label: string): string | undefined {
  *  their direction. */
 export function directionIsMeaningful(label: string): boolean {
   return RELATIONSHIP_LABELS.find((s) => s.label === label)?.directed ?? true;
+}
+
+// --- report status ----------------------------------------------------------
+
+/**
+ * The colour half of a report-status pill: emerald / amber / red for
+ * `ok` / `attention` / `problem`.
+ *
+ * Lived on the Daily Reports page alone until Today grew a "latest report"
+ * indicator (sprint 029). A second copy is precisely the drift this module
+ * exists to stop — the two would eventually disagree about what "attention"
+ * looks like, and a status colour that means different things on different
+ * pages is worse than no colour.
+ */
+const REPORT_STATUS_STYLE: Record<string, string> = {
+  ok: "bg-emerald-900/40 text-emerald-300 border-emerald-700",
+  attention: "bg-amber-900/40 text-amber-300 border-amber-700",
+  problem: "bg-red-900/40 text-red-300 border-red-700",
+};
+
+/** The complete class list for a report-status pill, shape included, so two
+ *  call sites cannot render the same status at different sizes. */
+export function reportStatusPill(status: string): string {
+  const style =
+    REPORT_STATUS_STYLE[status] ??
+    "bg-[var(--color-surface-hi)] text-[var(--color-muted)] border-[var(--color-border)]";
+  return `rounded-full border px-2 py-0.5 text-xs font-medium uppercase tracking-wide ${style}`;
 }
 
 // --- chips ------------------------------------------------------------------
