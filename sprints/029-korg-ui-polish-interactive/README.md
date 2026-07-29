@@ -169,3 +169,31 @@ Two bugs were found and filed rather than fixed:
 
 `deploy-kubsdb` after merge. **No migration** — rollback is a clean image
 re-tag.
+
+## Deployed 2026-07-29
+
+- **Image**: `korg:e19256ecf1bd` — revision
+  `e19256ecf1bd266d62de44fa0e0f8f1f2c3b7042` (the squash-merge of PR #30). The
+  container's `org.opencontainers.image.revision` label matches
+  `git rev-parse HEAD` exactly.
+- **Rollback target**: `korg:ac8dd731b6bb` (sprint 028). No migration in this
+  sprint, so an image re-tag fully reverts.
+- **CI**: green on PR #30 (rust 2m58s, web 26s).
+
+**Verified live:**
+
+- `post-deploy-check.sh --compare`: **OK**. Every row count unchanged
+  (work_items 517, cards 29, links 4, proposals 99, reports 23, projects 34),
+  `node_count` 679 and `node_id_seq` 763 stable, and `migrations` held at 18 —
+  the correct result for a sprint that adds no migration.
+- **The one backend change works in production**: `POST /api/daily-plan` with an
+  active proposal's node id returned `source_kind: sprint_proposal` with the
+  proposal's title snapshotted as the display. Before this sprint that request
+  was refused. The smoke-test item was deleted afterwards so the live plan was
+  left as Ken had it.
+- All seven touched routes answer 200, including `/link-up` — off the nav but
+  deliberately still served.
+
+The rest of the sprint is client-side rendering and layout, which no `curl` can
+confirm; it was reviewed live throughout the session against a restored dump,
+and the 390px and axe runs recorded above are the automated part of that.
