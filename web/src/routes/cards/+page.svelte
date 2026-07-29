@@ -418,75 +418,6 @@
     <ErrorNotice error={loadError} what="the board" retry={load} />
   {/if}
 
-  <!-- Daily-plan targets: dropping adds a source occurrence and does not move the card. -->
-  <div
-    class="rounded border border-[var(--color-border)] bg-[var(--color-surface)]"
-  >
-    <div class="flex items-center justify-between px-3 py-2">
-      <div>
-        <h2 class="text-sm font-medium">Plan this week</h2>
-        <p class="text-xs text-[var(--color-muted)]">
-          Drag a card to an open day.
-        </p>
-      </div>
-      <div class="flex items-center gap-1 text-xs">
-        <button
-          class="rounded px-2 py-1 hover:bg-[var(--color-surface-hi)]"
-          onclick={() => shiftWeek(-1)}>← Prev</button
-        ><button
-          class="rounded px-2 py-1 hover:bg-[var(--color-surface-hi)]"
-          onclick={() => {
-            weekStart = startOfWeek(new Date());
-            void loadPlan();
-          }}>Today</button
-        ><button
-          class="rounded px-2 py-1 hover:bg-[var(--color-surface-hi)]"
-          onclick={() => shiftWeek(1)}>Next →</button
-        >
-      </div>
-    </div>
-    {#if planNotice}<p
-        class="mx-3 rounded bg-sky-950 px-2 py-1 text-xs text-sky-200"
-        role="status"
-      >
-        {planNotice}
-      </p>{/if}
-    <div class="grid grid-cols-2 gap-2 p-3 sm:grid-cols-4 lg:grid-cols-7">
-      {#each days as day, i (isoDate(day))}
-        {@const date = isoDate(day)}
-        <div
-          class="min-h-20 rounded border border-dashed border-[var(--color-border)] bg-[var(--color-bg)] p-2"
-          class:opacity-50={date < today}
-          data-testid={`card-plan-day-${date}`}
-          role="group"
-          aria-label={`Plan for ${date}${date < today ? ", frozen" : ", drop card here"}`}
-          ondragover={(event) => {
-            if (date >= today) event.preventDefault();
-          }}
-          ondrop={(event) => dropCard(event, date)}
-        >
-          <div class="mb-1 text-xs font-medium text-[var(--color-muted)]">
-            {WEEKDAY_LABELS[i]}
-            {day.getDate()}
-            {#if date < today}<span class="float-right text-[9px] uppercase"
-                >frozen</span
-              >{/if}
-          </div>
-          {#each planForDay(day) as item (item.node_id)}<div
-              class="mb-1 truncate rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-[10px]"
-              title={item.display}
-            >
-              {item.display}
-            </div>{:else}<div
-              class="pt-2 text-center text-[10px] text-[var(--color-muted)]"
-            >
-              {date < today ? "No items" : "Drop card"}
-            </div>{/each}
-        </div>
-      {/each}
-    </div>
-  </div>
-
   {#if loading}
     <p class="text-[var(--color-muted)]">Loading…</p>
   {:else if view === "board"}
@@ -632,6 +563,80 @@
       </div>
     </div>
   {/if}
+
+  <!-- Below the board, not above it (Ken, 2026-07-29). This is the same
+       week planner Today owns; it lives here because dragging a card
+       straight onto a day is occasionally quicker than going to Today.
+       But it is the secondary act on this page — the cards are the
+       feature — and sitting above the board it pushed them below the
+       fold on arrival. -->
+  <div
+    class="rounded border border-[var(--color-border)] bg-[var(--color-surface)]"
+  >
+    <div class="flex items-center justify-between px-3 py-2">
+      <div>
+        <h2 class="text-sm font-medium">Plan this week</h2>
+        <p class="text-xs text-[var(--color-muted)]">
+          Drag a card to an open day.
+        </p>
+      </div>
+      <div class="flex items-center gap-1 text-xs">
+        <button
+          class="rounded px-2 py-1 hover:bg-[var(--color-surface-hi)]"
+          onclick={() => shiftWeek(-1)}>← Prev</button
+        ><button
+          class="rounded px-2 py-1 hover:bg-[var(--color-surface-hi)]"
+          onclick={() => {
+            weekStart = startOfWeek(new Date());
+            void loadPlan();
+          }}>Today</button
+        ><button
+          class="rounded px-2 py-1 hover:bg-[var(--color-surface-hi)]"
+          onclick={() => shiftWeek(1)}>Next →</button
+        >
+      </div>
+    </div>
+    {#if planNotice}<p
+        class="mx-3 rounded bg-sky-950 px-2 py-1 text-xs text-sky-200"
+        role="status"
+      >
+        {planNotice}
+      </p>{/if}
+    <div class="grid grid-cols-2 gap-2 p-3 sm:grid-cols-4 lg:grid-cols-7">
+      {#each days as day, i (isoDate(day))}
+        {@const date = isoDate(day)}
+        <div
+          class="min-h-20 rounded border border-dashed border-[var(--color-border)] bg-[var(--color-bg)] p-2"
+          class:opacity-50={date < today}
+          data-testid={`card-plan-day-${date}`}
+          role="group"
+          aria-label={`Plan for ${date}${date < today ? ", frozen" : ", drop card here"}`}
+          ondragover={(event) => {
+            if (date >= today) event.preventDefault();
+          }}
+          ondrop={(event) => dropCard(event, date)}
+        >
+          <div class="mb-1 text-xs font-medium text-[var(--color-muted)]">
+            {WEEKDAY_LABELS[i]}
+            {day.getDate()}
+            {#if date < today}<span class="float-right text-[9px] uppercase"
+                >frozen</span
+              >{/if}
+          </div>
+          {#each planForDay(day) as item (item.node_id)}<div
+              class="mb-1 truncate rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-[10px]"
+              title={item.display}
+            >
+              {item.display}
+            </div>{:else}<div
+              class="pt-2 text-center text-[10px] text-[var(--color-muted)]"
+            >
+              {date < today ? "No items" : "Drop card"}
+            </div>{/each}
+        </div>
+      {/each}
+    </div>
+  </div>
 
   {#snippet filtersPanel()}
     <aside

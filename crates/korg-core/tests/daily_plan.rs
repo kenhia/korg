@@ -3,7 +3,8 @@ use korg_core::daily_plan::{
     LifecycleContext,
 };
 use korg_core::repo::{
-    create_card, create_link, create_work_item, NewCard, NewLink, NewWorkItem, WorkItemPatch,
+    create_card, create_link, create_proposal, create_work_item, NewCard, NewLink, NewProposal,
+    NewWorkItem, WorkItemPatch,
 };
 use korg_core::topics::{
     archive_topic, create_topic, get_topic, list_topics, update_topic, NewTopic, TopicPatch,
@@ -165,6 +166,33 @@ async fn planning_snapshots_orders_duplicates_and_validates_sources() {
     create_item(&pool, card, date!(2026 - 07 - 12), &ctx())
         .await
         .unwrap();
+    // Sprint 029 — a sprint proposal is plannable ("which sprint am I pushing
+    // on today"), and its snapshotted display comes from the proposal's title.
+    let proposal = create_proposal(
+        &pool,
+        NewProposal {
+            project_id: None,
+            project: None,
+            category: None,
+            tags: vec![],
+            title: "Proposal source".into(),
+            summary: "s".into(),
+            rank: Decimal::ZERO,
+            pinned: false,
+            covers: vec![],
+        },
+    )
+    .await
+    .unwrap()
+    .row
+    .node_id;
+    let planned_proposal = create_item(&pool, proposal, date!(2026 - 07 - 12), &ctx())
+        .await
+        .unwrap();
+    assert_eq!(planned_proposal.source_kind, "sprint_proposal");
+    assert_eq!(planned_proposal.display, "Proposal source");
+
+    // A link is still not plannable — the set is closed, not open.
     assert!(create_item(&pool, link, date!(2026 - 07 - 11), &ctx())
         .await
         .unwrap_err()

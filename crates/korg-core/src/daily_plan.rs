@@ -90,34 +90,55 @@ pub struct MoveOutcome {
     pub copied: bool,
 }
 
-const SELECT_ITEMS: &str =
-    "SELECT d.node_id, d.plan_date, d.position, d.display, d.source_node_id, \
-            s.kind AS source_kind, \
-            CASE s.kind WHEN 'workitem' THEN w.title WHEN 'card' THEN c.title \
-                        WHEN 'topic' THEN t.name END AS source_title, \
-            d.completed_at, d.created_at \
-     FROM daily_plan_item d JOIN node s ON s.id = d.source_node_id \
-     LEFT JOIN workitem w ON w.node_id = s.id \
-     LEFT JOIN card c ON c.node_id = s.id \
-     LEFT JOIN topic t ON t.node_id = s.id";
+/// The node kinds a day can be planned from.
+///
+/// `sprint_proposal` joined the set in sprint 029: the Today page is where Ken
+/// starts planning, and "which sprint am I pushing on today" is the same kind of
+/// answer as "which card" — it was only absent because the planner predates
+/// proposals being a first-class node. Anything outside this list is rejected by
+/// [`resolve_source`] rather than stored as an unresolvable reference.
+const PLANNABLE_KINDS: [&str; 4] = ["workitem", "card", "topic", "sprint_proposal"];
+
+/// Resolve a source node's display title, per kind. Every kind in
+/// [`PLANNABLE_KINDS`] must appear here or its title comes back NULL.
+const SOURCE_TITLE: &str = "CASE %.kind \
+     WHEN 'workitem' THEN w.title \
+     WHEN 'card' THEN c.title \
+     WHEN 'topic' THEN t.name \
+     WHEN 'sprint_proposal' THEN sp.title END";
+
+const SOURCE_JOINS: &str = "LEFT JOIN workitem w ON w.node_id = %.id \
+     LEFT JOIN card c ON c.node_id = %.id \
+     LEFT JOIN topic t ON t.node_id = %.id \
+     LEFT JOIN sprint_proposal sp ON sp.node_id = %.id";
+
+fn select_items() -> String {
+    format!(
+        "SELECT d.node_id, d.plan_date, d.position, d.display, d.source_node_id, \
+                s.kind AS source_kind, {} AS source_title, \
+                d.completed_at, d.created_at \
+         FROM daily_plan_item d JOIN node s ON s.id = d.source_node_id {}",
+        SOURCE_TITLE.replace('%', "s"),
+        SOURCE_JOINS.replace('%', "s"),
+    )
+}
 
 async fn resolve_source(
     tx: &mut Transaction<'_, Postgres>,
     source_node_id: i64,
 ) -> Result<(String, String)> {
-    let row = sqlx::query(
-        "SELECT n.kind, CASE n.kind \
-             WHEN 'workitem' THEN w.title WHEN 'card' THEN c.title WHEN 'topic' THEN t.name END AS title \
-         FROM node n LEFT JOIN workitem w ON w.node_id = n.id \
-         LEFT JOIN card c ON c.node_id = n.id LEFT JOIN topic t ON t.node_id = n.id \
-         WHERE n.id = $1",
-    )
-    .bind(source_node_id)
-    .fetch_optional(&mut **tx)
-    .await?
-    .ok_or(PlanningError::SourceNotFound(source_node_id))?;
+    let sql = format!(
+        "SELECT n.kind, {} AS title FROM node n {} WHERE n.id = $1",
+        SOURCE_TITLE.replace('%', "n"),
+        SOURCE_JOINS.replace('%', "n"),
+    );
+    let row = sqlx::query(&sql)
+        .bind(source_node_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(PlanningError::SourceNotFound(source_node_id))?;
     let kind: String = row.get("kind");
-    if !matches!(kind.as_str(), "workitem" | "card" | "topic") {
+    if !PLANNABLE_KINDS.contains(&kind.as_str()) {
         return Err(PlanningError::WrongSource {
             node_id: source_node_id,
             kind,
@@ -167,7 +188,7 @@ pub async fn create_item(
 /// (WI #525).
 pub async fn get_item(pool: &PgPool, node_id: i64) -> Result<Option<DailyPlanItem>> {
     Ok(
-        sqlx::query_as::<_, DailyPlanItem>(&format!("{SELECT_ITEMS} WHERE d.node_id = $1"))
+        sqlx::query_as::<_, DailyPlanItem>(&format!("{} WHERE d.node_id = $1", select_items()))
             .bind(node_id)
             .fetch_optional(pool)
             .await?,
@@ -185,7 +206,8 @@ pub async fn list_items(pool: &PgPool, from: Date, to: Date) -> Result<Vec<Daily
         return Err(PlanningError::InvalidRange("from must not be after to"));
     }
     Ok(sqlx::query_as::<_, DailyPlanItem>(&format!(
-        "{SELECT_ITEMS} WHERE d.plan_date BETWEEN $1 AND $2 ORDER BY d.plan_date, d.position"
+        "{} WHERE d.plan_date BETWEEN $1 AND $2 ORDER BY d.plan_date, d.position",
+        select_items()
     ))
     .bind(from)
     .bind(to)
@@ -409,8 +431,9 @@ pub async fn history(
         ));
     }
     let items = sqlx::query_as::<_, DailyPlanItem>(&format!(
-        "{SELECT_ITEMS} WHERE d.plan_date BETWEEN $1 AND $2 \
-         AND ($3::bigint IS NULL OR d.source_node_id = $3) ORDER BY d.plan_date, d.position"
+        "{} WHERE d.plan_date BETWEEN $1 AND $2 \
+         AND ($3::bigint IS NULL OR d.source_node_id = $3) ORDER BY d.plan_date, d.position",
+        select_items()
     ))
     .bind(from)
     .bind(to)

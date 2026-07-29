@@ -3,6 +3,7 @@
   import {
     api,
     type ProjectRow,
+    type ProposalRow,
     type WorkItemRow,
     type RelatedRef,
   } from "$lib/api";
@@ -14,6 +15,7 @@
     WI_TYPES,
   } from "$lib/generated/vocab";
   import {
+    CATEGORY_ORDER,
     DEFAULT_RELATIONSHIP_LABEL,
     KNOWN_RELATIONSHIP_LABELS,
     chip,
@@ -95,19 +97,23 @@
     ),
   );
 
-  // WI #678 — the rail groups by category on request. Alphabetical stays the
-  // default: colour runs read better when contiguous, but Ken already navigates
-  // this list by alphabetical position, so regrouping it is opt-in rather than
-  // something a colour change drags along with it.
-  let groupByCategory = $state(readSticky(STICKY_GROUP_KEY) === "1");
+  // WI #678 — the rail groups by category. Grouped is the default (Ken,
+  // 2026-07-29, after living with both): the colour runs only pay off when they
+  // are contiguous. Alphabetical is one click away and the choice sticks, so
+  // "most of the time I'll be alphabetical" costs one toggle, once.
+  //
+  // Reads `!== "0"` rather than `=== "1"` so that *unset* means grouped — an
+  // existing user who never touched the checkbox gets the new default, and only
+  // an explicit opt-out is remembered.
+  let groupByCategory = $state(readSticky(STICKY_GROUP_KEY) !== "0");
 
   const projectGroups = $derived.by(() => {
     const groups: { key: string; label: string; projects: ProjectRow[] }[] = [];
     const placed = new Set<number>();
-    // Vocabulary order (alphabetical), not hue order: the point of grouping is
-    // that a category sits in a predictable place, and hue order would reshuffle
-    // the rail every time a hue is retuned.
-    for (const c of PROJECT_CATEGORIES) {
+    // CATEGORY_ORDER, not vocabulary or hue order — see domain.ts. A category
+    // needs a predictable place in the rail, and hue order would reshuffle it
+    // every time a hue is retuned.
+    for (const c of CATEGORY_ORDER) {
       const ps = visibleProjects.filter((p) => p.category === c);
       if (ps.length === 0) continue;
       ps.forEach((p) => placed.add(p.id));
@@ -176,6 +182,55 @@
   let previewNode = $state<number | null>(null);
   let flashWi = $state<number | null>(null);
   let forceShow = $state<Set<number>>(new Set());
+
+  // WI #622 — filter to the work items a sprint proposal *covers*, which is the
+  // only honest answer to "what is in this sprint". The `sprint` field looks
+  // like it should answer it and cannot: it is free text and usually empty. The
+  // truth is the `covers` edges, so this reads them.
+  //
+  // Deliberately a separate control from the filter row, and applied on a
+  // button press rather than on selection: picking a proposal is a navigation
+  // decision, not a filter tweak, and it costs a round trip to resolve.
+  let proposals = $state<ProposalRow[]>([]);
+  let propChoice = $state<number | null>(null);
+  let propFilter = $state<{ title: string; wiNumbers: Set<number> } | null>(null);
+
+  // Active first, then the rest of the live queue — server order within each
+  // group, which is Planning's order (pinned first, then rank). A done or
+  // declined proposal is not something you filter to.
+  const propOptions = $derived.by(() => {
+    const live = proposals.filter((p) => !p.archived);
+    return [
+      ...live.filter((p) => p.status === "active"),
+      ...live.filter((p) => p.status === "proposed"),
+    ];
+  });
+
+  async function applyPropFilter() {
+    if (propChoice === null) return;
+    const detail = await attempt(
+      () => api.proposal(propChoice!),
+      "Load proposal",
+    );
+    if (!detail) return;
+    propFilter = {
+      title: detail.title,
+      wiNumbers: new Set(detail.covered.map((c) => c.wi_number)),
+    };
+  }
+
+  // A proposal's entry takes its project's rail colour, so the dropdown is
+  // scanned the same way the rail is. It colours the *whole* option rather than
+  // just the project name because a native <option> renders as plain text —
+  // there is no element inside it to style separately.
+  function propColor(p: ProposalRow): string | undefined {
+    const proj = projects.find((x) => x.name === p.project);
+    return proj ? projectRailColor(proj) : undefined;
+  }
+  const propChoiceColor = $derived.by(() => {
+    const p = propOptions.find((x) => x.node_id === propChoice);
+    return p ? propColor(p) : undefined;
+  });
 
   // filters
   let search = $state("");
@@ -257,18 +312,43 @@
     fSizes = new Set(sizeOptions);
     fAreas = new Set(areaOptions);
     fSprints = new Set(sprintOptions());
+    fTags = new Set();
     showArchived = false;
+  }
+
+  // WI #622 — tag filtering, AND semantics: an item must carry *every* selected
+  // tag. Empty set means "no tag filter", which is why this is a whitelist of
+  // wanted tags rather than the show/hide sets the other filters use — those
+  // start full, this starts empty.
+  //
+  // No query and no `tag_in_use` table: `list_work_items` already returns
+  // `tags` on every row and the page already holds every row for the project,
+  // so the chip row is derived from data that is in memory before it renders.
+  // Measured on the live corpus: the fetch this rides on is ~6ms for korg's 108
+  // items, unchanged by any of this.
+  let fTags = $state<Set<string>>(new Set());
+
+  function toggleTag(tag: string) {
+    const next = new Set(fTags);
+    if (next.has(tag)) next.delete(tag);
+    else next.add(tag);
+    fTags = next;
   }
 
   const filtered = $derived(
     items.filter((it) => {
       if (forceShow.has(it.wi_number)) return true; // a find-by-ID jump always shows its target
+      // Layered on top of the other filters, not instead of them: "this sprint,
+      // in this project, still open" is the common question, and each part
+      // stays visible and adjustable.
+      if (propFilter && !propFilter.wiNumbers.has(it.wi_number)) return false;
       if (!showArchived && it.archived) return false;
       if (!fTypes.has(it.wi_type)) return false;
       if (!fStatuses.has(it.wi_status) && !(quickEdit && quickEditKeep.has(it.wi_number))) return false;
       if (!fSizes.has(it.wi_tshirt)) return false;
       if (it.area ? !fAreas.has(it.area) : false) return false;
       if (it.sprint ? !fSprints.has(it.sprint) : !fSprints.has(UNASSIGNED)) return false;
+      for (const t of fTags) if (!it.tags.includes(t)) return false;
       if (search.trim() !== "") {
         const q = search.toLowerCase();
         if (!(it.title.toLowerCase().includes(q) || it.content.toLowerCase().includes(q)))
@@ -277,6 +357,20 @@
       return true;
     }),
   );
+
+  // The chips are the tags on the rows you can currently see, with counts —
+  // derived from `filtered`, so each click narrows the row to what still
+  // co-occurs and a dead-end combination is never offered. A selected tag is
+  // always present here by construction: every surviving row carries it.
+  const tagOptions = $derived.by(() => {
+    const counts = new Map<string, number>();
+    for (const it of filtered) {
+      for (const t of it.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    // Alphabetical, not by count: a chip that moves when you click a different
+    // one is a chip you have to re-find every time.
+    return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  });
 
   async function loadProjects() {
     const [ps, recent] = await Promise.all([api.projects(), api.recentProject()]);
@@ -351,6 +445,7 @@
     loadError = null;
     try {
       await loadProjects();
+      proposals = await api.proposals();
       await loadItems();
     } catch (e) {
       loadError = e;
@@ -541,6 +636,14 @@
 <section class="space-y-4">
   <div class="flex flex-wrap items-center justify-between gap-2">
     <h1 class="text-xl font-semibold">Work items</h1>
+    <!-- Creating sits with the page-level controls rather than at the end of a
+         filter row (Ken, 2026-07-29): it acts on the project, not on the view. -->
+    <div class="ml-auto flex items-center gap-2">
+      <button
+        class="shrink-0 rounded bg-[var(--color-accent-soft)] px-3 py-1.5 text-sm hover:bg-[var(--color-accent)] disabled:opacity-40"
+        disabled={current === ALL}
+        title={current === ALL ? "Pick a project first" : "New work item"}
+        onclick={() => (creating = !creating)}>+ New Work Item</button>
     <div class="flex items-center gap-1" title="Jump to a work item, or preview any node, by its id">
       <label class="sr-only" for="find-by-id"
         >Find a work item or node by id</label
@@ -556,6 +659,7 @@
       <button
         class="rounded bg-[var(--color-accent-soft)] px-2 py-1 text-sm hover:bg-[var(--color-accent)]"
         onclick={findById}>Go</button>
+      </div>
     </div>
   </div>
 
@@ -722,6 +826,43 @@
       </details>
     {/if}
 
+    <!-- Tags live above the filter row and collapsed, matching Project
+         Details (Ken, 2026-07-29). The agents tag heavily — korg alone has 55
+         distinct tags — so an always-open chip row pushed the filters and the
+         table down the page for a control used occasionally. The summary
+         carries the selected count so an active tag filter is visible while
+         the section is shut; a hidden filter that silently shortens the list
+         is the one thing collapsing must not cost. -->
+    {#if tagOptions.length > 0}
+      <details class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm">
+        <summary class="cursor-pointer text-xs font-semibold text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+          >Tags{#if fTags.size > 0}<span class="ml-1 text-amber-200"
+              >({fTags.size} selected)</span
+            >{/if}</summary
+        >
+        <div class="mt-2 flex flex-wrap items-center gap-1" data-testid="tag-filter-row">
+          {#each tagOptions as [tag, count] (tag)}
+            <button
+              class={`rounded px-1.5 py-0.5 text-xs ${
+                fTags.has(tag)
+                  ? "bg-amber-900/70 text-amber-200"
+                  : "bg-[var(--color-surface)] text-[var(--color-muted)] hover:bg-[var(--color-surface-hi)]"
+              }`}
+              aria-pressed={fTags.has(tag)}
+              title={`${count} item${count === 1 ? "" : "s"} tagged ${tag}`}
+              onclick={() => toggleTag(tag)}>#{tag} <span class="opacity-60">{count}</span></button
+            >
+          {/each}
+          {#if fTags.size > 0}
+            <button
+              class="ml-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-xs hover:bg-[var(--color-surface-hi)]"
+              onclick={() => (fTags = new Set())}>clear tags</button
+            >
+          {/if}
+        </div>
+      </details>
+    {/if}
+
     <!-- toolbar -->
     <div class="flex flex-wrap items-center gap-2">
       <input class="w-40 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" placeholder="search…" bind:value={search} />
@@ -741,14 +882,67 @@
         class:hover:bg-[var(--color-surface-hi)]={!quickEdit}
         onclick={toggleQuickEdit}
       >{quickEdit ? "✓ Quick Edit" : "Quick Edit"}</button>
-      <div class="ml-auto">
-        <button
-          class="rounded bg-[var(--color-accent-soft)] px-3 py-1.5 text-sm hover:bg-[var(--color-accent)] disabled:opacity-40"
-          disabled={current === ALL}
-          title={current === ALL ? "Pick a project first" : "New work item"}
-          onclick={() => (creating = !creating)}>+ New Work Item</button>
-      </div>
     </div>
+
+    <!-- Row 2. Set apart from the filter row on purpose: this narrows the list
+         to a sprint's contents, which is a different kind of act from ticking a
+         status. -->
+    <div class="flex flex-wrap items-center gap-2">
+        <label class="sr-only" for="prop-filter-select">Sprint proposal</label>
+        <!-- Stays enabled while the filter is on: switching sprints is the
+             common move, and making it a three-click round trip through
+             "Normal" would be the same "isn't natural" complaint the dropdown
+             replaced. Changing the selection re-applies immediately. -->
+        <select
+          id="prop-filter-select"
+          class="max-w-64 truncate rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-xs"
+          data-testid="prop-filter-select"
+          style={propChoiceColor ? `color: ${propChoiceColor}` : ""}
+          bind:value={propChoice}
+          onchange={() => {
+            if (propFilter) void applyPropFilter();
+          }}
+        >
+          <option value={null} disabled>Prop…</option>
+          {#if propOptions.some((p) => p.status === "active")}
+            <optgroup label="Active">
+              {#each propOptions.filter((p) => p.status === "active") as p (p.node_id)}
+                <option
+                  value={p.node_id}
+                  style={propColor(p) ? `color: ${propColor(p)}` : ""}
+                  >{p.project ?? "—"} · #{p.node_id} {p.title}</option
+                >
+              {/each}
+            </optgroup>
+          {/if}
+          {#if propOptions.some((p) => p.status === "proposed")}
+            <optgroup label="Proposed">
+              {#each propOptions.filter((p) => p.status === "proposed") as p (p.node_id)}
+                <option
+                  value={p.node_id}
+                  style={propColor(p) ? `color: ${propColor(p)}` : ""}
+                  >{p.project ?? "—"} · #{p.node_id} {p.title}</option
+                >
+              {/each}
+            </optgroup>
+          {/if}
+        </select>
+        <button
+          class="shrink-0 rounded border px-2 py-1 text-xs disabled:opacity-40"
+          class:border-[var(--color-accent)]={propFilter !== null}
+          class:bg-[var(--color-accent-soft)]={propFilter !== null}
+          class:border-[var(--color-border)]={propFilter === null}
+          class:hover:bg-[var(--color-surface-hi)]={propFilter === null}
+          data-testid="prop-filter-toggle"
+          disabled={propFilter === null && propChoice === null}
+          title={propFilter
+            ? `Showing only ${propFilter.title} — click to clear`
+            : "Show only the work items this proposal covers"}
+          onclick={() => (propFilter ? (propFilter = null) : applyPropFilter())}
+          >{propFilter ? "Normal" : "Only Prop"}</button
+        >
+    </div>
+
 
     {#if creating}
       <WorkItemForm

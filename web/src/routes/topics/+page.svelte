@@ -4,6 +4,7 @@
   import { chip } from "$lib/domain";
   import { attempt, notify } from "$lib/toast.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
+  import BackTo from "$lib/components/BackTo.svelte";
 
   let topics = $state<Topic[]>([]);
   let query = $state("");
@@ -106,6 +107,7 @@
 <section class="space-y-4">
   <header class="flex flex-wrap items-end justify-between gap-3">
     <div>
+      <div class="mb-2"><BackTo href="/" label="← Today" /></div>
       <p
         class="text-xs font-medium uppercase tracking-[0.18em] text-[var(--color-accent)]"
       >

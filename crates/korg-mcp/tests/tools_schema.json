@@ -1075,7 +1075,7 @@
     "name": "list_daily_plan"
   },
   {
-    "description": "Plan a work item, card, or topic. Display is resolved and snapshotted server-side. Returns the created item.",
+    "description": "Plan a work item, card, topic, or sprint proposal. Display is resolved and snapshotted server-side. Returns the created item.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

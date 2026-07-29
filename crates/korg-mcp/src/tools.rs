@@ -205,7 +205,7 @@ pub fn tools() -> Vec<Tool> {
         tool2::<ops::NodeId, topics::TopicPatch>("update_topic", "Partially update a topic; returns the updated topic."),
         tool2::<ops::NodeId, ops::ArchiveTopic>("archive_topic", "Archive or restore a topic; returns the updated topic."),
         tool::<ops::DateRange>("list_daily_plan", "List daily plan items in an inclusive date range with snapshots and current source titles."),
-        tool::<ops::CreateDailyPlanItem>("create_daily_plan_item", "Plan a work item, card, or topic. Display is resolved and snapshotted server-side. Returns the created item."),
+        tool::<ops::CreateDailyPlanItem>("create_daily_plan_item", "Plan a work item, card, topic, or sprint proposal. Display is resolved and snapshotted server-side. Returns the created item."),
         tool2::<ops::NodeId, ops::SetCompletion>("set_daily_plan_completion", "Complete or uncomplete any daily plan item; timestamp is server-authoritative. Returns the updated item."),
         tool::<ops::NodeId>("delete_daily_plan_item", "Delete an item from an open day; past structure is frozen. Returns {deleted: true}."),
         tool2::<ReorderPlanDate, ops::ReorderDailyPlan>("reorder_daily_plan", "Replace the complete order for an open day. Returns the day in its new order."),

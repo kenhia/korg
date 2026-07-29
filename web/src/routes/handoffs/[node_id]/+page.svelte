@@ -16,6 +16,7 @@
   // The body is READ-ONLY on purpose: handoffs are authored through the API and
   // the `handoff` skill, and a human reviewing one should be able to respond
   // without risking the document. Responding means a comment.
+  import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { api, type HandoffFull, type RelatedRef } from "$lib/api";
   import { renderMarkdown } from "$lib/markdown";
@@ -67,7 +68,34 @@
     const d = new Date(iso);
     return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
   }
+
+  // Getting *out* was browser-back only (Ken, 2026-07-29). Escape now leaves,
+  // matching the slide-over this page is reached from — the two are the same
+  // gesture at different sizes, so they should exit the same way. The visible
+  // control matters just as much: a keyboard-only fix would leave the mouse
+  // path exactly as it was.
+  //
+  // Back rather than a fixed destination, because this page is reached from
+  // several places (a work item's related block, a Planning card). On a cold
+  // URL there is nothing to go back to, so fall back to Work Items instead of
+  // leaving the button dead.
+  const arrivedDirectly =
+    typeof history !== "undefined" && history.length <= 1;
+
+  function leave() {
+    if (arrivedDirectly) void goto("/work-items");
+    else history.back();
+  }
+
+  function onKeyDown(e: KeyboardEvent) {
+    // Not while typing a comment — Escape belongs to the textarea then.
+    const tag = (e.target as HTMLElement)?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (e.key === "Escape") leave();
+  }
 </script>
+
+<svelte:window onkeydown={onKeyDown} />
 
 <svelte:head>
   <title>{handoff ? `${handoff.title} — korg` : "Handoff — korg"}</title>
@@ -85,6 +113,12 @@
   {:else if handoff}
     <header class="space-y-2 border-b border-[var(--color-border)] pb-3">
       <div class="flex flex-wrap items-center gap-2">
+        <button
+          class="rounded border border-[var(--color-border)] px-2 py-0.5 text-xs hover:bg-[var(--color-surface-hi)]"
+          data-testid="handoff-back"
+          title="Back (Esc)"
+          onclick={leave}>← Back</button
+        >
         <span
           class="rounded bg-[var(--color-accent-soft)] px-1.5 py-0.5 text-xs uppercase tracking-wide text-[var(--color-accent)]"
           >handoff</span
