@@ -30,6 +30,7 @@
   import Comments from "$lib/components/Comments.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
   import ConfirmButton from "$lib/components/ConfirmButton.svelte";
+  import RowTickers from "$lib/components/RowTickers.svelte";
   import { attempt, notify } from "$lib/toast.svelte";
 
   const ALL = "\u0000all";
@@ -874,12 +875,18 @@
       <label class="flex items-center gap-1 text-xs text-[var(--color-muted)]"><input type="checkbox" bind:checked={showArchived} /> archived</label>
       <button class="rounded border border-[var(--color-border)] px-2 py-1 text-xs hover:bg-[var(--color-surface-hi)]" onclick={resetFilters}>Clear</button>
       <button class="rounded border border-[var(--color-border)] px-2 py-1 text-xs hover:bg-[var(--color-surface-hi)]" title="Refresh" aria-label="Refresh" onclick={loadItems}>↻</button>
+      <!-- Filled blue rather than outlined (Ken, 2026-07-31): it is an action
+           you reach for, not a filter you tick, and it now reads as the same
+           kind of thing as "+ New Work Item" and Review. The on-state can no
+           longer be "has a background", so it inverts — bright accent with dark
+           text, which hovering the off-state cannot imitate. -->
       <button
-        class="rounded border px-2 py-1 text-xs"
-        class:border-[var(--color-accent)]={quickEdit}
-        class:bg-[var(--color-accent-soft)]={quickEdit}
-        class:border-[var(--color-border)]={!quickEdit}
-        class:hover:bg-[var(--color-surface-hi)]={!quickEdit}
+        class="rounded px-2 py-1 text-xs"
+        class:bg-[var(--color-accent)]={quickEdit}
+        class:text-[var(--color-bg)]={quickEdit}
+        class:font-semibold={quickEdit}
+        class:bg-[var(--color-accent-soft)]={!quickEdit}
+        class:hover:bg-[var(--color-accent)]={!quickEdit}
         onclick={toggleQuickEdit}
       >{quickEdit ? "✓ Quick Edit" : "Quick Edit"}</button>
     </div>
@@ -940,6 +947,20 @@
             : "Show only the work items this proposal covers"}
           onclick={() => (propFilter ? (propFilter = null) : applyPropFilter())}
           >{propFilter ? "Normal" : "Only Prop"}</button
+        >
+        <!-- WI #570 — the close-out page. A link, not a button: it is
+             navigation, so back, middle-click and the keyboard all work for
+             free. The project rides in the query string rather than being
+             inherited from localStorage, so the URL says what it shows and does
+             not depend on whether `pick()` happened to run this session. -->
+        <a
+          class="shrink-0 rounded bg-[var(--color-accent-soft)] px-2 py-1 text-xs hover:bg-[var(--color-accent)]"
+          data-testid="review-completed-link"
+          href={current === ALL
+            ? "/work-items/review"
+            : `/work-items/review?project=${encodeURIComponent(current)}`}
+          title="Review done and resolved items and close them out"
+          >Review</a
         >
     </div>
 
@@ -1055,7 +1076,10 @@
                   onclick={(e) => {
                     e.stopPropagation();
                     open(item);
-                  }}>{item.title}</button
+                  }}>{item.title}<RowTickers
+                    comments={item.comment_count}
+                    details={item.details != null && item.details !== ""}
+                  /></button
                 >
               </td>
             </tr>

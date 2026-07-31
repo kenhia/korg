@@ -19,7 +19,16 @@ covers:
   Filters include tags (AND-combined, collapsed by default) and `Only Prop`,
   which narrows the list to the work items a sprint proposal *covers* — the
   `sprint` field is free text and usually empty, so the `covers` edges are the
-  only honest answer to "what is in this sprint".
+  only honest answer to "what is in this sprint". List rows carry *tickers* —
+  💬 with a count for comments, 📝 for a details section — so "there is more here
+  than the title" is visible without opening the row.
+- **Review completed** (`/work-items/review`) — the close-out page, reached by
+  the `Review` button beside `Only Prop` rather than from the top nav. Lists
+  **only** `done` and `resolved` items (a status-filtered server read, so an
+  open item cannot appear however the filters are set), closes each with a
+  single undoable button rather than a status dropdown, and shows the selected
+  row's content, details *and* comments together. The details pane sits below
+  the list, moving beside it once the window is wide enough.
 - **Cards** — kanban cards with status, rank, tags, comments, and clickable
   launch links for URL fields.
 - **Link Up** — relate any node to any other across kinds via the generalized
