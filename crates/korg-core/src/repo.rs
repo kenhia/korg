@@ -394,7 +394,12 @@ pub fn archived_default() -> ArchivedFilter {
 pub struct NewWorkItem {
     #[serde(default)]
     pub project_id: Option<i64>,
-    /// Project name — the alternative to `project_id` (see list_projects). Never pass both.
+    /// Project name, e.g. `klams` — the alternative to `project_id`; never pass
+    /// both. Resolved by exact name, and an unknown name returns `not_found`
+    /// rather than mis-filing, so pass a name you are confident in directly.
+    /// Call `list_projects` only when the name is genuinely unknown or
+    /// ambiguous — the roster in this server's instructions already names
+    /// every active project.
     #[serde(default)]
     pub project: Option<String>,
     #[serde(default)]
@@ -503,7 +508,12 @@ pub async fn create_work_item(pool: &PgPool, new: NewWorkItem) -> Result<WorkIte
 pub struct NewCard {
     #[serde(default)]
     pub project_id: Option<i64>,
-    /// Project name — the alternative to `project_id` (see list_projects). Never pass both.
+    /// Project name, e.g. `klams` — the alternative to `project_id`; never pass
+    /// both. Resolved by exact name, and an unknown name returns `not_found`
+    /// rather than mis-filing, so pass a name you are confident in directly.
+    /// Call `list_projects` only when the name is genuinely unknown or
+    /// ambiguous — the roster in this server's instructions already names
+    /// every active project.
     #[serde(default)]
     pub project: Option<String>,
     #[serde(default)]
@@ -563,7 +573,12 @@ pub async fn create_card(pool: &PgPool, new: NewCard) -> Result<CardRow> {
 pub struct NewLink {
     #[serde(default)]
     pub project_id: Option<i64>,
-    /// Project name — the alternative to `project_id` (see list_projects). Never pass both.
+    /// Project name, e.g. `klams` — the alternative to `project_id`; never pass
+    /// both. Resolved by exact name, and an unknown name returns `not_found`
+    /// rather than mis-filing, so pass a name you are confident in directly.
+    /// Call `list_projects` only when the name is genuinely unknown or
+    /// ambiguous — the roster in this server's instructions already names
+    /// every active project.
     #[serde(default)]
     pub project: Option<String>,
     #[serde(default)]
@@ -1680,7 +1695,16 @@ pub struct ProjectRow {
     /// `~/`-relative, no trailing slash, no whitespace or parentheses; the
     /// `project_src_path_canonical` constraint (migration 0019) enforces it.
     pub src_path: Option<String>,
+    /// The routing contract: one line, ≤160 chars, saying what work belongs
+    /// here and — where a sibling plausibly claims the same work — what does
+    /// not. Capped by `project_description_routing_line` (0020); the long form
+    /// lives in `notes`.
     pub description: Option<String>,
+    /// Long-form operational context (WI #828): deploy topology, build
+    /// commands, house conventions. Unbounded, and deliberately absent from the
+    /// lean `list_projects` and the MCP instructions roster — it exists so that
+    /// capping `description` did not have to destroy prose worth keeping.
+    pub notes: Option<String>,
     /// Lifecycle status — see PROJECT_STATUSES.
     pub status: String,
     /// Machines this project's working copy lives on (kai/kubs0/cleo…).
@@ -1734,8 +1758,20 @@ pub struct ProjectPatch {
     /// value carrying prose or history is rejected rather than stored.
     #[serde(default, deserialize_with = "ops::double_option")]
     pub src_path: Option<Option<String>>,
+    /// The routing contract. One line, **≤160 characters** (rejected above
+    /// that). First clause says what work belongs here, task-shaped —
+    /// "harness conventions and sprint layout", not "a repository containing…".
+    /// Where a sibling project plausibly claims the same work, add the
+    /// boundary: "Not X — that's `‹project›`." Written for an agent with zero
+    /// prior context deciding where a work item goes. No paths, repos, hosts or
+    /// build commands — those belong in the structured fields and `notes`.
     #[serde(default, deserialize_with = "ops::double_option")]
     pub description: Option<Option<String>>,
+    /// Long-form operational context — deploy topology, build commands, house
+    /// conventions. Unbounded, and never rendered into a routing view. Use it
+    /// for anything that would otherwise bloat `description` past its cap.
+    #[serde(default, deserialize_with = "ops::double_option")]
+    pub notes: Option<Option<String>>,
     #[serde(default)]
     #[schemars(schema_with = "schema::project_status")]
     pub status: Option<String>,
@@ -1748,9 +1784,29 @@ pub struct ProjectPatch {
     pub category: Option<Option<String>>,
 }
 
+/// The routing contract's only mechanically-enforceable clause (WI #828). The
+/// rest of it — task-shaped first clause, sibling boundary — is prose, checked
+/// by the project-metadata drift check rather than by a constraint.
+pub const PROJECT_DESCRIPTION_MAX: usize = 160;
+
 pub async fn update_project(pool: &PgPool, id: i64, patch: &ProjectPatch) -> Result<ProjectRow> {
     if let Some(v) = &patch.status {
         validate_status(v, &PROJECT_STATUSES, "project status")?;
+    }
+    // Checked here as well as by the CHECK constraint so the caller gets a
+    // `invalid_input` naming the field and the overage, rather than a raw
+    // constraint violation surfacing as `internal`. Counted in characters, not
+    // bytes — the constraint uses char_length, and a description is prose.
+    if let Some(Some(v)) = &patch.description {
+        let n = v.chars().count();
+        if n > PROJECT_DESCRIPTION_MAX {
+            return Err(RepoError::InvalidInput(format!(
+                "project description is {n} characters; the routing contract caps it at \
+                 {PROJECT_DESCRIPTION_MAX}. Put the long form in `notes` — it is unbounded, \
+                 and that is what it exists for."
+            ))
+            .into());
+        }
     }
     // Setting a category validates against the closed vocabulary (WI #678);
     // clearing it (inner None) stays legal, since `create_project` takes only a
@@ -1782,6 +1838,13 @@ pub async fn update_project(pool: &PgPool, id: i64, patch: &ProjectPatch) -> Res
     }
     if let Some(v) = &patch.description {
         sqlx::query("UPDATE project SET description = $2 WHERE id = $1")
+            .bind(id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.notes {
+        sqlx::query("UPDATE project SET notes = $2 WHERE id = $1")
             .bind(id)
             .bind(v)
             .execute(&mut *tx)
@@ -1839,7 +1902,7 @@ pub async fn update_project_by_name(
 }
 
 const PROJECT_SELECT: &str =
-    "SELECT id, name, gh_repo, src_path, description, status, machines, deploy_to, category \
+    "SELECT id, name, gh_repo, src_path, description, notes, status, machines, deploy_to, category \
      FROM project";
 
 pub async fn list_projects(pool: &PgPool) -> Result<Vec<ProjectRow>> {
@@ -1856,6 +1919,219 @@ pub async fn get_project(pool: &PgPool, id: i64) -> Result<Option<ProjectRow>> {
             .fetch_optional(pool)
             .await?,
     )
+}
+
+// --- projects: the tiered read surface (WI #828) ---------------------------
+//
+// Three consumers ask three different questions, and one no-arg 9-column tool
+// answered none of them well: the always-on roster wants names, a routing agent
+// wants "does this belong here?", and a maintenance pass wants everything.
+// `list_projects` now answers the middle question by default and the third on
+// request; `get_project` answers it for one project.
+
+/// A project as the lean `list_projects` reports it: the fields that answer
+/// *does this belong here?*, and nothing that answers *where does it live*.
+///
+/// `id`, `gh_repo`, `src_path`, `machines`, `deploy_to` and `category` are
+/// omitted deliberately. Dropping six of ten columns across the corpus is the
+/// dominant saving — far larger than the row filter — and every field left is
+/// routing signal.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProjectLeanRow {
+    pub name: String,
+    pub description: Option<String>,
+    /// Omitted entirely when `active`. In the default view every row is active,
+    /// so printing it would be pure noise; under `status:"all"` it is the only
+    /// thing distinguishing a live project from a dead one, which is exactly
+    /// when an agent must not confuse them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
+/// What the status filter hid. Returned on every list so a lean view can never
+/// masquerade as the whole corpus — an agent that finds no match must be able
+/// to see there is an escape hatch rather than conclude "no such project
+/// exists". Silent truncation is the precise failure this surface exists to
+/// treat, so this is a deliberate deviation from the bare-array convention.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProjectOmitted {
+    pub archived: i64,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProjectListLean {
+    pub items: Vec<ProjectLeanRow>,
+    pub omitted: ProjectOmitted,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProjectListFull {
+    pub items: Vec<ProjectRow>,
+    pub omitted: ProjectOmitted,
+}
+
+/// One project plus the areas under it (WI #828).
+///
+/// The field review specified "full row + inline comments, the `get_work_item`
+/// pattern". Comments are not available here and the difference is structural,
+/// not an omission: `comment.card_node_id` references `node(id)`, and a project
+/// is not a node — `node.project_id` points *at* projects. Inlining comments
+/// would mean making `project` a node kind, which is a different and much
+/// larger change than this WI.
+///
+/// Areas are the faithful adaptation. The intent of that decision was that a
+/// focused read commits to the full state of one project so the caller does not
+/// need a second round-trip; for a project the second call an agent actually
+/// makes is `list_areas`, so that is what is inlined.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProjectDetail {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub project: ProjectRow,
+    pub areas: Vec<AreaRow>,
+}
+
+/// Resolve the `status` argument into a SQL predicate value.
+///
+/// Absent → `active`. The principle from the field review, applied to the
+/// corpus as it now stands: *the default must include every row that could be a
+/// correct routing answer.* An archived project is never one — its work belongs
+/// to whatever superseded it — and those rows are precisely the confident-wrong
+/// -route trap (`ansible-k`, "Homelab configuration", archived, sitting beside
+/// an active `k-homelab`).
+///
+/// `Some("all")` → no filter. Anything else is validated against
+/// `PROJECT_STATUSES`.
+fn project_status_predicate(status: Option<&str>) -> Result<Option<String>> {
+    match status {
+        None => Ok(Some("active".to_string())),
+        Some("all") => Ok(None),
+        Some(s) => {
+            validate_status(s, &PROJECT_STATUSES, "project status")?;
+            Ok(Some(s.to_string()))
+        }
+    }
+}
+
+async fn count_hidden(pool: &PgPool, keep: Option<&str>) -> Result<i64> {
+    let Some(keep) = keep else { return Ok(0) };
+    Ok(
+        sqlx::query_scalar("SELECT count(*) FROM project WHERE status <> $1")
+            .bind(keep)
+            .fetch_one(pool)
+            .await?,
+    )
+}
+
+pub async fn list_projects_lean(pool: &PgPool, status: Option<&str>) -> Result<ProjectListLean> {
+    let keep = project_status_predicate(status)?;
+    let rows: Vec<(String, Option<String>, String)> = match &keep {
+        Some(s) => {
+            sqlx::query_as(
+                "SELECT name, description, status FROM project WHERE status = $1 ORDER BY name",
+            )
+            .bind(s)
+            .fetch_all(pool)
+            .await?
+        }
+        None => {
+            sqlx::query_as("SELECT name, description, status FROM project ORDER BY name")
+                .fetch_all(pool)
+                .await?
+        }
+    };
+    let items = rows
+        .into_iter()
+        .map(|(name, description, status)| ProjectLeanRow {
+            name,
+            description,
+            status: (status != "active").then_some(status),
+        })
+        .collect();
+    Ok(ProjectListLean {
+        items,
+        omitted: ProjectOmitted {
+            archived: count_hidden(pool, keep.as_deref()).await?,
+        },
+    })
+}
+
+pub async fn list_projects_full(pool: &PgPool, status: Option<&str>) -> Result<ProjectListFull> {
+    let keep = project_status_predicate(status)?;
+    let items = match &keep {
+        Some(s) => {
+            sqlx::query_as::<_, ProjectRow>(&format!(
+                "{PROJECT_SELECT} WHERE status = $1 ORDER BY name"
+            ))
+            .bind(s)
+            .fetch_all(pool)
+            .await?
+        }
+        None => {
+            sqlx::query_as::<_, ProjectRow>(&format!("{PROJECT_SELECT} ORDER BY name"))
+                .fetch_all(pool)
+                .await?
+        }
+    };
+    Ok(ProjectListFull {
+        items,
+        omitted: ProjectOmitted {
+            archived: count_hidden(pool, keep.as_deref()).await?,
+        },
+    })
+}
+
+/// Every active project's name, alphabetically — the roster rendered into the
+/// MCP `instructions` block at `initialize` (WI #674).
+///
+/// **Names only, and all of them.** The field review (#757, decision 4) ruled
+/// that the roster carries no descriptions: anything in `instructions` is paid
+/// by 100% of sessions, while a description only earns its tokens in a routing
+/// session, and deciding *which* names are opaque enough to need one is a
+/// judgement with no storage home — i.e. a new drift surface.
+///
+/// Two things in #674's original design fall out once descriptions are gone,
+/// and both are dropped deliberately rather than overlooked:
+///
+///   * **The top-N ranking by trailing work-item count.** Ranking existed to
+///     decide which projects were worth spending description tokens on. With
+///     names costing ~4 tokens each and 27 active projects fitting the budget
+///     whole, there is nothing to ration — and a complete roster cannot cause
+///     the misroute that an omitted project can. Alphabetical is also stable
+///     across sessions with no window to tune.
+///   * **The `category = 'Fun'` exclusion.** Its stated reason was that "a fun
+///     project churning for a week shouldn't evict a daily driver" — scarcity
+///     of ranked slots. No scarcity, no eviction, and `hv-simulator`, `kapollo`
+///     and `mortars` are real projects that receive real work items. Hiding
+///     them from the roster would produce exactly the guess this replaces.
+///
+/// Archived projects are excluded: they are never a correct routing answer.
+pub async fn active_project_names(pool: &PgPool) -> Result<Vec<String>> {
+    Ok(
+        sqlx::query_scalar("SELECT name FROM project WHERE status = 'active' ORDER BY name")
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
+/// Name-keyed focused read. Names are immutable (WI #246), so keying on the
+/// name is stable — the same reasoning `update_project_by_name` rests on.
+pub async fn get_project_detail(pool: &PgPool, name: &str) -> Result<Option<ProjectDetail>> {
+    let Some(project) =
+        sqlx::query_as::<_, ProjectRow>(&format!("{PROJECT_SELECT} WHERE name = $1"))
+            .bind(name)
+            .fetch_optional(pool)
+            .await?
+    else {
+        return Ok(None);
+    };
+    let areas = list_areas(pool, name).await?;
+    Ok(Some(ProjectDetail { project, areas }))
 }
 
 // --- projects (write) -----------------------------------------------------
@@ -2088,7 +2364,12 @@ pub async fn list_areas(pool: &PgPool, project: &str) -> Result<Vec<AreaRow>> {
 pub struct NewProposal {
     #[serde(default)]
     pub project_id: Option<i64>,
-    /// Project name — the alternative to `project_id` (see list_projects). Never pass both.
+    /// Project name, e.g. `klams` — the alternative to `project_id`; never pass
+    /// both. Resolved by exact name, and an unknown name returns `not_found`
+    /// rather than mis-filing, so pass a name you are confident in directly.
+    /// Call `list_projects` only when the name is genuinely unknown or
+    /// ambiguous — the roster in this server's instructions already names
+    /// every active project.
     #[serde(default)]
     pub project: Option<String>,
     #[serde(default)]
@@ -2977,7 +3258,12 @@ pub async fn get_report(pool: &PgPool, node_id: i64) -> Result<Option<ReportFull
 pub struct NewHandoff {
     #[serde(default)]
     pub project_id: Option<i64>,
-    /// Project name — the alternative to `project_id` (see list_projects). Never pass both.
+    /// Project name, e.g. `klams` — the alternative to `project_id`; never pass
+    /// both. Resolved by exact name, and an unknown name returns `not_found`
+    /// rather than mis-filing, so pass a name you are confident in directly.
+    /// Call `list_projects` only when the name is genuinely unknown or
+    /// ambiguous — the roster in this server's instructions already names
+    /// every active project.
     #[serde(default)]
     pub project: Option<String>,
     #[serde(default)]

@@ -90,12 +90,12 @@
   let eDescription = $state("");
   let eGhRepo = $state("");
   let eSrcPath = $state("");
+  let eNotes = $state("");
 
-  // Rail shows only active+maintenance unless "show all" (WI #246).
+  // Rail shows only active projects unless "show all" (WI #246; `maintenance`
+  // and `inactive` left the status vocabulary in #828).
   const visibleProjects = $derived(
-    projects.filter(
-      (p) => showAllProjects || p.status === "active" || p.status === "maintenance",
-    ),
+    projects.filter((p) => showAllProjects || p.status === "active"),
   );
 
   // WI #678 — the rail groups by category. Grouped is the default (Ken,
@@ -139,6 +139,7 @@
     eDescription = p.description ?? "";
     eGhRepo = p.gh_repo ?? "";
     eSrcPath = p.src_path ?? "";
+    eNotes = p.notes ?? "";
     areaAddFor = null;
   }
 
@@ -159,6 +160,7 @@
           description: eDescription.trim() || null,
           gh_repo: eGhRepo.trim() || null,
           src_path: eSrcPath.trim() || null,
+          notes: eNotes.trim() || null,
         }),
       "Save project",
     );
@@ -730,8 +732,15 @@
                 {#each PROJECT_CATEGORIES as c (c)}<option value={c}>{c}</option>{/each}
               </select>
             </label>
+            <!-- The counter is the point, not decoration: description is a
+                 routing line the server rejects past 160 chars, and finding
+                 that out from a failed save is a worse way to learn it. -->
             <label class="block text-xs text-[var(--color-muted)]">description
-              <input class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={eDescription} />
+              <span class="float-right tabular-nums" class:text-[var(--color-danger)]={eDescription.length > 160}>{eDescription.length}/160</span>
+              <input maxlength="160" class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={eDescription} />
+            </label>
+            <label class="block text-xs text-[var(--color-muted)]">notes
+              <textarea rows="4" class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={eNotes}></textarea>
             </label>
             <label class="block text-xs text-[var(--color-muted)]">github repo
               <input class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={eGhRepo} />
@@ -823,6 +832,7 @@
           {#if currentProject.src_path}<dt class="text-[var(--color-muted)]">Src Path</dt><dd>{currentProject.src_path}</dd>{/if}
           {#if currentProject.gh_repo}<dt class="text-[var(--color-muted)]">GitHub Repo</dt><dd>{currentProject.gh_repo}</dd>{/if}
           {#if currentProject.description}<dt class="text-[var(--color-muted)]">Description</dt><dd>{currentProject.description}</dd>{/if}
+          {#if currentProject.notes}<dt class="text-[var(--color-muted)]">Notes</dt><dd class="whitespace-pre-line">{currentProject.notes}</dd>{/if}
         </dl>
       </details>
     {/if}

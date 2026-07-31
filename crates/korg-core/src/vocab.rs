@@ -45,9 +45,21 @@ pub const PROPOSAL_STATUSES: [&str; 4] = ["proposed", "active", "done", "decline
 /// Daily-report statuses; mirrors the `report.status` CHECK (0010).
 pub const REPORT_STATUSES: [&str; 3] = ["ok", "attention", "problem"];
 
-/// Project lifecycle statuses (WI #246). Default WI-page rail shows only
-/// `active` + `maintenance` unless "show all" is on.
-pub const PROJECT_STATUSES: [&str; 4] = ["active", "maintenance", "inactive", "archived"];
+/// Project lifecycle statuses (WI #246, narrowed to two by #828). Default
+/// WI-page rail shows only `active` unless "show all" is on.
+///
+/// `maintenance` and `inactive` were dropped in 0020 on the same argument: both
+/// held **zero rows** and neither had semantics distinct from `archived`, which
+/// makes an unused vocabulary value a standing invitation for a future writer to
+/// invent a meaning nobody agreed. The live corpus was already 27 `active` /
+/// 8 `archived` when they were removed.
+///
+/// The status answers one question — *is this row a legitimate target for new
+/// work?* — and that question has two answers. Where `archived` covers two
+/// genuinely different situations (superseded: `kwi`/`kcard` → korg; dormant:
+/// `trt-llm-explore`), the difference lives in the `description` prose, because
+/// both filter identically and a status exists to filter.
+pub const PROJECT_STATUSES: [&str; 2] = ["active", "archived"];
 
 /// Project categories (WI #678). `project.category` has existed since 0011 but
 /// as free text, and it drifted the way free text does — the live corpus held

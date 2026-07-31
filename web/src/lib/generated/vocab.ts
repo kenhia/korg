@@ -21,7 +21,7 @@ export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 export const REPORT_STATUSES = ["ok", "attention", "problem"] as const;
 export type ReportStatus = (typeof REPORT_STATUSES)[number];
 
-export const PROJECT_STATUSES = ["active", "maintenance", "inactive", "archived"] as const;
+export const PROJECT_STATUSES = ["active", "archived"] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 
 export const PROJECT_CATEGORIES = ["AI", "Dashboard", "EVAL", "Fun", "Infrastructure", "Ops", "Other"] as const;

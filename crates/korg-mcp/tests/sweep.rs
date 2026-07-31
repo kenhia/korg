@@ -316,7 +316,7 @@ async fn update_project_patches_metadata_by_name() {
                 "update_project",
                 args(json!({
                     "name": "korg",
-                    "status": "maintenance",
+                    "status": "archived",
                     "gh_repo": "kenhiatt/korg",
                     "machines": ["kai", "kubs0"],
                 })),
@@ -325,7 +325,7 @@ async fn update_project_patches_metadata_by_name() {
             .unwrap(),
     );
     assert_eq!(patched["name"], "korg");
-    assert_eq!(patched["status"], "maintenance");
+    assert_eq!(patched["status"], "archived");
     assert_eq!(patched["gh_repo"], "kenhiatt/korg");
     assert_eq!(patched["machines"], json!(["kai", "kubs0"]));
 

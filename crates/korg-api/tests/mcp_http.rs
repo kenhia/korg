@@ -74,7 +74,8 @@ async fn mcp_http_end_to_end() {
     .await;
     assert_eq!(st, StatusCode::OK);
     let tools = tl["result"]["tools"].as_array().expect("tools array");
-    assert_eq!(tools.len(), 47, "expected 47 tools, got {}", tools.len());
+    // 48 since #828 added get_project.
+    assert_eq!(tools.len(), 48, "expected 48 tools, got {}", tools.len());
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     assert!(names.contains(&"create_work_item"));
     assert!(names.contains(&"list_work_items"));

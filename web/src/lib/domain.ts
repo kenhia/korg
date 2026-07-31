@@ -156,8 +156,10 @@ export const CATEGORY_ORDER: readonly ProjectCategory[] = [
 /**
  * The rail color for a project, or `undefined` for "render with no color".
  *
- * Inactive and archived projects get no color at all — not the `Other` color
- * (WI #678, decided 2026-07-26). Ken's taxonomy covers the *active* set because
+ * Archived projects get no color at all — not the `Other` color (WI #678,
+ * decided 2026-07-26; `inactive` and `maintenance` left the vocabulary in
+ * #828, so `archived` is now the whole of "not live"). Ken's taxonomy covers
+ * the *active* set because
  * that is the set he scans, so colourlessness doubles as a signal that a
  * project is not live. A project with no category is likewise uncoloured: it is
  * genuinely uncategorised — `create_project` takes only a name — rather than
@@ -171,7 +173,7 @@ export function projectRailColor(p: {
   status: string;
   category: string | null;
 }): string | undefined {
-  if (p.status !== "active" && p.status !== "maintenance") return undefined;
+  if (p.status !== "active") return undefined;
   if (p.category === null) return undefined;
   const hue = CATEGORY_HUE[p.category as ProjectCategory];
   return hue === undefined ? undefined : `hsl(${hue} 55% 62%)`;

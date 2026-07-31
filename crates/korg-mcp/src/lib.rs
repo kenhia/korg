@@ -18,12 +18,50 @@ pub fn server_instructions() -> &'static str {
      results carrying {message, code} where code is one of invalid_input, not_found, \
      conflict, internal. Paginated collection reads (list_work_items, list_cards, \
      list_links, list_topics, survey_work_items) return {items, total, limit, offset}; \
-     the unpaginated ones (list_proposals, list_reports, list_projects, list_areas, \
-     list_comments, list_daily_plan) return a bare array. All exclude \
+     the unpaginated ones (list_proposals, list_reports, list_areas, \
+     list_comments, list_daily_plan) return a bare array; and the filtered one \
+     (list_projects) returns {items, omitted}, where `omitted` counts the rows \
+     its status filter hid — so a narrowed view can never be mistaken for the \
+     whole corpus. All exclude \
      archived rows unless you ask for them. Writes take a project or area by name \
      (`project`/`area`) or by id (`project_id`/`area_id`), never both. \
      A `has_handoff` edge in a focused read (get_work_item/get_proposal) is \
      required context: get_handoff and read it before acting on the work — it \
      carries durable state another session left for you, not optional related \
      reading."
+}
+
+/// [`server_instructions`] plus the live project roster (WI #674).
+///
+/// The roster exists to remove the *reason* for a reflexive `list_projects`
+/// call, which #673 removed the *nudge* for. Neither works alone: telling an
+/// agent "pass a name you are confident in" without supplying the names invites
+/// a confident wrong guess, which is worse than the lookup.
+///
+/// Rendered at `initialize` rather than at process start, and that is the whole
+/// design. korg is a long-running HTTP MCP server that can go weeks without a
+/// restart during periods when korg itself is not being developed, so anything
+/// baked at startup goes arbitrarily stale — and a refresh job would never
+/// reach the running process. MCP returns `instructions` in the `initialize`
+/// response, i.e. once per client session, so worst-case staleness is one
+/// session. `initialize` is not a hot path and this is one indexed scan.
+///
+/// **Fails open.** A roster is an optimization; it must never be able to take
+/// korg's MCP surface down. If the query errors, the caller emits the base
+/// instructions and the session simply pays for `list_projects` the old way.
+pub async fn server_instructions_with_roster(pool: &sqlx::PgPool) -> String {
+    let base = server_instructions();
+    match korg_core::repo::active_project_names(pool).await {
+        // The pointer sentence is kept to one line on purpose: the roster is
+        // paid by every session, and the names are the irreducible part of it
+        // (~87 tokens for 27 projects). A longer explanation would cost more
+        // than the thing it explains.
+        Ok(names) if !names.is_empty() => format!(
+            "{base}\n\nActive projects (the only valid targets for new work): {}. \
+             Pass one by name directly; call list_projects only when you need their \
+             descriptions to choose between them.",
+            names.join(", ")
+        ),
+        _ => base.to_string(),
+    }
 }

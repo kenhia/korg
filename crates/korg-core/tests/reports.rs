@@ -136,7 +136,7 @@ async fn project_updated_advances_on_write() {
         &pool,
         id,
         &korg_core::repo::ProjectPatch {
-            status: Some("maintenance".into()),
+            status: Some("archived".into()),
             ..Default::default()
         },
     )
