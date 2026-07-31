@@ -185,3 +185,57 @@ holds the prior values regardless.
 Gate 1 — #757's field review — blocks everything else in the proposal: #828 (the
 tiered read surface), #674 and #673. Run it in a fresh session; its `details`
 carries the measured field inventory so it does not re-derive it.
+
+## Deployed 2026-07-31
+
+- **Image**: `korg:3fe5caef20d3` — revision
+  `3fe5caef20d3a56991c09a0706521058ba71d4fb` (the squash-merge of PR #32). The
+  container's `org.opencontainers.image.revision` label matches
+  `git rev-parse HEAD` exactly.
+- **Rollback target**: `korg:e2a08a4adde7` (sprint 030). **Not a clean re-tag
+  this time** — 0019 renames a column, so that image selects `cn_path` and
+  fails. Reversal is two statements, not a dump restore:
+  `ALTER TABLE project RENAME COLUMN src_path TO cn_path;` and
+  `ALTER TABLE project DROP CONSTRAINT project_src_path_canonical;`
+- **CI**: green on PR #32 (rust 3m18s, web 25s).
+
+**The migration announced itself in the container log**, which is the cheapest
+possible confirmation that step 3 of 0019 does what it claims:
+
+```
+INFO sqlx::postgres::notice: src_path rows left non-canonical
+  (constraint added NOT VALID; owned by the project-metadata pass): kcard
+```
+
+**Verified live:**
+
+- `post-deploy-check.sh --compare`: **OK**. Every row count unchanged
+  (work_items 561, cards 29, links 4, proposals 115, reports 23, projects 35),
+  `node_count` 741 and `node_id_seq` 828 stable, and `migrations` **18 → 19** —
+  the one value that *should* move, and the only one that did.
+- **Production data matches the rehearsal row for row.** All four mechanical
+  fixes landed (`~/obsidian/gratch`, `~/src/ai/klams`, `~/src/tools/korg`,
+  `~/src/kpidash`), `kcard` is the sole non-canonical row, `feedhub` untouched,
+  24 of 35 non-null. Identical to what the restored-dump run predicted, which is
+  what a rehearsal is for.
+- **The constraint is live and unvalidated**, read back from
+  `pg_constraint`: `convalidated=false`, definition
+  `CHECK (src_path IS NULL OR src_path ~ '^~/[^[:space:]()]*[^[:space:]()/]$')
+  NOT VALID`. Every write from here on is checked.
+- **`cn_path` is gone**: `information_schema.columns` holds exactly one of
+  `{cn_path, src_path}` for `project`, and it is `src_path`.
+- **The agent-facing contract shipped, not just the database.** `tools/list`
+  over the live MCP endpoint returns `update_project` carrying an `src_path`
+  parameter whose description begins *"Path to the working copy on the
+  project's DEVELOPMENT machine (its `machines` entry), not the deploy
+  target."* That sentence reaching agents is half of what #675 was for, so it
+  is checked rather than assumed.
+- **Web renders**: `/`, `/work-items` and `/plan` all 200 over the tailnet
+  HTTPS endpoint.
+
+**Not verified by attempting it**: whether the constraint rejects a bad write.
+Proving that against production means issuing a write that must fail — and if
+the constraint were somehow absent, it would instead corrupt a row. The
+enforcement path was proven on the restored dump, and the constraint definition
+was read back from `pg_constraint` here; that is the same evidence without the
+downside.
