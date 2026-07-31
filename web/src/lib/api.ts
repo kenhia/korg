@@ -195,7 +195,7 @@ export const api = {
     name: string,
     patch: Patch<{
       gh_repo: string | null;
-      cn_path: string | null;
+      src_path: string | null;
       description: string | null;
       status: string;
       machines: string[];

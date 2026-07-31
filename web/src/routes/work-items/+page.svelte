@@ -89,7 +89,7 @@
   let eCategory = $state("");
   let eDescription = $state("");
   let eGhRepo = $state("");
-  let eCnPath = $state("");
+  let eSrcPath = $state("");
 
   // Rail shows only active+maintenance unless "show all" (WI #246).
   const visibleProjects = $derived(
@@ -138,7 +138,7 @@
     eCategory = p.category ?? "";
     eDescription = p.description ?? "";
     eGhRepo = p.gh_repo ?? "";
-    eCnPath = p.cn_path ?? "";
+    eSrcPath = p.src_path ?? "";
     areaAddFor = null;
   }
 
@@ -158,7 +158,7 @@
           category: eCategory.trim() || null,
           description: eDescription.trim() || null,
           gh_repo: eGhRepo.trim() || null,
-          cn_path: eCnPath.trim() || null,
+          src_path: eSrcPath.trim() || null,
         }),
       "Save project",
     );
@@ -736,8 +736,8 @@
             <label class="block text-xs text-[var(--color-muted)]">github repo
               <input class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={eGhRepo} />
             </label>
-            <label class="block text-xs text-[var(--color-muted)]">cn path
-              <input class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={eCnPath} />
+            <label class="block text-xs text-[var(--color-muted)]">src path
+              <input class="mt-0.5 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={eSrcPath} />
             </label>
             <div class="flex justify-end gap-2">
               <button class="rounded px-2 py-1 text-xs hover:bg-[var(--color-surface-hi)]" onclick={() => (editProject = null)}>Cancel</button>
@@ -820,7 +820,7 @@
           {#if currentProject.machines.length > 0}<dt class="text-[var(--color-muted)]">Machines</dt><dd>{currentProject.machines.join(", ")}</dd>{/if}
           {#if currentProject.deploy_to.length > 0}<dt class="text-[var(--color-muted)]">Deploys To</dt><dd>{currentProject.deploy_to.join(", ")}</dd>{/if}
           {#if currentProject.category}<dt class="text-[var(--color-muted)]">Category</dt><dd>{currentProject.category}</dd>{/if}
-          {#if currentProject.cn_path}<dt class="text-[var(--color-muted)]">CN Path</dt><dd>{currentProject.cn_path}</dd>{/if}
+          {#if currentProject.src_path}<dt class="text-[var(--color-muted)]">Src Path</dt><dd>{currentProject.src_path}</dd>{/if}
           {#if currentProject.gh_repo}<dt class="text-[var(--color-muted)]">GitHub Repo</dt><dd>{currentProject.gh_repo}</dd>{/if}
           {#if currentProject.description}<dt class="text-[var(--color-muted)]">Description</dt><dd>{currentProject.description}</dd>{/if}
         </dl>

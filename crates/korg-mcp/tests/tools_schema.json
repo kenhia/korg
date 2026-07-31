@@ -1618,7 +1618,7 @@
     "name": "update_handoff"
   },
   {
-    "description": "List projects, including metadata: status (active|maintenance|inactive|archived), machines (where the working copy lives), deploy_to (where it deploys), category.",
+    "description": "List projects, including metadata: status (active|maintenance|inactive|archived), machines (which hosts the working copy lives on), src_path (where on that host — `~`-relative, e.g. `~/src/tools/korg`), deploy_to (where it deploys), category.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {},
@@ -1644,7 +1644,7 @@
     "name": "create_project"
   },
   {
-    "description": "Update a project's metadata by name (the name itself is immutable), returning the updated project: status (active|maintenance|inactive|archived), machines, deploy_to, category, description, gh_repo, cn_path. Omitted fields are unchanged.",
+    "description": "Update a project's metadata by name (the name itself is immutable), returning the updated project: status (active|maintenance|inactive|archived), machines, deploy_to, category, description, gh_repo, src_path. Omitted fields are unchanged.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1659,12 +1659,6 @@
             "Other",
             null
           ],
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "cn_path": {
           "type": [
             "string",
             "null"
@@ -1703,6 +1697,13 @@
         "name": {
           "minLength": 1,
           "type": "string"
+        },
+        "src_path": {
+          "description": "Path to the working copy on the project's DEVELOPMENT machine (its\n`machines` entry), not the deploy target. Canonical form: `~/`-relative,\nno trailing slash, no whitespace, no parentheses — a path and nothing\nelse, e.g. `~/src/tools/korg`. Enforced by a CHECK constraint, so a\nvalue carrying prose or history is rejected rather than stored.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "status": {
           "enum": [

@@ -44,8 +44,22 @@ Two tools are not what their names suggest:
   (D-7).
 
 `update_project` takes `status`, `machines`, `deploy_to`, `category`,
-`description`, `gh_repo` and `cn_path` — everything but the name. `cn_path` is
+`description`, `gh_repo` and `src_path` — everything but the name. `src_path` is
 load-bearing: it is how an agent finds a project's working copy on disk.
+
+`src_path` was called `cn_path` until sprint 031 (WI #675). The rename settles a
+question the old name left open: a bare path means nothing without a host, and
+once `machines` and `deploy_to` split development from production, `cn_path`
+never said which one it described. **`src_path` is the working copy on the
+project's development machine** — its `machines` entry, never its deploy target.
+korg's own row is the worked example: `machines: ["kai"]`, `deploy_to:
+["kubsdb"]`, and `src_path` is the kai checkout.
+
+Its canonical form is `~`-relative, no trailing slash, no whitespace and no
+parentheses — a path and nothing else. Migration 0019 enforces that with the
+`project_src_path_canonical` CHECK constraint, added `NOT VALID` so that one
+legacy row holding a sentence of archive history is tolerated until the pass
+that owns it resolves the prose; every write from sprint 031 on is checked.
 
 ## Where the contract lives
 

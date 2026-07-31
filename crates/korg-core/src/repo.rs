@@ -1675,7 +1675,11 @@ pub struct ProjectRow {
     pub id: i64,
     pub name: String,
     pub gh_repo: Option<String>,
-    pub cn_path: Option<String>,
+    /// Where the working copy lives on this project's *development* machine —
+    /// the `machines` entry, never `deploy_to` (WI #675). Canonical form is
+    /// `~/`-relative, no trailing slash, no whitespace or parentheses; the
+    /// `project_src_path_canonical` constraint (migration 0019) enforces it.
+    pub src_path: Option<String>,
     pub description: Option<String>,
     /// Lifecycle status — see PROJECT_STATUSES.
     pub status: String,
@@ -1686,14 +1690,50 @@ pub struct ProjectRow {
     pub category: Option<String>,
 }
 
+/// Canonicalize a `src_path` into the form migration 0019's
+/// `project_src_path_canonical` constraint enforces: `~`-relative, no trailing
+/// slash. The rules and their order mirror that migration's UPDATEs exactly —
+/// absolute-home first, so the missing-prefix rule cannot mistake `/home/ken/…`
+/// for a relative path (WI #675).
+///
+/// Deliberately mechanical only. It does **not** strip whitespace or
+/// parentheses, because a value carrying prose — korg's own `kcard` row held
+/// `~/.archive-src/kcard (kai; archived …, was ~/src/tools/kcard)` — poses a
+/// question this function cannot answer: which of the two paths is meant, and
+/// where does the history belong? Truncating to the first token would produce a
+/// plausible, unverified path, which is worse than a loud failure. Such a value
+/// is left to violate the constraint so a human or the project-metadata pass
+/// resolves it.
+pub fn canonical_src_path(raw: &str) -> String {
+    let mut p = raw.trim().to_string();
+    if let Some(rest) = p.strip_prefix("/home/") {
+        // `/home/<user>/x` -> `~/x`; a bare `/home/<user>` has no tail to keep.
+        if let Some((_, tail)) = rest.split_once('/') {
+            p = format!("~/{tail}");
+        }
+    }
+    while p.len() > 2 && p.ends_with('/') {
+        p.pop();
+    }
+    if !p.is_empty() && !p.starts_with('~') && !p.starts_with('/') {
+        p = format!("~/{p}");
+    }
+    p
+}
+
 /// Everything but `name` is editable (WI #246). `None` = leave unchanged;
 /// inner `None` on the nullable fields clears them.
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 pub struct ProjectPatch {
     #[serde(default, deserialize_with = "ops::double_option")]
     pub gh_repo: Option<Option<String>>,
+    /// Path to the working copy on the project's DEVELOPMENT machine (its
+    /// `machines` entry), not the deploy target. Canonical form: `~/`-relative,
+    /// no trailing slash, no whitespace, no parentheses — a path and nothing
+    /// else, e.g. `~/src/tools/korg`. Enforced by a CHECK constraint, so a
+    /// value carrying prose or history is rejected rather than stored.
     #[serde(default, deserialize_with = "ops::double_option")]
-    pub cn_path: Option<Option<String>>,
+    pub src_path: Option<Option<String>>,
     #[serde(default, deserialize_with = "ops::double_option")]
     pub description: Option<Option<String>>,
     #[serde(default)]
@@ -1733,8 +1773,8 @@ pub async fn update_project(pool: &PgPool, id: i64, patch: &ProjectPatch) -> Res
             .execute(&mut *tx)
             .await?;
     }
-    if let Some(v) = &patch.cn_path {
-        sqlx::query("UPDATE project SET cn_path = $2 WHERE id = $1")
+    if let Some(v) = &patch.src_path {
+        sqlx::query("UPDATE project SET src_path = $2 WHERE id = $1")
             .bind(id)
             .bind(v)
             .execute(&mut *tx)
@@ -1799,7 +1839,7 @@ pub async fn update_project_by_name(
 }
 
 const PROJECT_SELECT: &str =
-    "SELECT id, name, gh_repo, cn_path, description, status, machines, deploy_to, category \
+    "SELECT id, name, gh_repo, src_path, description, status, machines, deploy_to, category \
      FROM project";
 
 pub async fn list_projects(pool: &PgPool) -> Result<Vec<ProjectRow>> {

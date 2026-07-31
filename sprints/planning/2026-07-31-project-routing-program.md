@@ -57,7 +57,7 @@ needed coordination that it does not.
 |---|---|---|
 | #675 rename `cn_path` → `src_path` | **yes** | this repo |
 | #675 mechanical value fixes (4 rows) | **yes** — rides the migration | this repo |
-| `category` casing normalization | **yes** — one migration | this repo |
+| `category` casing normalization | **not needed** — 0018 already did it | — |
 | #757.1 field review / lean-shape analysis | no | fresh external session |
 | #757.2 tier the read surface | **yes** | this repo |
 | #673 reword `project` param | **yes** | this repo |
@@ -93,10 +93,6 @@ are "already decided, do not re-litigate."
 - **#675 part 3 — the 4 mechanical value fixes**, same migration, no judgment
   needed: `klams` `src/ai/klams` and `kpidash` `src/kpidash` missing `~/`, `korg`
   absolute (`/home/ken/src/tools/korg`), `gratch` trailing slash.
-- **`category` casing normalization.** Live values are `Ops`, `Infrastructure`,
-  `Dashboard`, `Other`, `EVAL`, `AI`, `Fun`. **#674's `category = 'fun'`
-  exclusion matches nothing as written** — what #674 calls a "small remaining
-  cleanup" is load-bearing for its own filter. Do it here, ahead of #674.
 - **The invariant check.** Every non-null `src_path` starts with `~/`, no
   trailing slash, no whitespace, no parentheses — as a query or constraint, so
   the field cannot silently re-drift.
@@ -170,8 +166,9 @@ budget re-deriving it.
    *is* does not route.
 
 **Out of scope — decided, do not re-litigate:** the `src_path` rename and
-canonical form (#675, shipped in Phase A); `category` as #674's exclusion signal
-and its casing (Phase A).
+canonical form (#675, shipped in Phase A); `category` as #674's exclusion signal,
+and the `category` vocabulary itself, which migration 0018 already closed and
+enforces.
 
 **The escape hatch must survive the lean default.** #758's checker needs full
 metadata for every project — it wants `list_projects(detail: "full", status:
@@ -255,8 +252,24 @@ over MCP.** Only `list_projects`, `create_project` and `update_project` are. Tie
 `loglens`. Some are legitimately null (`ATV`, `apt-temps` may have no checkout);
 null stays null rather than being invented.
 
-**`category` values in use:** `Ops`, `Infrastructure`, `Dashboard`, `Other`,
-`EVAL`, `AI`, `Fun` — mixed case throughout, not just `trt-llm-explore`.
+**`category` is already clean, and #674 is wrong about it.** Migration
+`0018_project_category_vocabulary.sql` (WI #678) trued the corpus up to a closed,
+capitalized vocabulary — `AI`, `Dashboard`, `EVAL`, `Fun`, `Infrastructure`,
+`Ops`, `Other` — with a postcondition that refuses to leave a row behind, and
+`update_project` validates against `vocab::PROJECT_CATEGORIES`
+(`crates/korg-core/src/vocab.rs:64`). Live data matches exactly. NULL stays legal
+by design, so #674's "treat null as not excluded" needs no backfill to hold.
+
+#674's "`trt-llm-explore` has `"AI"` against everyone else's `"ai"`" was measured
+2026-07-25; 0018's header records that same corpus (`ai` ×8, `AI` ×1, `tooling`
+×3, `infra` ×2, `fun` ×2, NULL ×15) as the *before* state it fixed. **The defect
+is #674's own filter literal**: `category = 'fun'` should be `'Fun'`, or better,
+match against `PROJECT_CATEGORIES` so a vocabulary change cannot silently
+re-break it. One token inside #674, no migration, nothing for Phase A to do.
+
+Worth keeping as a worked example of the drift this program exists to catch: a WI
+accurately describing state that a later sprint changed underneath it. It cost a
+planning cycle here, which is roughly what #758 is meant to prevent.
 
 ## Economics, for whoever questions the whole thing
 
@@ -304,7 +317,8 @@ make part of its routing table redundant.
 **#816 now covers five korg WIs and nothing else:** #673, #674, #675, #757, #828.
 The proposal is the korg-engine scope; this document is the program.
 
-Notes were left on #674 (the `category` casing normalization is a prerequisite for
-its own filter, and its *rendering rule* — not just its data — is gated on #757),
-and on #758 (why it moved, the three-passes-are-one finding, and the
+Notes were left on #674 (its *rendering rule* — not just its data — is gated on
+#757; and a correction, that its `category = 'fun'` filter literal is wrong
+against the enforced `Fun` vocabulary, rather than the data needing a casing
+pass), and on #758 (why it moved, the three-passes-are-one finding, and the
 `korg-backup.sh` warning carried forward so a project move cannot lose it).
