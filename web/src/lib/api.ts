@@ -28,6 +28,7 @@ import type {
   Topic,
   WorkItemDetail,
   WorkItemRow,
+  WorkItemSurvey,
 } from "./generated/korg";
 import type {
   CardStatus,
@@ -213,6 +214,25 @@ export const api = {
     http<Page<WorkItemRow>>(
       "GET",
       `/api/work-items${listQuery({ project, ...params, limit: params.limit ?? 500 })}`,
+    ),
+  /** The slim projection, and the only work-item read with a *server-side*
+   *  status filter. The Review page (WI #570) needs "every done/resolved item"
+   *  to be a complete answer, which filtering `workItems` in the client cannot
+   *  give: that read is capped at LIST_LIMIT_MAX and the cap is spent on rows
+   *  of every status (WI #762). Asking the server for the two statuses costs
+   *  two requests and can only truncate on 500 items *of those statuses*. */
+  surveyWorkItems: (
+    params: {
+      project?: string;
+      wi_status?: string;
+      archived?: boolean;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) =>
+    http<WorkItemSurvey>(
+      "GET",
+      `/api/work-items/survey${listQuery({ ...params, limit: params.limit ?? 500 })}`,
     ),
   workItem: (wi: number) =>
     httpMaybe<WorkItemDetail>("GET", `/api/work-items/${wi}`),

@@ -21,6 +21,7 @@ const ROUTES = [
   "/plan",
   "/cards",
   "/work-items",
+  "/work-items/review",
   "/planning",
   "/daily-reports",
   "/reading-list",
