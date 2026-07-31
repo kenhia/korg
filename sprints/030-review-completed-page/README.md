@@ -213,3 +213,34 @@ full-screened wide monitor, and not a regression of anything.
 
 `deploy-kubsdb` after merge. **No migration** — rollback is a clean image
 re-tag.
+
+## Deployed 2026-07-31
+
+- **Image**: `korg:e2a08a4adde7` — revision
+  `e2a08a4adde7127ce2406fc3742cd0218641098a` (the squash-merge of PR #31). The
+  container's `org.opencontainers.image.revision` label matches
+  `git rev-parse HEAD` exactly.
+- **Rollback target**: `korg:e19256ecf1bd` (sprint 029). No migration in this
+  sprint, so an image re-tag fully reverts.
+- **CI**: green on PR #31 (rust 3m31s, web 24s).
+
+**Verified live:**
+
+- `post-deploy-check.sh --compare`: **OK**. Every row count unchanged
+  (work_items 556, cards 29, links 4, proposals 107, reports 23, projects 35),
+  `node_count` 728 and `node_id_seq` 815 stable, and `migrations` held at 18 —
+  the correct result for a sprint that adds no migration.
+- **The page's defining property holds in production.** The three survey reads
+  the page is built on return **only** the status asked for — `done` 2,
+  `resolved` 7, `open` 135, with zero off-filter rows in any of them. That is
+  the assertion the whole design rests on, checked against real data rather
+  than a fixture.
+- **Rendered in a real browser** against `https://kubsdb.encke-wahoo.ts.net:5674`,
+  read-only — no Close button was clicked against live data. `/work-items/review`
+  shows its 9 rows, goes side-by-side at 2200px (`1104px 608px`), and the detail
+  pane loads content and comments on select. No page errors.
+- **Tickers render on production data**: 💬 and 📝 both present on `/work-items`,
+  and the `Review` button is on the toolbar.
+- Nicely self-referential: **#570, this sprint's own work item, is sitting in
+  the review queue it asked for** — resolved by sprint-ship, waiting on Ken to
+  close it with the one-click button it specified.
