@@ -66,6 +66,20 @@ same schema — 0018 (project categories) is one of these. A migration that
 changes the **schema** cannot — 0017 (handoff) is one of those, and crossing it
 backwards needs the dump restore. Each migration's header says which it is.
 
+**0019 (`cn_path` → `src_path`) is a schema boundary**, and the cheapest kind:
+an old image selects `cn_path` and fails against the renamed column, but the
+reversal is two statements rather than a restore, because no data was destroyed.
+
+```sql
+ALTER TABLE project RENAME COLUMN src_path TO cn_path;
+ALTER TABLE project DROP CONSTRAINT project_src_path_canonical;
+```
+
+Worth stating explicitly, because "schema boundary" and "needs a dump restore"
+are not the same claim — 0017 needs the restore, 0019 does not. A rename that
+loses nothing is reversible by renaming back; what makes it a boundary is only
+that the rollback is not *automatic*.
+
 ## Backups
 
 **korg's database is backed up nightly.** It is not optional and it is not

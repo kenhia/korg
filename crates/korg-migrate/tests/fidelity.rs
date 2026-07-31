@@ -63,10 +63,13 @@ struct KorgComment {
     updated: OffsetDateTime,
 }
 
+/// korg's side of the project comparison. `src_path` here is what kwi calls
+/// `cn_path` — the rename (WI #675) applies to korg's schema only, so this
+/// struct and `KwiProject` deliberately disagree on the name.
 #[derive(sqlx::FromRow)]
 struct KorgProject {
     gh_repo: Option<String>,
-    cn_path: Option<String>,
+    src_path: Option<String>,
     description: Option<String>,
 }
 
@@ -148,7 +151,7 @@ async fn import_is_faithful_to_sources() {
     // kwi project fields survive on the merged project.
     for p in &kwi.projects {
         let row = sqlx::query_as::<_, KorgProject>(
-            "SELECT gh_repo, cn_path, description FROM project WHERE name = $1",
+            "SELECT gh_repo, src_path, description FROM project WHERE name = $1",
         )
         .bind(&p.project)
         .fetch_one(&korg)
@@ -156,9 +159,13 @@ async fn import_is_faithful_to_sources() {
         .unwrap_or_else(|_| panic!("F5 project `{}` missing", p.project));
         assert_eq!(row.gh_repo, p.gh_repo, "F5 gh_repo {}", p.project);
         assert_eq!(
-            row.cn_path.as_deref(),
-            Some(p.cn_path.as_str()),
-            "F5 cn_path {}",
+            // Not byte equality: korg's `src_path` has a canonical form the
+            // column enforces (0019), so the importer canonicalizes on the way
+            // in. Fidelity here means "the same path, said the one legal way" —
+            // asserting the raw string would be asserting a bug.
+            row.src_path.as_deref(),
+            Some(korg_core::repo::canonical_src_path(&p.cn_path).as_str()),
+            "F5 cn_path -> src_path {}",
             p.project
         );
         assert_eq!(

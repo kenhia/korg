@@ -36,12 +36,19 @@ pub async fn import(kwi: &KwiData, kcard: &KcardData, korg: &PgPool) -> Result<I
 
     for p in &kwi.projects {
         let id: i64 = sqlx::query(
-            "INSERT INTO project (name, gh_repo, cn_path, description, created, updated) \
+            // kwi's `cn_path` lands in korg's `src_path` — the rename (WI #675)
+            // stops at this boundary, since the legacy source schema is what it
+            // is. The value is canonicalized on the way in rather than carried
+            // across verbatim: korg's column now has a stated canonical form
+            // backed by a CHECK constraint, so importing raw kwi values would
+            // reintroduce exactly the drift 0019 just cleaned up (and, for the
+            // rows kwi holds un-prefixed, would simply be rejected).
+            "INSERT INTO project (name, gh_repo, src_path, description, created, updated) \
              VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
         )
         .bind(&p.project)
         .bind(&p.gh_repo)
-        .bind(&p.cn_path)
+        .bind(korg_core::repo::canonical_src_path(&p.cn_path))
         .bind(&p.description)
         .bind(p.created)
         .bind(p.updated)

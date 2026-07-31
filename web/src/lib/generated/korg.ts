@@ -103,7 +103,14 @@ export type NodePreview = { node_id: number, kind: string, wi_number: number | n
  */
 export type Page<T> = { items: Array<T>, total: number, limit: number, offset: number, };
 
-export type ProjectRow = { id: number, name: string, gh_repo: string | null, cn_path: string | null, description: string | null, 
+export type ProjectRow = { id: number, name: string, gh_repo: string | null, 
+/**
+ * Where the working copy lives on this project's *development* machine —
+ * the `machines` entry, never `deploy_to` (WI #675). Canonical form is
+ * `~/`-relative, no trailing slash, no whitespace or parentheses; the
+ * `project_src_path_canonical` constraint (migration 0019) enforces it.
+ */
+src_path: string | null, description: string | null, 
 /**
  * Lifecycle status — see PROJECT_STATUSES.
  */

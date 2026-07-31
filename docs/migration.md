@@ -41,6 +41,14 @@ The invariants cover: count parity, `wi_number` preservation (and that the
 sequence continues at max+1), field-by-field integrity, relationship and
 parent-hierarchy preservation, project merge, and project-scoped areas.
 
+One field is deliberately **not** asserted byte-for-byte. kwi's `cn_path` lands
+in korg's `src_path` (renamed in 0019), a column with a canonical form backed by
+a CHECK constraint — so the importer canonicalizes on the way in via
+`repo::canonical_src_path`, and F5 asserts *that* transform rather than the raw
+string. Fidelity here means "the same path, said the one legal way"; asserting
+the raw value would be asserting a bug, and importing it would simply be
+rejected for the rows kwi holds un-prefixed.
+
 ## 3. Import into a korg database
 
 ```bash
