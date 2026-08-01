@@ -21,7 +21,10 @@ covers:
   `sprint` field is free text and usually empty, so the `covers` edges are the
   only honest answer to "what is in this sprint". List rows carry *tickers* —
   💬 with a count for comments, 📝 for a details section — so "there is more here
-  than the title" is visible without opening the row.
+  than the title" is visible without opening the row. The footer's count is the
+  whole collection, not a first page (WI #762): the list fetches every page, and
+  on the rare occasion it stops short it says so in amber — `N of M loaded` —
+  with a **Load all** beside it. A count with no such clause is complete.
 - **Review completed** (`/work-items/review`) — the close-out page, reached by
   the `Review` button beside `Only Prop` rather than from the top nav. Lists
   **only** `done` and `resolved` items (a status-filtered server read, so an

@@ -110,6 +110,32 @@ export interface ListParams {
 
 export type HistoryPreset = "week" | "month" | "90days" | "year";
 
+/** `korg_core::repo::LIST_LIMIT_MAX` — the largest page any collection read
+ *  will serve, whatever you ask for. Not generated: it is a repo constant, not
+ *  part of a shared operation struct. */
+export const LIST_LIMIT_MAX = 500;
+
+/** How many pages `allWorkItems` fetches before it gives up and says so.
+ *  2000 rows at `LIST_LIMIT_MAX` — far above the corpus (572 on 2026-08-01) and
+ *  low enough that a runaway collection cannot turn "load everything" into a
+ *  page that is merely slow, with no signal (WI #762, D-2). */
+export const AUTO_PAGE_LIMIT = 4;
+
+/** A collection read walked to completion — or as far as the page bound allowed.
+ *
+ *  `items.length`, `total` and the caller's own filtered count are three
+ *  different numbers, and conflating them is the bug this type exists to stop:
+ *  the Work Items footer used to show the filtered count of an arbitrary first
+ *  page and call it "N items".
+ */
+export interface WalkedPage<T> {
+  items: T[];
+  /** What the server says matches the query, ignoring client-side filtering. */
+  total: number;
+  /** False when the page bound stopped the walk short of `total`. */
+  complete: boolean;
+}
+
 function listQuery(
   params: Record<string, string | number | boolean | undefined>,
 ): string {
@@ -214,8 +240,42 @@ export const api = {
   workItems: (project?: string, params: ListParams = {}) =>
     http<Page<WorkItemRow>>(
       "GET",
-      `/api/work-items${listQuery({ project, ...params, limit: params.limit ?? 500 })}`,
+      `/api/work-items${listQuery({ project, ...params, limit: params.limit ?? LIST_LIMIT_MAX })}`,
     ),
+  /** Every work item matching the query, not the first `LIST_LIMIT_MAX` of them
+   *  (WI #762). Both list views hold their whole collection and filter it in
+   *  memory, so a page that silently ends at 500 is a page whose filters,
+   *  counts and tag chips are all quietly wrong — and on the ascending
+   *  `wi_number` order it drops the *newest* rows.
+   *
+   *  Walks by offset rather than re-reading from 0, which is stable here: the
+   *  order is `wi_number` ascending and new rows take higher numbers, so a
+   *  concurrent create appends past the walk instead of shifting it. Rows are
+   *  archived, never deleted, and `archived: "all"` keeps even those in place.
+   *
+   *  Stops after `maxPages` and reports `complete: false` — see AUTO_PAGE_LIMIT.
+   */
+  allWorkItems: async (
+    project?: string,
+    params: ListParams = {},
+    maxPages = AUTO_PAGE_LIMIT,
+  ): Promise<WalkedPage<WorkItemRow>> => {
+    const limit = params.limit ?? LIST_LIMIT_MAX;
+    let offset = params.offset ?? 0;
+    const items: WorkItemRow[] = [];
+    let total = 0;
+    for (let fetched = 0; fetched < maxPages; fetched++) {
+      const page = await api.workItems(project, { ...params, limit, offset });
+      total = page.total;
+      items.push(...page.items);
+      offset += page.items.length;
+      // An empty page means the server has nothing more to give, whatever
+      // `total` claims — without this a disagreement between the two would
+      // spin until maxPages.
+      if (page.items.length === 0 || items.length >= total) break;
+    }
+    return { items, total, complete: items.length >= total };
+  },
   /** The slim projection, and the only work-item read with a *server-side*
    *  status filter. The Review page (WI #570) needs "every done/resolved item"
    *  to be a complete answer, which filtering `workItems` in the client cannot

@@ -202,9 +202,17 @@ npx playwright install chromium                       # once
 KORG_E2E_URL=http://127.0.0.1:8090 npx playwright test
 ```
 
-Run it against a **fresh** database. Several specs assert on "the plan for
-today" and on drag targets, so rows left behind by other runs can fail them for
-reasons that have nothing to do with the code.
+Run it against a **production-sized** database — a restored nightly dump is
+ideal (`/gratch/backups/korg/` on the homelab; see
+[operations.md](operations.md)). A fresh, empty one is the state bugs hide in:
+sprint 035 found nine failures that a small database could not show, eight of
+them a live truncation bug in the Work Items list and one an e2e spec that
+failed only on Mondays.
+
+The suite no longer requires a *fresh* database (WI #701). It used to: specs
+asserted on "the plan for today" and dropped onto day columns whose contents
+earlier runs had grown. They now pin the browser clock where the calendar
+matters, work four weeks out, and remove the plan items they create.
 
 Two of the suites check things worth knowing about before changing the theme
 (sprint 019):

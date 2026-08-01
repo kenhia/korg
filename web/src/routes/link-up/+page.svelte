@@ -96,7 +96,12 @@
     try {
       const [c, w, l, p] = await Promise.all([
         api.cards(),
-        api.workItems(),
+        // Every list on this page is filtered in the browser, so a read that
+        // stops at LIST_LIMIT_MAX makes "the work item I just created is not
+        // here" indistinguishable from "it does not exist" (WI #762). Work
+        // items are the only collection over the cap today — cards 29, links 4
+        // against 572 work items, measured 2026-08-01.
+        api.allWorkItems(),
         api.links(),
         api.projects(),
       ]);
