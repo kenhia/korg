@@ -268,13 +268,65 @@ Sampled live rows read as genuine summaries — 866 itself derives to 499 chars,
 losing only its closing "coordinate the row contract with 825" clause, which is
 the cap biting its own sprint exactly as D-1 predicted.
 
+## Deployed 2026-08-01
+
+- PR **#40**, squash-merged as `9c452bc`. Image `korg:9c452bcf933f`
+  (`org.opencontainers.image.revision` confirmed on the running container).
+  Rollback target: `korg:a81bfd8ba179` — but note 0021 is a schema boundary, so
+  see `docs/operations.md` before crossing it backwards.
+- `post-deploy-check.sh --compare`: every row count identical to the pre-deploy
+  baseline (work items 597, cards 29, links 4, proposals 119, reports 23,
+  projects 36; `node_count` 782, `node_max` 869). **Migrations 20 → 21** — the
+  first schema change this program has deployed.
+- The migration announced itself in the container log at startup: *"proposal
+  analysis moved to notes on 96 rows"*.
+- Backups current at deploy time: `korg-20260801-032006.sql.gz` (685 KB, larger
+  than the prior night's 589 KB), timer active.
+
+### Verified live, against production data
+
+**#860 — the migration on the real corpus.** Re-ran the rehearsal's row-by-row
+comparison against the deployed instance, using the pre-deploy fetch as the
+reference: 119 rows, **96 moved, 23 untouched, zero problems**. `summary`
+189,471 → 43,858 chars, and every original character is preserved — each moved
+row's `notes` is byte-identical to its old summary, and each derived summary is a
+prefix of it.
+
+The contract is live and it rejects rather than truncates:
+
+```
+update_proposal(866, summary: <501 chars>)
+→ isError, code invalid_input
+  "proposal summary is 501 characters; the routing contract caps it at 500.
+   Put the analysis in `notes` — it is unbounded, and that is what it exists for."
+```
+
+`get_proposal(866)` returns `summary` 499 / `notes` 505; the lean queue row
+carries neither field.
+
+**#861 — the lean read over MCP**, against 597 work items:
+
+| call | `total` | `omitted` | payload |
+|---|---|---|---|
+| `list_work_items` (default) | **133** | `{closed: 447, archived: 17}` | **27,671 bytes** |
+| `list_work_items` `wi_status:"all"` | 580 | `{closed: 0, archived: 17}` | — |
+| `survey_work_items` (alias) | 133 | identical, `limit: 50` | — |
+| the old equivalent — `GET /api/work-items?limit=500` | — | — | **984,779 bytes** |
+
+**35.6× smaller**, and the cascade adds up exactly: 133 + 447 + 17 = 597, the
+whole corpus. 133 is also the number 035 verified the Work Items page footer
+computing independently, so the two surfaces now agree on what "live work" means.
+The row keys are exactly the lean projection — no `content`, no `details`.
+
+**D-4's data pass, done.** All 12 live proposals that had derived summaries were
+re-authored from their `notes` over the REST write path (the same core function,
+so the cap applied): **0 of 18 live rows still carry a `[…]` marker**, the
+longest live summary is 499 chars, and a re-check confirms no row's `notes`
+drifted from its original in the process. #744 — the one whose derivation came
+out at 135 characters — now has a real contract.
+
 ## Follow-ups
 
-- **The live-row data pass is owed at ship time (D-4).** After the deploy,
-  re-author the `summary` of every `proposed`/`active` proposal from its `notes`:
-  19 rows, of which 12 currently carry a derived first paragraph. #744's derives
-  to 135 chars and is the thinnest — it is the one that most needs a real
-  contract. This is #860's remaining acceptance, not a nice-to-have.
 - **Delete `survey_work_items`** when agent-skills #864 (proposal 867, rank 4.4)
   moves `refill-queue` onto `list_work_items`. Tool, `ops::SurveyWorkItems`,
   catalogue note and the `From` impl go together.
