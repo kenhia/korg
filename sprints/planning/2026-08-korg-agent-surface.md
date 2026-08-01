@@ -118,7 +118,41 @@ When it does, **don't stop — drop the rank.** Continual improvement at low pri
 - **Not a UI program.** 825 and 817 own the UI. This one touches the web surface only where a shared contract forces it.
 - **Not a schema rewrite.** 816's verdict stands: the schema is mostly innocent. The proposal object shape is the one place a field change is warranted, and it is additive plus a migration, not a redesign.
 
-## 7. Open questions for the starter session
+## 7. How this program is driven — two panes, one working tree
+
+Ken runs this from **VS Code with the Claude extension, Remote-SSH'd into kai**, so
+both panes execute *on kai* with native access to `~/src/tools/korg`. Two sessions
+in the same workspace:
+
+- **Overseer** — holds the program, decides what happens next, writes the korg data.
+- **Worker** — executes one sprint at a time.
+
+**They share a git working tree, a `target/` dir, and this file. That is the hazard,
+and the division below is not optional.**
+
+| | Overseer | Worker |
+|---|---|---|
+| Git working tree | **never writes** — no branch, no commit, no stash | **owns it exclusively** |
+| Repo files | reads freely | writes |
+| `cargo` / `just check` | **does not run them** — a second build blocks on the same `target/` lock and stalls both panes | runs them |
+| korg MCP (WIs, proposals, comments) | **primary author** | updates only the WIs its own sprint covers |
+| This plan file | **decides** what should change | **makes and commits** the change, in its sprint PR |
+| Deploys to kubsdb | never | only via `sprint-ship` Phase 7 |
+
+**The rule that prevents the collision:** the overseer's output is **korg data and
+instructions**, never a commit. When the overseer wants this plan updated, it says so
+and the worker lands it in the current sprint's PR. An overseer editing files in a
+tree the worker has mid-branch is how you get a sprint PR carrying changes nobody
+meant to ship.
+
+**Before starting a worker sprint, the tree must be clean and on `main`.** If it
+isn't, the previous sprint didn't finish — resolve that first rather than branching
+over it.
+
+Reads never conflict, so the overseer should read code freely. It is only writes —
+git, files, and builds — that are exclusive.
+
+## 8. Open questions for the starter session
 
 1. **Terminal-state vocabulary differs per collection** — work items are `open`/`resolved`/`done`/`closed`; proposals are `proposed`/`active`/`done`/`declined`; projects are now `active`/`archived`. "Exclude terminal by default" needs a per-collection answer, and `resolved` is genuinely ambiguous (implemented, but Ken may still want to see it).
 2. **Does `survey_*` survive?** If `list_work_items` becomes lean by default, `survey_work_items` may be redundant — or may become the canonical lean read with `list_*` retired. Decide before building, and note #851 is a bug in whichever survives.
