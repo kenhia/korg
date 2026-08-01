@@ -177,3 +177,52 @@ dump restore.
 
 Expect `migrations` 19 → 20 and two NOTICEs in the container log: the `kcard`
 line from 0019, and 0020's list of the six moved descriptions.
+
+## Deployed 2026-08-01
+
+- **Image**: `korg:e03a194f6394` — revision
+  `e03a194f63944b79116e9a1abcf3805ea1e8f9e5` (the squash-merge of PR #33),
+  matching `git rev-parse HEAD` exactly.
+- **Rollback target**: `korg:3fe5caef20d3` (sprint 031). 0020 is the mild kind
+  of boundary — an old image ignores `notes` and simply renders the moved
+  descriptions blank. Reversal is in `docs/operations.md`, not a dump restore.
+- **CI**: green on PR #33 (rust 3m23s, web 26s).
+
+**Seven descriptions moved, not six.** `kwebi` acquired an over-length
+description between the rehearsal and the deploy, so the live set was
+`agent-skills, homelab-health, klams-mind, klams-view, kprojects, kwebi, kyac`.
+Worth recording as a small vindication of writing the migration as a rule keyed
+on the defect rather than as a list of named rows: the corpus moved underneath
+it and it did not care.
+
+**Verified live:**
+
+- `post-deploy-check.sh --compare`: **OK**. Every row count unchanged
+  (work_items 580, cards 29, links 4, proposals 115, reports 23, projects 35),
+  `node_count` 761 and `node_id_seq` 848 stable, `migrations` **19 → 20** — the
+  only value that moved.
+- **No prose was lost.** Diffing `/api/projects` before and after, all seven
+  moved rows have `notes` byte-identical to their previous `description`, and
+  no description over 160 chars remains. Status unchanged at 27 active /
+  8 archived — the conversion step was a no-op here precisely because Ken had
+  already done it by hand, which is the case the rehearsal proved is *not* the
+  general one.
+- **The roster is live**: 427 chars / ~112 tokens, rendered from production
+  data at `initialize`.
+- **Lean list**: 27 items, `omitted:{archived:8}`, no row carrying `status`,
+  **1,910 chars** against **10,584** for `status:"all", detail:"full"` — 5.5× on
+  real data, and the full form carries `notes` as #758 needs.
+- **`get_project("homelab-health")`** returns its two areas (`kai`,
+  `vmlab-01`) and the 183-char exemplar intact in `notes`.
+- **Both new enforcements bite**: a 161-char description is rejected with
+  `invalid_input`, and `status:"inactive"` with
+  `expected one of: active, archived`.
+- **Constraint state read back from `pg_constraint`**:
+  `project_description_routing_line` is `convalidated=true` (nothing was
+  tolerated), `project_src_path_canonical` remains `false` — still waiting on
+  `kcard`, exactly as 031 left it.
+- **Web renders**: `/`, `/work-items`, `/plan` all 200.
+
+**Still open after this deploy**: `korg:816` remains `active`. Gate 2 is
+handoff node **829** (`claude-cleo`) — build #758's checker and run it once in
+fix mode. Then Phase C: the behavioural routing test, and #757 closes.
