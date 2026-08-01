@@ -150,8 +150,18 @@ pub mod schema {
     pub fn proposal_status(_: &mut SchemaGenerator) -> Schema {
         enumerated(&vocab::PROPOSAL_STATUSES)
     }
+    /// The `list_proposals` row filter (WI #852). The vocabulary plus `"all"`,
+    /// which no single status names — omitting the argument means the live
+    /// queue (`proposed` + `active`), so there has to be a way to ask for the
+    /// rest. Same shape as `project_status_filter`, for the same reason.
     pub fn proposal_status_filter(_: &mut SchemaGenerator) -> Schema {
-        nullable_enumerated(&vocab::PROPOSAL_STATUSES)
+        let mut variants = strings(&vocab::PROPOSAL_STATUSES);
+        variants.push(Value::String("all".into()));
+        json_schema!({ "type": ["string", "null"], "enum": variants })
+    }
+    /// `list_proposals` payload width (WI #852).
+    pub fn proposal_detail(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({ "type": ["string", "null"], "enum": ["lean", "full"] })
     }
     pub fn report_status(_: &mut SchemaGenerator) -> Schema {
         enumerated(&vocab::REPORT_STATUSES)
@@ -415,9 +425,14 @@ impl From<ListWorkItems> for repo::WorkItemQuery {
     }
 }
 
-/// `survey_work_items` — the slim cross-project projection. Note that its
-/// `archived` default differs from every other list read on purpose: the survey
-/// is a sweep, so omitting the filter means "both".
+/// `survey_work_items` — the slim cross-project projection.
+///
+/// Its `archived` default used to differ from every other list read, and the
+/// doc comment here called that deliberate. It was the bug (#851): the server
+/// `instructions` say every read excludes archived rows, an agent cannot check
+/// that, and the tool the instructions *recommend* for sizing a backlog was the
+/// one silently over-counting. It now takes the same `ArchivedFilter` as its
+/// siblings, and the response carries `omitted` so the narrowed count says so.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct SurveyWorkItems {
     /// Project name to filter by
@@ -426,9 +441,9 @@ pub struct SurveyWorkItems {
     /// Status to filter by, e.g. "open"
     #[serde(default)]
     pub wi_status: Option<String>,
-    /// Filter by archived flag; OMIT for both archived and unarchived (there is no default).
-    #[serde(default)]
-    pub archived: Option<bool>,
+    #[serde(default = "archived_default")]
+    #[schemars(schema_with = "schema::archived_filter")]
+    pub archived: ArchivedFilter,
     #[serde(default = "default_survey_limit")]
     #[schemars(schema_with = "schema::survey_limit")]
     pub limit: i64,
@@ -534,7 +549,8 @@ impl From<ListTopics> for topics::TopicQuery {
     }
 }
 
-/// `list_proposals`.
+/// `list_proposals` (WI #852). Row filter and projection both narrow by
+/// default — this read measured ~46k tokens unfiltered, 71% of it `done`.
 #[derive(Debug, Clone, Deserialize, JsonSchema, Default)]
 pub struct ListProposals {
     #[serde(default)]
@@ -543,6 +559,12 @@ pub struct ListProposals {
     /// Project name to filter by
     #[serde(default)]
     pub project: Option<String>,
+    #[serde(default = "archived_default")]
+    #[schemars(schema_with = "schema::archived_filter")]
+    pub archived: ArchivedFilter,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::proposal_detail")]
+    pub detail: Option<String>,
 }
 
 impl From<ListProposals> for repo::ProposalQuery {

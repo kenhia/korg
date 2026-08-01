@@ -412,11 +412,11 @@ fn named_in_instructions(prefix: &str) -> Vec<String> {
 async fn collection_reads_return_the_shape_the_instructions_promise() {
     let paginated = named_in_instructions("Paginated collection reads");
     let bare = named_in_instructions("the unpaginated ones");
-    // A third shape since #828: `list_projects` returns {items, omitted}
-    // because it is the one collection read that filters rows by default, and
-    // a filtered list that looks bare is how "no such project" gets concluded
-    // from "you didn't ask for archived ones".
-    let filtered = named_in_instructions("the filtered one");
+    // A third shape since #828, and two reads in it since #852: `list_projects`
+    // and `list_proposals` return {items, omitted} because they filter rows by
+    // default, and a filtered list that looks bare is how "no such project" gets
+    // concluded from "you didn't ask for archived ones".
+    let filtered = named_in_instructions("the filtered ones");
 
     // `list_*` plus the survey are exactly the collection reads the instructions
     // summarise. `neighbors` and `daily_plan_history` carry their own shapes and
@@ -468,6 +468,16 @@ async fn collection_reads_return_the_shape_the_instructions_promise() {
             has_envelope,
             "`{name}` is documented as paginated but returned {value}"
         );
+        // The survey is the one paginated read that also narrows by default
+        // (#851), and the instructions say so in as many words.
+        if name == "survey_work_items" {
+            assert!(
+                value.get("omitted").is_some(),
+                "the instructions say `survey_work_items` carries `omitted`, but it \
+                 returned {value} — a sweep cannot tell a narrowed count from a \
+                 complete one without it"
+            );
+        }
     }
     for name in &bare {
         let value = body(
@@ -479,6 +489,18 @@ async fn collection_reads_return_the_shape_the_instructions_promise() {
         assert!(
             value.is_array(),
             "`{name}` is documented as a bare array but returned {value}"
+        );
+    }
+    for name in &filtered {
+        let value = body(
+            &server
+                .call(name, args(fixtures[name.as_str()].clone()))
+                .await
+                .unwrap(),
+        );
+        assert!(
+            value.get("items").is_some() && value.get("omitted").is_some(),
+            "`{name}` is documented as {{items, omitted}} but returned {value}"
         );
     }
 }

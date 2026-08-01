@@ -266,6 +266,34 @@ comment_count: number,
  */
 covered_count: number, created: string, updated: string, };
 
+/**
+ * A proposal as the lean queue read reports it — WI #852's field list exactly.
+ *
+ * No `summary`: proposal summaries are the longest prose in korg (they are
+ * written as plans) and they are the entire payload problem. `get_proposal` is
+ * the full read, and `start-sprint` calls it immediately after the pick anyway
+ * — the two-tier read this row completes was already the intended pattern.
+ *
+ * No `archived` either: the lean list excludes archived rows by default, so the
+ * flag would be constant. Ask for them and `detail: "full"` carries it.
+ */
+export type ProposalLeanRow = { node_id: number, title: string, status: string, project: string | null, rank: string, pinned: boolean, covered_count: number, comment_count: number, };
+
+export type ProposalListFull = { items: Array<ProposalRow>, omitted: ProposalOmitted, };
+
+export type ProposalListLean = { items: Array<ProposalLeanRow>, omitted: ProposalOmitted, };
+
+/**
+ * What the queue read's filters hid (WI #852), computed as a **cascade** so no
+ * row is counted twice: `archived` is what the archived filter excluded, and
+ * `done`/`declined` are counted only over the rows that *passed* it. An
+ * archived `done` proposal therefore lands in `archived` and nowhere else.
+ *
+ * A field is 0 when the caller asked to see that class — `status: "all"` zeroes
+ * both terminal counts, `archived: null` zeroes `archived`.
+ */
+export type ProposalOmitted = { done: number, declined: number, archived: number, };
+
 export type ProposalRow = { node_id: number, title: string, summary: string, status: string, rank: string, pinned: boolean, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
 /**
  * Comments on this proposal (WI #535).
@@ -312,6 +340,16 @@ export type ReportRow = { node_id: number, source: string, report_date: string, 
  * Comments on this report (WI #535).
  */
 comment_count: number, updated: string, };
+
+/**
+ * What the survey's archived filter hid (WI #851).
+ *
+ * Counts **archived rows the filter excluded**, so it is 0 under
+ * `archived: true` (they are all shown) and under `archived: null` (nothing is
+ * hidden). Naming the field for what it counts keeps it honest under every
+ * setting, rather than meaning "unarchived" half the time.
+ */
+export type SurveyOmitted = { archived: number, };
 
 export type Topic = { node_id: number, name: string, description: string | null, project_id: number | null, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
 /**
@@ -360,4 +398,11 @@ export type WorkItemSummary = { wi_number: number, node_id: number, project: str
  */
 comment_count: number, };
 
-export type WorkItemSurvey = { items: Array<WorkItemSummary>, total: number, limit: number, offset: number, };
+export type WorkItemSurvey = { items: Array<WorkItemSummary>, total: number, limit: number, offset: number, 
+/**
+ * The rows the archived filter hid. `total` is the count *after* filtering,
+ * so without this a survey used to decide "is this project drained?" cannot
+ * tell a narrowed answer from a complete one — the same silent-truncation
+ * failure `list_projects`' `omitted` exists to treat (WI #828).
+ */
+omitted: SurveyOmitted, };

@@ -179,6 +179,7 @@ fn the_collection_read_shapes_agree_across_docs_and_instructions() {
     let api = read("docs/api.md");
     let mut documented_paginated = BTreeSet::new();
     let mut documented_bare = BTreeSet::new();
+    let mut documented_filtered = BTreeSet::new();
     for line in section(&api, "## Collection reads")
         .into_iter()
         .filter(|l| l.starts_with('|'))
@@ -193,12 +194,17 @@ fn the_collection_read_shapes_agree_across_docs_and_instructions() {
             documented_paginated = backticked(reads).into_iter().collect();
         } else if shape.contains("bare array") {
             documented_bare = backticked(reads).into_iter().collect();
+        } else if shape.contains("items, omitted") {
+            documented_filtered = backticked(reads).into_iter().collect();
         }
     }
     assert!(
-        !documented_paginated.is_empty() && !documented_bare.is_empty(),
-        "docs/api.md's `## Collection reads` shape table no longer has a \
-         `{{items, total, limit, offset}}` row and a `bare array` row"
+        !documented_paginated.is_empty()
+            && !documented_bare.is_empty()
+            && !documented_filtered.is_empty(),
+        "docs/api.md's `## Collection reads` shape table no longer has all three \
+         of the rows the instructions summarise: `{{items, total, limit, offset}}`, \
+         `bare array`, `{{items, omitted}}`"
     );
 
     assert_eq!(
@@ -213,6 +219,78 @@ fn the_collection_read_shapes_agree_across_docs_and_instructions() {
         "docs/api.md and the MCP server instructions disagree about which \
          collection reads return a bare array"
     );
+    assert_eq!(
+        documented_filtered,
+        named_in_instructions("the filtered ones"),
+        "docs/api.md and the MCP server instructions disagree about which \
+         collection reads narrow by default and return {{items, omitted}}"
+    );
+}
+
+/// The `archived` affordance is part of the same contract, and it is the one
+/// that was **wrong** rather than merely undocumented (WI #851).
+///
+/// korg's instructions used to end "All exclude archived rows unless you ask for
+/// them", which was false of `survey_work_items` — the tool those same
+/// instructions recommend for cross-project sweeps — and of `list_proposals`,
+/// which had no `archived` predicate at all. An agent cannot check a claim like
+/// that; it can only be burned by it.
+///
+/// Both are fixed, and the sentence now names the class that genuinely has no
+/// archived filter (`list_reports`, `list_areas`, `list_comments`,
+/// `list_daily_plan` — the bare-array reads). This asserts that split against
+/// the **derived input schemas**, so a read cannot quietly join or leave the
+/// class: the one-time correction is worth far less than the fence.
+#[test]
+fn the_archived_affordance_matches_the_instructions() {
+    let without: BTreeSet<String> = named_in_instructions("the unpaginated ones");
+    for tool in korg_mcp::tools::tools() {
+        let name = tool.name.to_string();
+        if !(name.starts_with("list_") || name == "survey_work_items") {
+            continue;
+        }
+        let properties = tool.input_schema.get("properties");
+        // `list_projects` is the one read whose subject is not a node. A project
+        // has a `status` column, and `archived` is one of its values — so it
+        // spells the same default and the same escape hatch through `status`
+        // (#828), not through an `archived` flag. Assert it still offers both
+        // rather than exempting it outright.
+        if name == "list_projects" {
+            let variants = properties
+                .and_then(|p| p.get("status"))
+                .and_then(|s| s.get("enum"))
+                .and_then(|e| e.as_array())
+                .map(|e| {
+                    e.iter()
+                        .filter_map(|v| v.as_str())
+                        .map(str::to_string)
+                        .collect::<BTreeSet<String>>()
+                })
+                .unwrap_or_default();
+            assert!(
+                variants.contains("archived") && variants.contains("all"),
+                "`list_projects` filters archived projects through `status`, so its \
+                 status enum must offer both `archived` and `all` — got {variants:?}"
+            );
+            continue;
+        }
+        let has_archived = properties.and_then(|p| p.get("archived")).is_some();
+        if without.contains(&name) {
+            assert!(
+                !has_archived,
+                "`{name}` takes an `archived` argument, but the server instructions \
+                 list it among the reads that have no archived filter"
+            );
+        } else {
+            assert!(
+                has_archived,
+                "`{name}` has no `archived` argument, so it cannot honour the \
+                 instructions' promise that every read filtering archived rows \
+                 excludes them by default — either give it the filter or name it \
+                 in the no-filter list"
+            );
+        }
+    }
 }
 
 #[test]

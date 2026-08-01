@@ -18,12 +18,14 @@ pub fn server_instructions() -> &'static str {
      results carrying {message, code} where code is one of invalid_input, not_found, \
      conflict, internal. Paginated collection reads (list_work_items, list_cards, \
      list_links, list_topics, survey_work_items) return {items, total, limit, offset}; \
-     the unpaginated ones (list_proposals, list_reports, list_areas, \
-     list_comments, list_daily_plan) return a bare array; and the filtered one \
-     (list_projects) returns {items, omitted}, where `omitted` counts the rows \
-     its status filter hid — so a narrowed view can never be mistaken for the \
-     whole corpus. All exclude \
-     archived rows unless you ask for them. Writes take a project or area by name \
+     the unpaginated ones (list_reports, list_areas, \
+     list_comments, list_daily_plan) return a bare array and have no archived \
+     filter; and the filtered ones \
+     (list_proposals, list_projects) return {items, omitted}, where `omitted` counts \
+     the rows their defaults hid — so a narrowed view can never be mistaken for the \
+     whole corpus. survey_work_items carries `omitted` too, for the same reason. \
+     Every read that filters archived rows excludes them by default: pass \
+     `archived: null` for both, `true` for archived only. Writes take a project or area by name \
      (`project`/`area`) or by id (`project_id`/`area_id`), never both. \
      A `has_handoff` edge in a focused read (get_work_item/get_proposal) is \
      required context: get_handoff and read it before acting on the work — it \

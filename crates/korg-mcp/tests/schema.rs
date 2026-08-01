@@ -137,9 +137,21 @@ fn advertised_enums_are_the_vocabulary() {
         field("update_proposal", "status"),
         expect(&vocab::PROPOSAL_STATUSES)
     );
+    // The two row filters that *narrow by default* carry the vocabulary plus
+    // `all`: omitting them does not mean "no filter", so there has to be a way
+    // to spell it (#828 for projects, #852 for proposals).
+    let plus_all = |values: &[&str]| -> Vec<String> {
+        let mut v = expect(values);
+        v.push("all".into());
+        v
+    };
     assert_eq!(
         field("list_proposals", "status"),
-        expect(&vocab::PROPOSAL_STATUSES)
+        plus_all(&vocab::PROPOSAL_STATUSES)
+    );
+    assert_eq!(
+        field("list_projects", "status"),
+        plus_all(&vocab::PROJECT_STATUSES)
     );
     assert_eq!(
         field("create_report", "status"),
