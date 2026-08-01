@@ -42,6 +42,17 @@ pub const LINK_DISPOSITIONS: [&str; 5] = ["Unread", "Done", "Revisit", "Summariz
 /// Sprint-proposal lifecycle; mirrors `sprint_proposal_status` (0008).
 pub const PROPOSAL_STATUSES: [&str; 4] = ["proposed", "active", "done", "declined"];
 
+/// The proposals a queue read means by default (WI #852): the live ones. The
+/// complement — `done` and `declined` — was 71% of `list_proposals`' payload and
+/// nothing an agent picking a sprint has ever wanted. Kept beside the full
+/// vocabulary so a fifth status cannot be added without deciding which side it
+/// falls on; `proposal_statuses_partition_cleanly` fences that.
+pub const PROPOSAL_LIVE_STATUSES: [&str; 2] = ["proposed", "active"];
+
+/// The complement of [`PROPOSAL_LIVE_STATUSES`] — excluded from a lean
+/// `list_proposals` unless asked for, and counted in its `omitted`.
+pub const PROPOSAL_TERMINAL_STATUSES: [&str; 2] = ["done", "declined"];
+
 /// Daily-report statuses; mirrors the `report.status` CHECK (0010).
 pub const REPORT_STATUSES: [&str; 3] = ["ok", "attention", "problem"];
 
@@ -126,6 +137,34 @@ pub fn validate(value: &str, allowed: &[&str], what: &str) -> Result<(), RepoErr
 /// and CI's `git diff --exit-code` covers all of it. Naming it
 /// `export_bindings_*` puts it in the same `cargo test export_bindings` filter
 /// `ts-rs` uses.
+#[cfg(test)]
+mod partition {
+    use super::{PROPOSAL_LIVE_STATUSES, PROPOSAL_STATUSES, PROPOSAL_TERMINAL_STATUSES};
+    use std::collections::BTreeSet;
+
+    /// A lean `list_proposals` shows the live statuses and counts the terminal
+    /// ones in `omitted` (WI #852). A fifth proposal status added to the enum
+    /// and to `PROPOSAL_STATUSES` but to neither half would be silently
+    /// invisible *and* uncounted — the exact failure `omitted` exists to stop.
+    #[test]
+    fn proposal_statuses_partition_cleanly() {
+        let all: BTreeSet<&str> = PROPOSAL_STATUSES.into_iter().collect();
+        let live: BTreeSet<&str> = PROPOSAL_LIVE_STATUSES.into_iter().collect();
+        let terminal: BTreeSet<&str> = PROPOSAL_TERMINAL_STATUSES.into_iter().collect();
+        assert!(
+            live.is_disjoint(&terminal),
+            "a proposal status is both live and terminal: {:?}",
+            live.intersection(&terminal).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            all,
+            live.union(&terminal).copied().collect::<BTreeSet<&str>>(),
+            "every proposal status must be classified live or terminal — \
+             list_proposals' default and its `omitted` counts both depend on it"
+        );
+    }
+}
+
 #[cfg(test)]
 mod generate {
     use super::EXPORTED;

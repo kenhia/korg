@@ -16,7 +16,10 @@ use ts_rs::TS;
 pub use crate::error::RepoError;
 use crate::ops::{self, schema};
 use crate::relationships;
-use crate::vocab::{self, CARD_STATUSES, LINK_DISPOSITIONS, PROPOSAL_STATUSES, REPORT_STATUSES};
+use crate::vocab::{
+    self, CARD_STATUSES, LINK_DISPOSITIONS, PROPOSAL_LIVE_STATUSES, PROPOSAL_STATUSES,
+    REPORT_STATUSES,
+};
 pub use crate::vocab::{PROJECT_CATEGORIES, PROJECT_STATUSES, WI_STATUSES};
 
 fn validate_status(value: &str, allowed: &[&str], what: &str) -> Result<()> {
@@ -1515,6 +1518,18 @@ pub struct WorkItemSummary {
     pub comment_count: i64,
 }
 
+/// What the survey's archived filter hid (WI #851).
+///
+/// Counts **archived rows the filter excluded**, so it is 0 under
+/// `archived: true` (they are all shown) and under `archived: null` (nothing is
+/// hidden). Naming the field for what it counts keeps it honest under every
+/// setting, rather than meaning "unarchived" half the time.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct SurveyOmitted {
+    pub archived: i64,
+}
+
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "korg.ts")]
 pub struct WorkItemSurvey {
@@ -1522,17 +1537,26 @@ pub struct WorkItemSurvey {
     pub total: i64,
     pub limit: i64,
     pub offset: i64,
+    /// The rows the archived filter hid. `total` is the count *after* filtering,
+    /// so without this a survey used to decide "is this project drained?" cannot
+    /// tell a narrowed answer from a complete one — the same silent-truncation
+    /// failure `list_projects`' `omitted` exists to treat (WI #828).
+    pub omitted: SurveyOmitted,
 }
 
 /// A slim, paginated projection of work items (no content/details) for
 /// cross-project surveys — e.g. the `refill-queue` skill — which can't
 /// afford `list_work_items`'s full payload at instance scale. `total` is
 /// the full filtered count (before LIMIT/OFFSET), so callers can page.
+///
+/// `archived` is tri-state and defaults to `Some(false)` at the transports, like
+/// every sibling read. Before #851 it defaulted to `None` ("both"), against the
+/// server instructions and with nothing in the response to reveal it.
 pub async fn survey_work_items(
     pool: &PgPool,
     project: Option<&str>,
     wi_status: Option<&str>,
-    archived: Option<bool>,
+    archived: ArchivedFilter,
     limit: i64,
     offset: i64,
 ) -> Result<WorkItemSurvey> {
@@ -1584,11 +1608,33 @@ pub async fn survey_work_items(
             comment_count: r.comment_count,
         })
         .collect();
+    // Only a filter that excludes archived rows can hide any; asking for
+    // archived-only or for both hides nothing, so skip the query entirely.
+    let omitted_archived = if archived == Some(false) {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM workitem w \
+             JOIN node n ON n.id = w.node_id \
+             LEFT JOIN project pj ON pj.id = n.project_id \
+             WHERE ($1::text IS NULL OR pj.name = $1) \
+               AND ($2::text IS NULL OR w.wi_status = $2) \
+               AND n.archived",
+        )
+        .bind(project)
+        .bind(wi_status)
+        .fetch_one(pool)
+        .await?
+    } else {
+        0
+    };
+
     Ok(WorkItemSurvey {
         items,
         total,
         limit,
         offset,
+        omitted: SurveyOmitted {
+            archived: omitted_archived,
+        },
     })
 }
 
@@ -2528,6 +2574,197 @@ pub async fn list_proposals(pool: &PgPool, query: ProposalQuery) -> Result<Vec<P
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+// --- the lean proposal queue (WI #852) --------------------------------------
+//
+// `list_proposals` above is the REST/web read and stays as it is: the Planning
+// page fetches unfiltered on purpose (WI #622) and renders `done` and
+// `declined` columns out of the summaries. It is a browser, not a token budget.
+//
+// The MCP read is the one that measured 110 rows / ~185,500 chars / ~46k tokens
+// unfiltered, 71% of it `done`. Everything below is that read: a lean
+// projection, live statuses by default, and an `omitted` envelope so the
+// narrowing is visible. Same split `list_projects` has had since #828.
+
+/// A proposal as the lean queue read reports it — WI #852's field list exactly.
+///
+/// No `summary`: proposal summaries are the longest prose in korg (they are
+/// written as plans) and they are the entire payload problem. `get_proposal` is
+/// the full read, and `start-sprint` calls it immediately after the pick anyway
+/// — the two-tier read this row completes was already the intended pattern.
+///
+/// No `archived` either: the lean list excludes archived rows by default, so the
+/// flag would be constant. Ask for them and `detail: "full"` carries it.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProposalLeanRow {
+    pub node_id: i64,
+    pub title: String,
+    pub status: String,
+    pub project: Option<String>,
+    #[ts(type = "string")]
+    pub rank: Decimal,
+    pub pinned: bool,
+    pub covered_count: i64,
+    pub comment_count: i64,
+}
+
+/// What the queue read's filters hid (WI #852), computed as a **cascade** so no
+/// row is counted twice: `archived` is what the archived filter excluded, and
+/// `done`/`declined` are counted only over the rows that *passed* it. An
+/// archived `done` proposal therefore lands in `archived` and nowhere else.
+///
+/// A field is 0 when the caller asked to see that class — `status: "all"` zeroes
+/// both terminal counts, `archived: null` zeroes `archived`.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProposalOmitted {
+    pub done: i64,
+    pub declined: i64,
+    pub archived: i64,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProposalListLean {
+    pub items: Vec<ProposalLeanRow>,
+    pub omitted: ProposalOmitted,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProposalListFull {
+    pub items: Vec<ProposalRow>,
+    pub omitted: ProposalOmitted,
+}
+
+/// Resolve the `status` argument into the statuses a queue read returns.
+///
+/// Absent → the live queue (`proposed` + `active`). The same principle #828
+/// applied to projects: *the default must include every row that could be a
+/// correct answer to the question the tool is for.* The question here is "what
+/// should I work on", and a `done` proposal is never that.
+///
+/// `Some("all")` → no filter. Anything else is validated against
+/// `PROPOSAL_STATUSES` and returned alone.
+fn proposal_status_predicate(status: Option<&str>) -> Result<Option<Vec<String>>> {
+    match status {
+        None => Ok(Some(
+            PROPOSAL_LIVE_STATUSES
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        )),
+        Some("all") => Ok(None),
+        Some(s) => {
+            validate_status(s, &PROPOSAL_STATUSES, "proposal status")?;
+            Ok(Some(vec![s.to_string()]))
+        }
+    }
+}
+
+const PROPOSAL_LEAN_SELECT: &str =
+    "SELECT p.node_id, p.title, p.status::text AS status, p.rank, p.pinned, \
+            pj.name AS project, \
+            (SELECT count(*) FROM comment cm WHERE cm.node_id = p.node_id) AS comment_count, \
+            (SELECT count(*) FROM relationship r JOIN node wn ON wn.id = r.right_id \
+              WHERE r.left_id = p.node_id AND r.relationship = 'covers' \
+                AND wn.kind = 'workitem') AS covered_count \
+     FROM sprint_proposal p \
+     JOIN node n ON n.id = p.node_id \
+     LEFT JOIN project pj ON pj.id = n.project_id";
+
+/// The shared tail of both queue reads: status set, project, archived, ordering.
+const PROPOSAL_QUEUE_WHERE: &str = " WHERE ($1::text[] IS NULL OR p.status::text = ANY($1)) \
+        AND ($2::text IS NULL OR pj.name = $2) \
+        AND ($3::bool IS NULL OR n.archived = $3) \
+      ORDER BY p.pinned DESC, p.rank ASC, p.node_id ASC";
+
+/// Count what the queue read's filters hid, in one round trip.
+///
+/// The counts are taken over the `project`-filtered corpus — narrowing to a
+/// project is the caller *choosing* a scope, not a default hiding rows from
+/// them, so it is not something `omitted` should report.
+async fn proposal_omitted(
+    pool: &PgPool,
+    project: Option<&str>,
+    archived: ArchivedFilter,
+    shown: Option<&[String]>,
+) -> Result<ProposalOmitted> {
+    let (archived_hidden, done, declined) = sqlx::query_as::<_, (i64, i64, i64)>(
+        "SELECT \
+           count(*) FILTER (WHERE n.archived AND $2::bool IS NOT NULL AND NOT $2), \
+           count(*) FILTER (WHERE ($2::bool IS NULL OR n.archived = $2) \
+                              AND p.status::text = 'done'), \
+           count(*) FILTER (WHERE ($2::bool IS NULL OR n.archived = $2) \
+                              AND p.status::text = 'declined') \
+         FROM sprint_proposal p \
+         JOIN node n ON n.id = p.node_id \
+         LEFT JOIN project pj ON pj.id = n.project_id \
+         WHERE ($1::text IS NULL OR pj.name = $1)",
+    )
+    .bind(project)
+    .bind(archived)
+    .fetch_one(pool)
+    .await?;
+    // A status the caller asked for isn't omitted, however many rows it has.
+    let hidden = |status: &str, count: i64| match shown {
+        Some(list) if list.iter().any(|s| s == status) => 0,
+        None => 0,
+        _ => count,
+    };
+    Ok(ProposalOmitted {
+        done: hidden("done", done),
+        declined: hidden("declined", declined),
+        archived: archived_hidden,
+    })
+}
+
+/// `list_proposals` over MCP: the lean projection, live statuses and unarchived
+/// rows by default, with `omitted` saying what that hid.
+pub async fn list_proposals_lean(
+    pool: &PgPool,
+    status: Option<&str>,
+    project: Option<&str>,
+    archived: ArchivedFilter,
+) -> Result<ProposalListLean> {
+    let shown = proposal_status_predicate(status)?;
+    let items = sqlx::query_as::<_, ProposalLeanRow>(&format!(
+        "{PROPOSAL_LEAN_SELECT}{PROPOSAL_QUEUE_WHERE}"
+    ))
+    .bind(shown.as_deref())
+    .bind(project)
+    .bind(archived)
+    .fetch_all(pool)
+    .await?;
+    Ok(ProposalListLean {
+        items,
+        omitted: proposal_omitted(pool, project, archived, shown.as_deref()).await?,
+    })
+}
+
+/// `list_proposals` with `detail: "full"` — the same filters and envelope, but
+/// every column including `summary`. The escape hatch that keeps the lean
+/// default from making anything unreachable.
+pub async fn list_proposals_full(
+    pool: &PgPool,
+    status: Option<&str>,
+    project: Option<&str>,
+    archived: ArchivedFilter,
+) -> Result<ProposalListFull> {
+    let shown = proposal_status_predicate(status)?;
+    let items =
+        sqlx::query_as::<_, ProposalRow>(&format!("{PROPOSAL_SELECT}{PROPOSAL_QUEUE_WHERE}"))
+            .bind(shown.as_deref())
+            .bind(project)
+            .bind(archived)
+            .fetch_all(pool)
+            .await?;
+    Ok(ProposalListFull {
+        items,
+        omitted: proposal_omitted(pool, project, archived, shown.as_deref()).await?,
+    })
 }
 
 /// A covered work item as a proposal's detail read reports it — enough to

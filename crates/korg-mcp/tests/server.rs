@@ -548,7 +548,9 @@ async fn propose_sprint_and_lifecycle() {
             .await
             .unwrap(),
     );
-    let list = list.as_array().unwrap();
+    // {items, omitted} since #852 — the queue narrows by default, so it cannot
+    // return a bare array that looks like the whole corpus.
+    let list = list["items"].as_array().unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0]["status"], "proposed", "default status");
     assert_eq!(list[0]["pinned"], json!(false));
@@ -575,7 +577,7 @@ async fn propose_sprint_and_lifecycle() {
             .await
             .unwrap(),
     );
-    let active = active.as_array().unwrap();
+    let active = active["items"].as_array().unwrap();
     assert_eq!(active.len(), 1);
     assert_eq!(
         active[0]["pinned"],
@@ -590,7 +592,7 @@ async fn propose_sprint_and_lifecycle() {
             .unwrap(),
     );
     assert_eq!(
-        none_proposed.as_array().unwrap().len(),
+        none_proposed["items"].as_array().unwrap().len(),
         0,
         "no longer in the proposed bucket"
     );
@@ -678,6 +680,248 @@ async fn survey_work_items_paginates_and_filters() {
         all_open["items"].as_array().unwrap().len(),
         5,
         "closed item excluded by the status filter"
+    );
+}
+
+/// WI #851 — the survey's archived default, the trap this tool spent two
+/// sprints being.
+///
+/// The instructions told every agent "All exclude archived rows unless you ask
+/// for them"; the survey — the tool those same instructions *recommend* for
+/// cross-project sweeps — included them. Measured live on project `klams`:
+/// omitted → 105, `archived:false` → 104. A survey used to size a backlog or
+/// decide whether a project was drained over-counted, with nothing in the
+/// response saying so.
+#[tokio::test]
+async fn survey_excludes_archived_by_default_and_says_what_it_hid() {
+    let (_c, pool) = fresh_korg().await;
+    let server = server(pool);
+
+    for i in 0..3 {
+        server
+            .call(
+                "create_work_item",
+                args(json!({"title": format!("live {i}"), "content": "x", "wi_status": "open"})),
+            )
+            .await
+            .unwrap();
+    }
+    let doomed = body(
+        &server
+            .call(
+                "create_work_item",
+                args(json!({"title": "archived one", "content": "x", "wi_status": "open"})),
+            )
+            .await
+            .unwrap(),
+    );
+    server
+        .call(
+            "update_work_item",
+            args(json!({"wi_number": doomed["wi_number"], "archived": true})),
+        )
+        .await
+        .unwrap();
+
+    let call = |arguments: serde_json::Value| {
+        let server = &server;
+        async move {
+            body(
+                &server
+                    .call("survey_work_items", args(arguments))
+                    .await
+                    .unwrap(),
+            )
+        }
+    };
+
+    let default = call(json!({"wi_status": "open"})).await;
+    assert_eq!(
+        default["total"].as_i64(),
+        Some(3),
+        "omitting `archived` must mean live-only, like every sibling read"
+    );
+    assert_eq!(
+        default["omitted"]["archived"].as_i64(),
+        Some(1),
+        "the filtered count has to say what it hid, or the under-count is as \
+         silent as the over-count was"
+    );
+
+    let both = call(json!({"wi_status": "open", "archived": null})).await;
+    assert_eq!(both["total"].as_i64(), Some(4), "null means both");
+    assert_eq!(
+        both["omitted"]["archived"].as_i64(),
+        Some(0),
+        "nothing is hidden when you asked for both"
+    );
+
+    let only = call(json!({"wi_status": "open", "archived": true})).await;
+    assert_eq!(only["total"].as_i64(), Some(1), "true means archived only");
+    assert_eq!(
+        only["omitted"]["archived"].as_i64(),
+        Some(0),
+        "`omitted.archived` counts archived rows *hidden*, so asking for exactly \
+         those hides none of them"
+    );
+}
+
+/// WI #852 — `list_proposals` measured 110 rows / ~185,500 chars / ~46k tokens
+/// unfiltered, 71% of it `done`. It now narrows twice (live statuses, lean
+/// projection) and reports both narrowings.
+#[tokio::test]
+async fn list_proposals_returns_the_live_queue_lean_and_counts_what_it_hid() {
+    let (_c, pool) = fresh_korg().await;
+    let server = server(pool);
+
+    let make = |title: &'static str, status: Option<&'static str>| {
+        let server = &server;
+        async move {
+            let p = body(
+                &server
+                    .call(
+                        "propose_sprint",
+                        args(json!({
+                            "title": title,
+                            "summary": "a long plan, which is the whole payload problem",
+                            "rank": 1,
+                        })),
+                    )
+                    .await
+                    .unwrap(),
+            );
+            let node_id = p["node_id"].as_i64().unwrap();
+            if let Some(status) = status {
+                server
+                    .call(
+                        "update_proposal",
+                        args(json!({"node_id": node_id, "status": status})),
+                    )
+                    .await
+                    .unwrap();
+            }
+            node_id
+        }
+    };
+
+    let queued = make("still queued", None).await;
+    let running = make("in flight", Some("active")).await;
+    make("shipped", Some("done")).await;
+    make("shipped too", Some("done")).await;
+    make("never happening", Some("declined")).await;
+    let shelved = make("archived", None).await;
+    server
+        .call(
+            "update_proposal",
+            args(json!({"node_id": shelved, "archived": true})),
+        )
+        .await
+        .unwrap();
+
+    let default = body(
+        &server
+            .call("list_proposals", args(json!({})))
+            .await
+            .unwrap(),
+    );
+    assert!(
+        default.get("items").is_some() && default.get("omitted").is_some(),
+        "the queue read returns {{items, omitted}}, not a bare array -- a \
+         narrowed queue that looks complete is the failure: {default}"
+    );
+    let ids: Vec<i64> = default["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["node_id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![queued, running],
+        "the default is the live queue: proposed + active, unarchived"
+    );
+    assert_eq!(default["omitted"]["done"].as_i64(), Some(2));
+    assert_eq!(default["omitted"]["declined"].as_i64(), Some(1));
+    assert_eq!(default["omitted"]["archived"].as_i64(), Some(1));
+
+    let row = &default["items"][0];
+    assert!(
+        row.get("summary").is_none(),
+        "the lean row carries no `summary` -- that is the ~46k tokens: {row}"
+    );
+    for field in [
+        "node_id",
+        "title",
+        "status",
+        "project",
+        "rank",
+        "pinned",
+        "covered_count",
+        "comment_count",
+    ] {
+        assert!(
+            row.get(field).is_some(),
+            "lean row is missing `{field}`: {row}"
+        );
+    }
+
+    // The escape hatches: nothing became unreachable, it stopped being default.
+    let all = body(
+        &server
+            .call("list_proposals", args(json!({"status": "all"})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        all["items"].as_array().unwrap().len(),
+        5,
+        "status:\"all\" lifts the status filter but not the archived one"
+    );
+    assert_eq!(
+        all["omitted"]["done"].as_i64(),
+        Some(0),
+        "a status you asked for is not omitted"
+    );
+    assert_eq!(all["omitted"]["archived"].as_i64(), Some(1));
+
+    let full = body(
+        &server
+            .call("list_proposals", args(json!({"detail": "full"})))
+            .await
+            .unwrap(),
+    );
+    assert!(
+        full["items"][0].get("summary").is_some(),
+        "detail:\"full\" is the escape hatch back to every column"
+    );
+
+    let done_only = body(
+        &server
+            .call("list_proposals", args(json!({"status": "done"})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(done_only["items"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        done_only["omitted"]["declined"].as_i64(),
+        Some(1),
+        "asking for one status still reports the other terminal one it hid"
+    );
+
+    let archived_only = body(
+        &server
+            .call(
+                "list_proposals",
+                args(json!({"status": "all", "archived": true})),
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(archived_only["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        archived_only["omitted"]["archived"].as_i64(),
+        Some(0),
+        "asking for archived rows hides none of them"
     );
 }
 
@@ -866,12 +1110,29 @@ fn advertised_defaults_match_server_behaviour() {
     }
 
     // survey_work_items is the one that lied (F-11): it advertised
-    // `default: false` while the server treated omitted as *both*. It must now
-    // advertise no default at all.
+    // `default: false` while the server treated omitted as *both*. That was
+    // reconciled the wrong way round — the schema was made to match the odd
+    // behaviour, and the server `instructions` went on promising the opposite to
+    // every agent that never reads a schema (#851). The behaviour is now the
+    // thing that moved, so the survey's filter must be *identical* to a
+    // sibling's: no special case left to advertise.
     let survey = schema_of("survey_work_items");
-    assert!(
-        survey["properties"]["archived"].get("default").is_none(),
-        "survey_work_items must not advertise an archived default it doesn't apply"
+    assert_eq!(
+        survey["properties"]["archived"],
+        schema_of("list_work_items")["properties"]["archived"],
+        "survey_work_items' archived filter must be the same one every other \
+         collection read takes — a difference here is what #851 was"
+    );
+    assert_eq!(
+        survey["properties"]["archived"]["default"], false,
+        "survey_work_items: archived default must match korg_core::repo::archived_default()"
+    );
+
+    // list_proposals joined the class in #852; it had no archived filter at all.
+    assert_eq!(
+        schema_of("list_proposals")["properties"]["archived"]["default"],
+        false,
+        "list_proposals: archived default must match korg_core::repo::archived_default()"
     );
 
     // neighbors' bound must match the core constants too (sprint 014).
@@ -981,7 +1242,7 @@ async fn collection_contracts_and_new_tools_over_mcp() {
             .await
             .unwrap(),
     );
-    assert_eq!(proposals[0]["covered_count"], 2);
+    assert_eq!(proposals["items"][0]["covered_count"], 2);
 
     // update_link: disposition, read and tags in one transaction — the 0004
     // workflow agents could not reach before (only mark_link_read existed).

@@ -250,7 +250,10 @@ async fn list_work_items(State(s): State<AppState>, Query(q): Query<WorkItemsQue
 struct SurveyQuery {
     project: Option<String>,
     wi_status: Option<String>,
-    archived: Option<bool>,
+    /// Tri-state like every other collection read (WI #851). This was the one
+    /// query struct taking a raw `Option<bool>`, so `?archived=all` was an error
+    /// here and omitting it meant "both" rather than "live only".
+    archived: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -262,7 +265,7 @@ async fn survey_work_items(State(s): State<AppState>, Query(q): Query<SurveyQuer
         &s.pool,
         q.project.as_deref(),
         q.wi_status.as_deref(),
-        q.archived,
+        parse_archived(q.archived.as_deref())?,
         limit,
         offset,
     )

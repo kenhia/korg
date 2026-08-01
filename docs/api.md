@@ -143,19 +143,29 @@ the same envelope", which was true of four of them:
 | `{items, total, limit, offset}` | `list_work_items`, `list_cards`, `list_links`, `list_topics`, `survey_work_items` |
 | `{items, total, limit, truncated}` | `neighbors` (`truncated`, not `offset` — it caps rather than pages) |
 | `{from, to, total, completed, items}` | `daily_plan_history` |
-| bare array | `list_proposals`, `list_reports`, `list_areas`, `list_comments`, `list_daily_plan` |
-| `{items, omitted}` | `list_projects` (`omitted` counts the rows its status filter hid) |
+| bare array | `list_reports`, `list_areas`, `list_comments`, `list_daily_plan` |
+| `{items, omitted}` | `list_proposals`, `list_projects` |
 
-The bare-array reads are the ones with no natural paging story — the proposal
-queue is short and hand-ordered, a project has a handful of areas, a node has a
-handful of comments, a day has a handful of plan items.
+(`omitted` counts the rows a read's own defaults hid. `survey_work_items`
+carries it *in addition to* the paginated envelope.)
 
-`list_projects` is the exception, and for a reason that is not paging: since
-WI #828 it filters rows by default (active only), so a bare array would be a
-narrowed view indistinguishable from a complete one. `omitted` is what stops an
-agent concluding "there is no such project" from "you did not ask for archived
-ones" — the same silent-truncation failure the four-shape table exists to make
-visible.
+The bare-array reads are the ones with no natural paging story — a project has a
+handful of areas, a node has a handful of comments, a day has a handful of plan
+items.
+
+`list_projects` and `list_proposals` are the exceptions, and for a reason that is
+not paging: both **filter rows by default** (WI #828, WI #852), so a bare array
+would be a narrowed view indistinguishable from a complete one. `omitted` is what
+stops an agent concluding "there is no such project" from "you did not ask for
+archived ones" — the same silent-truncation failure the four-shape table exists
+to make visible. `survey_work_items` carries `omitted` on top of its paginated
+envelope for exactly the same reason (WI #851): `total` is the count *after*
+filtering, so a sweep used to decide "is this project drained?" needs to see what
+the filter hid.
+
+Note the **MCP shape is the one tabled here**, and REST can differ where the web
+app's needs do: `GET /api/projects` and `GET /api/proposals` still return the
+full bare arrays the UI renders from.
 
 **Decided (WI #579, 2026-07-24): they stay bare.** Enveloping them for
 uniformity would put a `total` that always equals `items.length` and a `limit`
@@ -177,6 +187,20 @@ into every answer. To see them:
 | archived only | `?archived=true` | `"archived": true` |
 | both | `?archived=all` | `"archived": null` |
 
+This is true of **every read that has an `archived` filter**. Until WI #851 it
+was not: `survey_work_items` defaulted to "both" — against this table, against
+the MCP `instructions`, and in the one tool the instructions recommend for
+sizing a backlog, so any sweep over-counted with nothing in the response saying
+so. `list_proposals` had no `archived` predicate at all. Both now behave like
+their siblings.
+
+The bare-array reads (`list_reports`, `list_areas`, `list_comments`,
+`list_daily_plan`) have **no** `archived` filter — areas and comments are not
+nodes and have no archived state, and reports and plan items have never exposed
+one. `docs_drift.rs::the_archived_affordance_matches_the_instructions` fences
+that split against the derived schemas, so a read cannot quietly join or leave
+the class.
+
 Per-entity filters, all applied server-side — prefer them to fetching
 everything and sifting:
 
@@ -186,7 +210,7 @@ everything and sifting:
 | `list_cards` | `status`, `project`, `archived` | `status`, `rank`, `node_id` |
 | `list_links` | `disposition`, `read`, `archived` | `node_id` |
 | `list_topics` | `q` (name/description), `archived` | `name`, `node_id` |
-| `list_proposals` | `status`, `project` | pinned, `rank`, `node_id` |
+| `list_proposals` | `status` (+ `"all"`), `project`, `archived`, `detail` | pinned, `rank`, `node_id` |
 | `neighbors` | `label`, `kind` | `node_id`, `rel_id` |
 
 Every ordering carries an id tie-breaker, so equal ranks no longer shuffle
@@ -195,6 +219,30 @@ between calls.
 `survey_work_items` remains the cross-project sweep: same envelope, no
 `content`/`details`. Reach for `list_work_items` when you want one project's
 items in full, and the survey when you want many projects' shape (D-10).
+
+### The proposal queue narrows by default (WI #852)
+
+`list_proposals` measured 110 rows / ~185,500 chars / **~46k tokens** unfiltered,
+71% of it `done` proposals no caller had ever wanted. Over MCP it now narrows
+twice, and reports both:
+
+| `status` | rows returned |
+|---|---|
+| omitted | `proposed` + `active` — the live queue |
+| `"all"` | every status |
+| one of the four | exactly that status |
+
+`detail` picks the projection: `"lean"` (default) is `node_id`, `title`,
+`status`, `project`, `rank`, `pinned`, `covered_count`, `comment_count` —
+**no `summary`**, which is the payload. `"full"` is every column, so nothing
+became unreachable; it just stopped being the default. `get_proposal` is still
+the authoritative single-proposal read, and it carries the covered work items
+too, which is what a caller wants immediately after picking one.
+
+`omitted` is `{done, declined, archived}`, computed as a cascade — `archived`
+counts what the archived filter hid, and the two terminal counts are taken only
+over rows that passed it, so no proposal is counted twice. A field is `0` when
+you asked to see that class.
 
 ## Two-level reads
 

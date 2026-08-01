@@ -84,7 +84,7 @@ describing a route that no longer exists.
 | `PATCH` | `/api/projects/:name` | Update project metadata (everything but the name). |
 | `GET` | `/api/projects/:name/plan` | A project's work items plus their `depends_on` edges, for plan/frontier views. |
 | `GET`, `POST` | `/api/work-items` | List (`{items,total,limit,offset}`; filters `project`, `archived`, `limit`, `offset`) or create. |
-| `GET` | `/api/work-items/survey` | Slim, paginated work-item projection (no content/details) for cross-project surveys. |
+| `GET` | `/api/work-items/survey` | Slim, paginated work-item projection (no content/details) for cross-project surveys; filters `project`, `wi_status`, `archived` (tri-state since #851, excluding archived by default). |
 | `GET`, `PATCH` | `/api/work-items/:wi_number` | Fetch with inlined comments (same shape as the MCP tool), or update. |
 | `GET`, `POST` | `/api/areas` | List or create areas. |
 | `GET`, `POST` | `/api/cards` | List cards (enveloped; filters `status`, `project`, `archived`) or create. |
@@ -277,11 +277,19 @@ Defaults are **active only, lean**: `name`, `description`, and `status` only
 when it is not `active`. Roughly a 5× smaller payload than the old shape, and
 the saving is the field projection rather than the row filter.
 
-It returns an envelope rather than a bare array — the one deliberate exception
-to the convention in [api.md](api.md#collection-read-shapes) — because
-`omitted` is what stops an agent concluding "there is no such project" from "you
-did not ask for archived ones". `detail:"full"` restores every column including
-`notes`, so a maintenance pass makes one call rather than one per project.
+It returns an envelope rather than a bare array — a deliberate exception to the
+convention in [api.md](api.md#collection-read-shapes) — because `omitted` is
+what stops an agent concluding "there is no such project" from "you did not ask
+for archived ones". `detail:"full"` restores every column including `notes`, so
+a maintenance pass makes one call rather than one per project.
+
+**`list_proposals` joined this shape in WI #852**, for the same reason and with
+the same two knobs. Over MCP it defaults to the live queue (`proposed` +
+`active`, unarchived) and a lean projection without `summary`; `status:"all"`
+and `detail:"full"` are the escape hatches, and `omitted` is `{done, declined,
+archived}`. It measured ~46k tokens unfiltered, 71% of it `done` proposals no
+caller had ever wanted. `GET /api/proposals` is unchanged — the Planning page
+renders those summaries.
 
 Tier 1 is rendered from live data at `initialize`, so every new agent session
 gets a current roster with no restart: korg is a long-running HTTP server that

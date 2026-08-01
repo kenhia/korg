@@ -147,12 +147,13 @@
     "name": "list_work_items"
   },
   {
-    "description": "Slim, paginated work-item listing (wi_number, node_id, project, title, wi_type, wi_status, wi_tshirt, comment_count only -- no content/details). Use this instead of list_work_items for cross-project surveys, which can exceed tool-output limits at instance scale. Returns {items, total, limit, offset}.",
+    "description": "Slim, paginated work-item listing (wi_number, node_id, project, title, wi_type, wi_status, wi_tshirt, comment_count only -- no content/details). Use this instead of list_work_items for cross-project surveys, which can exceed tool-output limits at instance scale. Returns {items, total, limit, offset, omitted}. Archived items are EXCLUDED by default like every other list read (this used to be the one exception, silently over-counting any sweep used to size a backlog); `omitted.archived` counts what that hid, so a narrowed sweep cannot pass for a complete one.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "archived": {
-          "description": "Filter by archived flag; OMIT for both archived and unarchived (there is no default).",
+          "default": false,
+          "description": "Omit for unarchived only (the default); true for archived only; null for both.",
           "type": [
             "boolean",
             "null"
@@ -1383,10 +1384,28 @@
     "name": "get_report"
   },
   {
-    "description": "List sprint proposals: pinned first, then rank, then node_id (a stable order -- equal ranks no longer shuffle between calls). Each row carries `covered_count` and `comment_count`; call get_proposal for the covered work items themselves. Filter by `status` and/or `project` (name).",
+    "description": "The sprint queue: pinned first, then rank, then node_id (a stable order -- equal ranks no longer shuffle between calls). Returns {items, omitted} -- NOT a bare array; `omitted` counts the rows the defaults hid ({done, declined, archived}), so a narrowed queue can never be mistaken for the whole corpus. Defaults: live proposals only (`proposed` + `active`), unarchived, and the lean projection -- node_id, title, status, project, rank, pinned, covered_count, comment_count, no `summary`. Pass status:\"all\" (or one status) for the rest, detail:\"full\" for every column including `summary`. Reading one proposal is get_proposal, which also gives you the work items it covers.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "archived": {
+          "default": false,
+          "description": "Omit for unarchived only (the default); true for archived only; null for both.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "detail": {
+          "enum": [
+            "lean",
+            "full"
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "project": {
           "description": "Project name to filter by",
           "type": [
@@ -1400,7 +1419,7 @@
             "active",
             "done",
             "declined",
-            null
+            "all"
           ],
           "type": [
             "string",
