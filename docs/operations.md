@@ -80,6 +80,27 @@ are not the same claim — 0017 needs the restore, 0019 does not. A rename that
 loses nothing is reversible by renaming back; what makes it a boundary is only
 that the rollback is not *automatic*.
 
+**0020 (project `notes` + the capped `description`) is milder still.** Adding a
+nullable column breaks nothing in the dangerous direction — an old image ignores
+`notes`. What an old image *would* show is the six projects whose over-length
+`description` moved into `notes`, rendered blank. Nothing is lost; some prose is
+temporarily invisible.
+
+```sql
+UPDATE project SET description = notes, notes = NULL
+ WHERE description IS NULL AND notes IS NOT NULL;
+ALTER TABLE project DROP CONSTRAINT project_description_routing_line;
+```
+
+0020 also narrows `PROJECT_STATUSES` to `active | archived`, converting
+`maintenance` → `active` and `inactive` → `archived` on the way. That conversion
+is **not** decoration: it was added after a rehearsal against a nightly dump
+failed the migration's own postcondition with `off_vocab=3`. Production happened
+to be clean at deploy time because the last three `inactive` rows had just been
+archived by hand — but any database restored from a dump predating that would
+have failed the migration and crash-looped the container at startup. If you ever
+restore an old dump and roll forward, this is why it now just works.
+
 ## Backups
 
 **korg's database is backed up nightly.** It is not optional and it is not

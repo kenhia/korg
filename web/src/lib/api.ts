@@ -197,6 +197,7 @@ export const api = {
       gh_repo: string | null;
       src_path: string | null;
       description: string | null;
+      notes: string | null;
       status: string;
       machines: string[];
       deploy_to: string[];

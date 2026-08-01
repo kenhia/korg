@@ -103,6 +103,87 @@ export type NodePreview = { node_id: number, kind: string, wi_number: number | n
  */
 export type Page<T> = { items: Array<T>, total: number, limit: number, offset: number, };
 
+/**
+ * One project plus the areas under it (WI #828).
+ *
+ * The field review specified "full row + inline comments, the `get_work_item`
+ * pattern". Comments are not available here and the difference is structural,
+ * not an omission: `comment.card_node_id` references `node(id)`, and a project
+ * is not a node — `node.project_id` points *at* projects. Inlining comments
+ * would mean making `project` a node kind, which is a different and much
+ * larger change than this WI.
+ *
+ * Areas are the faithful adaptation. The intent of that decision was that a
+ * focused read commits to the full state of one project so the caller does not
+ * need a second round-trip; for a project the second call an agent actually
+ * makes is `list_areas`, so that is what is inlined.
+ */
+export type ProjectDetail = { areas: Array<AreaRow>, id: number, name: string, gh_repo: string | null, 
+/**
+ * Where the working copy lives on this project's *development* machine —
+ * the `machines` entry, never `deploy_to` (WI #675). Canonical form is
+ * `~/`-relative, no trailing slash, no whitespace or parentheses; the
+ * `project_src_path_canonical` constraint (migration 0019) enforces it.
+ */
+src_path: string | null, 
+/**
+ * The routing contract: one line, ≤160 chars, saying what work belongs
+ * here and — where a sibling plausibly claims the same work — what does
+ * not. Capped by `project_description_routing_line` (0020); the long form
+ * lives in `notes`.
+ */
+description: string | null, 
+/**
+ * Long-form operational context (WI #828): deploy topology, build
+ * commands, house conventions. Unbounded, and deliberately absent from the
+ * lean `list_projects` and the MCP instructions roster — it exists so that
+ * capping `description` did not have to destroy prose worth keeping.
+ */
+notes: string | null, 
+/**
+ * Lifecycle status — see PROJECT_STATUSES.
+ */
+status: string, 
+/**
+ * Machines this project's working copy lives on (kai/kubs0/cleo…).
+ */
+machines: Array<string>, 
+/**
+ * Machines this project deploys to (e.g. korg → kubsdb).
+ */
+deploy_to: Array<string>, category: string | null, };
+
+/**
+ * A project as the lean `list_projects` reports it: the fields that answer
+ * *does this belong here?*, and nothing that answers *where does it live*.
+ *
+ * `id`, `gh_repo`, `src_path`, `machines`, `deploy_to` and `category` are
+ * omitted deliberately. Dropping six of ten columns across the corpus is the
+ * dominant saving — far larger than the row filter — and every field left is
+ * routing signal.
+ */
+export type ProjectLeanRow = { name: string, description: string | null, 
+/**
+ * Omitted entirely when `active`. In the default view every row is active,
+ * so printing it would be pure noise; under `status:"all"` it is the only
+ * thing distinguishing a live project from a dead one, which is exactly
+ * when an agent must not confuse them.
+ */
+status: string | null, };
+
+export type ProjectListFull = { items: Array<ProjectRow>, omitted: ProjectOmitted, };
+
+export type ProjectListLean = { items: Array<ProjectLeanRow>, omitted: ProjectOmitted, };
+
+/**
+ * What the status filter hid. Returned on every list so a lean view can never
+ * masquerade as the whole corpus — an agent that finds no match must be able
+ * to see there is an escape hatch rather than conclude "no such project
+ * exists". Silent truncation is the precise failure this surface exists to
+ * treat, so this is a deliberate deviation from the bare-array convention.
+ */
+export type ProjectOmitted = { archived: number, };
+
 export type ProjectRow = { id: number, name: string, gh_repo: string | null, 
 /**
  * Where the working copy lives on this project's *development* machine —
@@ -110,7 +191,21 @@ export type ProjectRow = { id: number, name: string, gh_repo: string | null,
  * `~/`-relative, no trailing slash, no whitespace or parentheses; the
  * `project_src_path_canonical` constraint (migration 0019) enforces it.
  */
-src_path: string | null, description: string | null, 
+src_path: string | null, 
+/**
+ * The routing contract: one line, ≤160 chars, saying what work belongs
+ * here and — where a sibling plausibly claims the same work — what does
+ * not. Capped by `project_description_routing_line` (0020); the long form
+ * lives in `notes`.
+ */
+description: string | null, 
+/**
+ * Long-form operational context (WI #828): deploy topology, build
+ * commands, house conventions. Unbounded, and deliberately absent from the
+ * lean `list_projects` and the MCP instructions roster — it exists so that
+ * capping `description` did not have to destroy prose worth keeping.
+ */
+notes: string | null, 
 /**
  * Lifecycle status — see PROJECT_STATUSES.
  */

@@ -32,7 +32,7 @@ enumerates the tools a third time. All three are drift-tested against
 | Sprint proposals | `propose_sprint`, `list_proposals`, `get_proposal`, `update_proposal` |
 | Reports | `create_report`, `list_reports`, `get_report` |
 | Handoffs | `create_handoff`, `get_handoff`, `update_handoff` |
-| Projects and areas | `list_projects`, `create_project`, `update_project`, `list_areas`, `create_area` |
+| Projects and areas | `list_projects`, `get_project`, `create_project`, `update_project`, `list_areas`, `create_area` |
 
 Two tools are not what their names suggest:
 
@@ -143,11 +143,19 @@ the same envelope", which was true of four of them:
 | `{items, total, limit, offset}` | `list_work_items`, `list_cards`, `list_links`, `list_topics`, `survey_work_items` |
 | `{items, total, limit, truncated}` | `neighbors` (`truncated`, not `offset` — it caps rather than pages) |
 | `{from, to, total, completed, items}` | `daily_plan_history` |
-| bare array | `list_proposals`, `list_reports`, `list_projects`, `list_areas`, `list_comments`, `list_daily_plan` |
+| bare array | `list_proposals`, `list_reports`, `list_areas`, `list_comments`, `list_daily_plan` |
+| `{items, omitted}` | `list_projects` (`omitted` counts the rows its status filter hid) |
 
 The bare-array reads are the ones with no natural paging story — the proposal
 queue is short and hand-ordered, a project has a handful of areas, a node has a
 handful of comments, a day has a handful of plan items.
+
+`list_projects` is the exception, and for a reason that is not paging: since
+WI #828 it filters rows by default (active only), so a bare array would be a
+narrowed view indistinguishable from a complete one. `omitted` is what stops an
+agent concluding "there is no such project" from "you did not ask for archived
+ones" — the same silent-truncation failure the four-shape table exists to make
+visible.
 
 **Decided (WI #579, 2026-07-24): they stay bare.** Enveloping them for
 uniformity would put a `total` that always equals `items.length` and a `limit`

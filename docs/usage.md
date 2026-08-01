@@ -163,7 +163,7 @@ Vocabularies are validated in korg-core, so an unknown value comes back as a
 - link `disposition`: `Unread`, `Done`, `Revisit`, `Summarized`, `VaultSaved`
 - proposal `status`: `proposed`, `active`, `done`, `declined`
 - report `status`: `ok`, `attention`, `problem`
-- project `status`: `active`, `maintenance`, `inactive`, `archived`
+- project `status`: `active`, `archived`
 
 ## MCP endpoint
 
@@ -210,12 +210,29 @@ Ken sweeps; straight `open → done` for small verified agent work.
 
 ## Project metadata
 
-Projects carry lifecycle metadata (WI #246): `status`
-(`active | maintenance | inactive | archived`), `machines` (where the
-working copy lives), `deploy_to` (where it deploys), `category`. The Work
-Items rail shows only active+maintenance projects unless "show all" is
-checked, and the ✎ control opens an edit panel (everything editable except
-the name). Agents: `update_project` MCP tool / `PATCH /api/projects/:name`.
+Projects carry lifecycle metadata (WI #246): `status` (`active | archived`),
+`machines` (which hosts the working copy lives on), `src_path` (where on that
+host), `deploy_to` (where it deploys), `category`, `description` and `notes`.
+The Work Items rail shows only active projects unless "show all" is checked,
+and the ✎ control opens an edit panel (everything editable except the name).
+Agents: `update_project` MCP tool / `PATCH /api/projects/:name`.
+
+`status` was four values until WI #828 narrowed it to two. `maintenance` and
+`inactive` both held **zero rows** and neither had semantics distinct from
+`archived`, and an unused vocabulary value is a standing invitation to invent a
+meaning nobody agreed. The status answers one question — *is this a legitimate
+target for new work?* — and that has two answers. Where `archived` covers both
+*superseded* (`kwi`/`kcard` → korg) and *dormant* (`trt-llm-explore`), the
+difference lives in the `description` prose, because both filter identically.
+
+**`description` is a routing contract, capped at 160 characters.** One line,
+first clause task-shaped ("harness conventions and sprint layout", not "a
+repository containing…"), plus a boundary where a sibling project plausibly
+claims the same work: "Not X — that's ‹project›." Written for an agent with no
+prior context deciding where a work item goes. Longer prose — deploy topology,
+build commands, house conventions — goes in **`notes`**, which is unbounded and
+returned only by `get_project` and REST, never by the lean `list_projects` or
+the instructions roster.
 
 `category` is a **closed vocabulary** (WI #678):
 `AI | Dashboard | EVAL | Fun | Infrastructure | Ops | Other`. It was free text
@@ -226,9 +243,8 @@ legal — `create_project` takes only a name, so a project starts uncategorised.
 
 The rail **colors each project by its category**, replacing a hash of the
 project name that put 20 of 31 projects within 12 degrees of another. Only
-active and maintenance projects are colored; inactive, archived and
-uncategorised ones render with no color, which doubles as a signal that a
-project is not live. A **by category** checkbox groups the rail under category
+active projects are colored; archived and uncategorised ones render with no
+color, which doubles as a signal that a project is not live. A **by category** checkbox groups the rail under category
 headings; the default stays alphabetical. Adding a category means one entry in
 korg-core's `PROJECT_CATEGORIES` plus its hue in `CATEGORY_HUE`
 (`web/src/lib/domain.ts`) — the map is typed over the generated vocabulary, so
@@ -239,6 +255,41 @@ the build fails until the hue exists.
 Names are resolved, never created, and an unknown one is a 400 that names
 `list_projects` as the remedy. Full rules in
 [api.md](api.md#selecting-a-project-or-an-area).
+
+### Reading projects: three tiers, three questions (WI #828)
+
+Routing a work item used to be done from agent memory rather than from korg —
+`list_projects` returned every column of every row, so every consumer paid the
+widest question regardless of the narrow one it asked.
+
+| Tier | Surface | Question |
+|---|---|---|
+| 1 | the MCP `instructions` roster | "what projects exist" |
+| 2 | `list_projects`, lean default | "does this belong here?" |
+| 3 | `get_project(name)` | "tell me everything about this one" |
+
+```
+list_projects(status?: "active"|"archived"|"all", detail?: "lean"|"full")
+  -> {items, omitted: {archived: N}}
+```
+
+Defaults are **active only, lean**: `name`, `description`, and `status` only
+when it is not `active`. Roughly a 5× smaller payload than the old shape, and
+the saving is the field projection rather than the row filter.
+
+It returns an envelope rather than a bare array — the one deliberate exception
+to the convention in [api.md](api.md#collection-read-shapes) — because
+`omitted` is what stops an agent concluding "there is no such project" from "you
+did not ask for archived ones". `detail:"full"` restores every column including
+`notes`, so a maintenance pass makes one call rather than one per project.
+
+Tier 1 is rendered from live data at `initialize`, so every new agent session
+gets a current roster with no restart: korg is a long-running HTTP server that
+can go weeks between deploys, and anything baked at process start goes
+arbitrarily stale. It lists **names only** — anything in `instructions` is paid
+by 100% of sessions, while descriptions only earn their tokens in a routing
+session. It fails open: if the query errors, the instructions ship without a
+roster rather than failing `initialize`.
 
 ## Comments
 

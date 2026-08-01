@@ -97,7 +97,7 @@ async fn project_metadata_roundtrip() {
         &pool,
         "meta",
         &ProjectPatch {
-            status: Some("maintenance".into()),
+            status: Some("archived".into()),
             machines: Some(vec!["kai".into(), "kubs0".into()]),
             deploy_to: Some(vec!["kubsdb".into()]),
             // Was "tooling" — free text until WI #678 closed the vocabulary.
@@ -110,7 +110,7 @@ async fn project_metadata_roundtrip() {
     .unwrap();
 
     let p = list_projects(&pool).await.unwrap().remove(0);
-    assert_eq!(p.status, "maintenance");
+    assert_eq!(p.status, "archived");
     assert_eq!(p.machines, vec!["kai", "kubs0"]);
     assert_eq!(p.deploy_to, vec!["kubsdb"]);
     assert_eq!(p.category.as_deref(), Some("Infrastructure"));

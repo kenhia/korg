@@ -22,8 +22,9 @@ use korg_core::repo::{
 use korg_core::{daily_plan, topics};
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Content, ErrorData, Implementation, JsonObject,
-    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+    CallToolRequestParams, CallToolResult, Content, ErrorData, Implementation,
+    InitializeRequestParams, InitializeResult, JsonObject, ListToolsResult, PaginatedRequestParams,
+    ServerCapabilities, ServerInfo, Tool,
 };
 use rmcp::service::{RequestContext, RoleServer};
 use schemars::JsonSchema;
@@ -171,9 +172,9 @@ fn tool2<S: JsonSchema, B: JsonSchema>(name: &'static str, desc: &'static str) -
     Tool::new(name, desc, merge(schema_of::<S>(), schema_of::<B>()))
 }
 
-/// Tools that take no arguments at all.
-#[derive(JsonSchema)]
-struct NoArgs {}
+// (There was a `NoArgs` marker here for tools taking no arguments at all.
+// `list_projects` was its last user until #828 gave it `status` and `detail`,
+// so every tool now derives its schema from a real argument struct.)
 
 // --- tool descriptors -------------------------------------------------------
 
@@ -221,9 +222,10 @@ pub fn tools() -> Vec<Tool> {
         tool::<NewHandoff>("create_handoff", "Create a handoff -- a durable, cross-machine context document -- and attach it to the work it describes in ONE call. `related_node_ids` are the nodes it belongs to (work items, a sprint proposal, a report, another handoff); each becomes a `has_handoff` edge. REQUIRED context, not optional related reading: the handoff surfaces automatically in those nodes' get_work_item/get_proposal `related` block. Rejects an empty `related_node_ids` unless you pass `allow_standalone` (so a forgotten link can't orphan it), and rejects the whole create if any id does not resolve (isError `not_found` -- no partial insert). Returns the handoff plus the owner ids linked."),
         tool::<ops::NodeId>("get_handoff", "Fetch one handoff by node_id: title, summary, full Markdown `body`, and the nodes it is attached to (`related`, both directions, capped with `related_truncated`). isError with code `not_found` if there is none. This is the authoritative read once a `has_handoff` edge points you here."),
         tool2::<ops::NodeId, HandoffPatch>("update_handoff", "Partially update a handoff by its node_id; returns the updated handoff (isError with code `not_found` if that node is missing or is not a handoff). Only the fields you pass change (title, summary, body, tags, archived). Relationship changes go through relate/unrelate, not here."),
-        tool::<NoArgs>("list_projects", "List projects, including metadata: status (active|maintenance|inactive|archived), machines (which hosts the working copy lives on), src_path (where on that host — `~`-relative, e.g. `~/src/tools/korg`), deploy_to (where it deploys), category."),
+        tool::<ops::ListProjects>("list_projects", "Answers \"which project does this work belong to?\". Returns {items, omitted:{archived}} — NOT a bare array; `omitted` is how you know rows were filtered out rather than absent. Each item is name + description (a one-line routing contract saying what belongs here and what does not) + status, the last only when it is not `active`. Defaults: active projects only, lean projection. Pass status:\"all\" to include archived (never a correct route target — their work went to a successor), detail:\"full\" for every column including machines, src_path, gh_repo, category and notes."),
+        tool::<ops::ProjectName>("get_project", "Fetch one project by name: every column — including `notes`, the long-form operational context the lean list omits — plus the areas under it, so a focused read needs no follow-up list_areas. isError with code `not_found` if there is none."),
         tool::<ops::CreateProject>("create_project", "Create a project by name (idempotent — returns the existing id if it already exists). Returns its id."),
-        tool2::<ops::ProjectName, ProjectPatch>("update_project", "Update a project's metadata by name (the name itself is immutable), returning the updated project: status (active|maintenance|inactive|archived), machines, deploy_to, category, description, gh_repo, src_path. Omitted fields are unchanged."),
+        tool2::<ops::ProjectName, ProjectPatch>("update_project", "Update a project's metadata by name (the name itself is immutable), returning the updated project: status (active|maintenance|inactive|archived), machines, deploy_to, category, description, notes, gh_repo, src_path. Omitted fields are unchanged. `description` is capped at 160 characters — it is a routing line, not a blurb; put anything longer in `notes`."),
         tool::<ops::ProjectRef>("list_areas", "List the areas under a project (by project name)."),
         tool::<ops::CreateArea>("create_area", "Create an area under a project by name (idempotent — updates the description if it already exists). Returns its id."),
     ]
@@ -609,7 +611,21 @@ impl KorgServer {
             }
 
             // --- projects and areas ---
-            "list_projects" => respond(repo::list_projects(pool).await),
+            "list_projects" => {
+                let a: ops::ListProjects = parse_args(args)?;
+                match a.detail.as_deref() {
+                    Some("full") => {
+                        respond(repo::list_projects_full(pool, a.status.as_deref()).await)
+                    }
+                    _ => respond(repo::list_projects_lean(pool, a.status.as_deref()).await),
+                }
+            }
+            "get_project" => {
+                let a: ops::ProjectName = parse_args(args)?;
+                respond_found(repo::get_project_detail(pool, &a.name).await, || {
+                    format!("no project named '{}'", a.name)
+                })
+            }
             "create_project" => {
                 let a: ops::CreateProject = parse_args(args)?;
                 match repo::create_project(pool, &a.name).await {
@@ -646,6 +662,24 @@ impl ServerHandler for KorgServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("korg-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(crate::server_instructions())
+    }
+
+    /// Override purely to render the project roster from live data (WI #674).
+    ///
+    /// `get_info` is synchronous, so the roster cannot be built there — but
+    /// `initialize` returns a future, which is both why this override exists
+    /// and why "rank at initialize" was implementable at all. Everything else
+    /// is the default behaviour, `set_peer_info` included; drop that line and
+    /// the peer never learns who connected.
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, ErrorData> {
+        context.peer.set_peer_info(request);
+        let mut info = self.get_info();
+        info.instructions = Some(crate::server_instructions_with_roster(&self.pool).await);
+        Ok(info)
     }
 
     async fn list_tools(

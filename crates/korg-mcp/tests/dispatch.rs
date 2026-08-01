@@ -289,10 +289,11 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
         ),
         // --- projects and areas ---
         ("list_projects", json!({})),
+        ("get_project", json!({"name": "korg"})),
         ("create_project", json!({"name": "created-project"})),
         (
             "update_project",
-            json!({"name": "korg", "status": "maintenance"}),
+            json!({"name": "korg", "status": "archived"}),
         ),
         ("list_areas", json!({"project": "korg"})),
         (
@@ -411,6 +412,11 @@ fn named_in_instructions(prefix: &str) -> Vec<String> {
 async fn collection_reads_return_the_shape_the_instructions_promise() {
     let paginated = named_in_instructions("Paginated collection reads");
     let bare = named_in_instructions("the unpaginated ones");
+    // A third shape since #828: `list_projects` returns {items, omitted}
+    // because it is the one collection read that filters rows by default, and
+    // a filtered list that looks bare is how "no such project" gets concluded
+    // from "you didn't ask for archived ones".
+    let filtered = named_in_instructions("the filtered one");
 
     // `list_*` plus the survey are exactly the collection reads the instructions
     // summarise. `neighbors` and `daily_plan_history` carry their own shapes and
@@ -418,6 +424,7 @@ async fn collection_reads_return_the_shape_the_instructions_promise() {
     let classified: BTreeSet<&str> = paginated
         .iter()
         .chain(bare.iter())
+        .chain(filtered.iter())
         .map(String::as_str)
         .collect();
     let advertised: BTreeSet<String> = korg_mcp::tools::tools()

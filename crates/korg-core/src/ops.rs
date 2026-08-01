@@ -159,6 +159,18 @@ pub mod schema {
     pub fn project_status(_: &mut SchemaGenerator) -> Schema {
         enumerated(&vocab::PROJECT_STATUSES)
     }
+    /// The `list_projects` row filter (WI #828). The vocabulary plus `"all"`,
+    /// which no single status names — omitting the argument means `active`, so
+    /// there has to be a way to ask for the rest.
+    pub fn project_status_filter(_: &mut SchemaGenerator) -> Schema {
+        let mut variants = strings(&vocab::PROJECT_STATUSES);
+        variants.push(Value::String("all".into()));
+        json_schema!({ "type": ["string", "null"], "enum": variants })
+    }
+    /// `list_projects` payload width (WI #828).
+    pub fn project_detail(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({ "type": ["string", "null"], "enum": ["lean", "full"] })
+    }
     /// Nullable because null *clears* the category here rather than meaning
     /// "no filter": `create_project` takes only a name, so a project genuinely
     /// has none until someone sets it (WI #678).
@@ -262,6 +274,23 @@ pub struct CreateArea {
 pub struct ProjectRef {
     #[schemars(schema_with = "schema::non_empty")]
     pub project: String,
+}
+
+/// `list_projects` (WI #828). Both arguments are optional and their defaults
+/// are the point: absent `status` means `active` — the rows that could be a
+/// correct routing answer — and absent `detail` means the lean projection.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub struct ListProjects {
+    /// Which rows. Omit for `active`; `"all"` to include archived.
+    #[serde(default)]
+    #[schemars(schema_with = "schema::project_status_filter")]
+    pub status: Option<String>,
+    /// How wide. Omit for the lean routing projection (name, description, and
+    /// status only when it is not `active`); `"full"` for every column,
+    /// including `notes`.
+    #[serde(default)]
+    #[schemars(schema_with = "schema::project_detail")]
+    pub detail: Option<String>,
 }
 
 /// `update_project` addresses a project by name; the name itself is immutable

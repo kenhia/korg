@@ -442,7 +442,7 @@ async fn mutations_return_the_updated_entity() {
         &router,
         "PATCH",
         "/api/projects/alpha",
-        Some(json!({"status":"maintenance"})),
+        Some(json!({"status":"archived"})),
     )
     .await;
     assert_eq!(
@@ -461,11 +461,11 @@ async fn mutations_return_the_updated_entity() {
         &router,
         "PATCH",
         "/api/projects/alpha",
-        Some(json!({"status":"maintenance"})),
+        Some(json!({"status":"archived"})),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
-    assert_eq!(project["status"], "maintenance");
+    assert_eq!(project["status"], "archived");
     assert_eq!(project["name"], "alpha");
 }
 

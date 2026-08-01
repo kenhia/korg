@@ -21,7 +21,7 @@ async fn mcp_surface_end_to_end() {
     let server = server(pool);
 
     // Tool descriptors are stable.
-    assert_eq!(tools().len(), 47, "expected 47 tools");
+    assert_eq!(tools().len(), 48, "expected 48 tools");
 
     // Create a work item.
     let wi = body(
@@ -253,7 +253,7 @@ async fn mcp_coverage_gaps_end_to_end() {
     assert_eq!(p2["id"].as_i64(), Some(pid), "create_project is idempotent");
 
     let projects = body(&server.call("list_projects", args(json!({}))).await.unwrap());
-    assert!(projects
+    assert!(projects["items"]
         .as_array()
         .unwrap()
         .iter()
@@ -1105,7 +1105,7 @@ async fn tools_accept_a_project_name_and_explain_a_bad_one() {
             .expect("list_projects"),
     );
     assert_eq!(
-        projects.as_array().unwrap().len(),
+        projects["items"].as_array().unwrap().len(),
         1,
         "a failed name resolution created a project (the WI #537 bug)"
     );

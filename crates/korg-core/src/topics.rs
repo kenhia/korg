@@ -16,7 +16,12 @@ use crate::repo::{ArchivedFilter, Page, PageQuery};
 pub struct NewTopic {
     #[serde(default)]
     pub project_id: Option<i64>,
-    /// Project name — the alternative to `project_id` (see list_projects). Never pass both.
+    /// Project name, e.g. `klams` — the alternative to `project_id`; never pass
+    /// both. Resolved by exact name, and an unknown name returns `not_found`
+    /// rather than mis-filing, so pass a name you are confident in directly.
+    /// Call `list_projects` only when the name is genuinely unknown or
+    /// ambiguous — the roster in this server's instructions already names
+    /// every active project.
     #[serde(default)]
     pub project: Option<String>,
     #[serde(default)]
