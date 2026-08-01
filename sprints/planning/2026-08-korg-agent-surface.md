@@ -73,9 +73,9 @@ Open korg WIs: 16. Live korg proposals: 817, 818, 822, 825.
 | **#842** | korg's production DB credential exists only in the running container | Uncovered, and it is a **security** item, not surface work — see §6. |
 | **#846** | CI cancels the merge commit's run | Uncovered, XS. |
 | **#855** | true-delete `Agent-Plan`/`feedhub`/`loglens` | Uncovered. 816 suggests testing the cheap hypothesis first (`EVAL` + `archived` may already suffice, reducing it to one row). |
-| *(unfiled)* | **Proposal object shape** — `summary` holds the whole analysis | **Needs a new WI.** |
-| *(unfiled)* | **Work-item read tiering** — `list_work_items` / `survey_work_items` / `get_work_item` against the §2 contract | **Needs a new WI.** |
-| *(unfiled)* | **816 §6 staleness work** — `docs_drift` extensions + a `start-sprint` premise check | **Needs two WIs.** 816 explicitly says file them and do *not* fold either into #758. |
+| *(unfiled)* | **Proposal object shape** — `summary` holds the whole analysis | **Filed 2026-08-01 as korg #860** (§9). |
+| *(unfiled)* | **Work-item read tiering** — `list_work_items` / `survey_work_items` / `get_work_item` against the §2 contract | **Filed 2026-08-01 as korg #861** (§9). |
+| *(unfiled)* | **816 §6 staleness work** — `docs_drift` extensions + a `start-sprint` premise check | **Filed 2026-08-01 as korg #862 + agent-skills #863** (§9). 816 explicitly says file them and do *not* fold either into #758. |
 
 **Covered, but with agent value buried inside UI framing — worth surfacing rather than re-filing:**
 
@@ -186,3 +186,77 @@ Reads never conflict, so the overseer should read code freely. It is only writes
 2. **Does `survey_*` survive?** If `list_work_items` becomes lean by default, `survey_work_items` may be redundant — or may become the canonical lean read with `list_*` retired. Decide before building, and note #851 is a bug in whichever survives.
 3. **Naming for the proposal overflow field.** `notes` matches projects and is the boring, consistent choice.
 4. **Does the roster idea generalize?** Projects got a Tier-0 always-on roster because 28 names are ~112 tokens. Nothing else is that small — but "active proposals" might be, and it is the thing `start-sprint` reaches for.
+
+## 9. Program start log — 2026-08-01 (starter session)
+
+### Shipped
+
+- **Step 0 done** — PR #37, squash-merged `c5f756f`, sprint record
+  `sprints/033-step0-kproject-harness.md`. Phoenix gone, harness block +
+  Project section in both agent files, roadmap seeded, `.scratch/` line
+  **committed** (§7's prerequisite). Deployed to kubsdb (procedural — no code
+  changed; counts identical to baseline).
+- **agent-skills #854 pulled forward from rank 4 and shipped** (Ken's call) —
+  PR agent-skills#10, both skills now pass `status` (two calls each), deployed
+  to all three hosts the k-homelab way, md5-verified, WI `done`. Rationale:
+  every worker sprint in this program starts with `start-sprint`, so each
+  pickup was paying the ~46k-token call. The deeper consumer rework stays at
+  rank 4 (proposal 867 / WI #864) — these filters are forward-compatible with
+  any #852 outcome.
+
+### Filed
+
+korg **#860** (proposal object shape — bounded `summary` + `notes`, migration
+preserves every char), korg **#861** (work-item read tiering — merged lean
+list, terminal-excluded default, `omitted` envelope), korg **#862**
+(`docs_drift` extensions), agent-skills **#863** (`start-sprint` premise
+check). Plus agent-skills **#864** (consumer rework / CLAUDE.md korg block to
+empty) — not among §3's four, but rank 4 had no coverable WI without it.
+
+### Ranked — §4's order kept, made real in the queue
+
+865 (**4.1**, #851+#852) → 817 (**4.2**, moved from 5, premise re-verified) →
+866 (**4.3**, #860+#861) → 867 (**4.4**, agent-skills, #864) → 868 (**4.5**,
+re-review, covers nothing by design). Contiguous block above korg's remaining
+queue (818 at 6, 825 at 6.5), below the three non-korg proposals at ranks 1–3
+— "above korg's existing queue" read as within-korg precedence, not as jumping
+other projects' work. No reordering of §4's recommendation was warranted: the
+starter session's measurements only strengthened it. All five summaries are
+written in the shape #860 will enforce (≤500-char routing contract, analysis
+in the covered WIs).
+
+### §8 answers
+
+1. **Terminal vocabulary, per collection:** work items exclude `closed` +
+   archived by default; `resolved` and `done` stay visible (`done`'s
+   visibility is already a schema promise, `resolved` is Ken's
+   may-want-to-see, and together they are 7 rows of 574). Proposals exclude
+   `done` + `declined` (71% of the payload). Projects: shipped in 032.
+2. **`survey_work_items` does not survive.** `list_work_items` becomes the
+   lean read (survey's projection + terminal/archived defaults + `omitted`
+   envelope); survey retires after a deprecation window (#861). #851 is
+   therefore a bug in the *transitional* tool — fixed cheaply at rank 1, made
+   unreachable at rank 3.
+3. **Overflow field name: `notes`**, matching projects (#860).
+4. **Roster: deferred to the rank-5 re-review, with reason.** Proposed+active
+   titles today ≈ 1.3k chars ≈ 330 tokens *per session*, paid by every
+   session including the majority that never pick a sprint; a lean filtered
+   list costs about the same *on demand*. Re-measure after 865 ships the lean
+   read — the roster only wins if pickup frequency rises a lot.
+
+### Found on contact with the code and data (the 816 pattern, again)
+
+- **A new gap in T2's class:** `update_work_item`'s schema says `closed` is
+  "hidden by default", but nothing on the MCP surface hides terminal items —
+  `list_work_items` returns all 445 closed rows (78% of the corpus). Folded
+  into #861 rather than filed separately.
+- **§2's "1,500–4,000 chars" undersold proposal summaries:** measured p90 of
+  `proposed` is 4,864, max 5,710 (production DB; full distribution in #860).
+- **#762's truncation grew as predicted:** 574 non-archived items, newest ~74
+  hidden (was 554/54 when 817 was written).
+- **#846 is half-verified live:** this program's own Step-0 ship was the first
+  since agent-skills' Phase 7.3 change — the `[skip ci]` deploy record started
+  no run and the merge commit completed CI with `success`. Remaining scope is
+  korg's one-line `cancel-in-progress` scoping (still unscoped, ci.yml:47).
+- **#842 flagged for infra triage** by comment (§6 boundary holds; not folded
+  into any surface sprint).
