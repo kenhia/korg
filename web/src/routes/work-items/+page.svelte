@@ -4,6 +4,7 @@
     api,
     type ProjectRow,
     type ProposalRow,
+    type WalkedPage,
     type WorkItemRow,
     type RelatedRef,
   } from "$lib/api";
@@ -60,6 +61,12 @@
   let projects = $state<ProjectRow[]>([]);
   let current = $state<string>(ALL);
   let items = $state<WorkItemRow[]>([]);
+  // WI #762 — what the server says matches, and whether `items` is all of it.
+  // The page used to keep only `.items` of a single capped read and discard
+  // `total`, which is how it came to hold 500 of 572 rows and say "N items".
+  let total = $state(0);
+  let complete = $state(true);
+  let loadingAll = $state(false);
   let loading = $state(true);
   // Field-level message for the find-by-ID box — it belongs next to the input
   // that produced it, not in the global toaster. Load failures use `loadError`
@@ -390,15 +397,77 @@
 
   async function loadItems() {
     // The rail filters archived client-side behind a toggle, so ask for both.
-    items = (
-      await api.workItems(current === ALL ? undefined : current, {
+    // `allWorkItems`, not `workItems`: every filter, the tag row and the footer
+    // count on this page read from `items`, so a read that stops at 500 makes
+    // all of them wrong at once (WI #762).
+    applyWalk(
+      await api.allWorkItems(current === ALL ? undefined : current, {
         archived: "all",
-      })
-    ).items;
+      }),
+    );
     currentAreas = current === ALL ? [] : await loadAreas(current);
     forceShow = new Set();
     resetFilters();
     cursor = filtered[0]?.wi_number ?? null;
+  }
+
+  function applyWalk(walked: WalkedPage<WorkItemRow>) {
+    items = walked.items;
+    total = walked.total;
+    complete = walked.complete;
+  }
+
+  // Everything the page bound held back (D-2). Only reachable from the footer,
+  // and only while `complete` is false.
+  async function loadAll() {
+    loadingAll = true;
+    const before = {
+      types: typeOptions,
+      statuses: statusOptions,
+      sizes: sizeOptions,
+      areas: areaOptions,
+      sprints: sprintOptions(),
+    };
+    const walked = await attempt(
+      () =>
+        api.allWorkItems(
+          current === ALL ? undefined : current,
+          { archived: "all" },
+          Number.POSITIVE_INFINITY,
+        ),
+      "Load all work items",
+    );
+    loadingAll = false;
+    if (!walked) return;
+    applyWalk(walked);
+    // The arriving rows carry option values the filter sets have never seen,
+    // and every one of those sets hides what it does not contain — so widening
+    // the corpus without widening the sets would hide the very rows the button
+    // was pressed for. Widen rather than reset, so the selections already made
+    // survive.
+    fTypes = widen(fTypes, before.types, typeOptions);
+    fStatuses = widen(
+      fStatuses,
+      before.statuses,
+      statusOptions,
+      (s) => !isHiddenByDefault(s),
+    );
+    fSizes = widen(fSizes, before.sizes, sizeOptions);
+    fAreas = widen(fAreas, before.areas, areaOptions);
+    fSprints = widen(fSprints, before.sprints, sprintOptions());
+  }
+
+  function widen(
+    selected: Set<string>,
+    before: string[],
+    after: string[],
+    keep: (v: string) => boolean = () => true,
+  ): Set<string> {
+    const seen = new Set(before);
+    return new Set([
+      ...selected,
+      ...after.filter((v) => !seen.has(v) && keep(v)),
+    ]);
   }
 
   // WI #260 — resolve the entered id and either jump to the work item or open
@@ -433,6 +502,15 @@
     detail = null;
     creating = false;
     if (target !== current) await pick(target);
+    // WI #762 D-3 — the jump must not depend on what the walk happened to load.
+    // When the page bound leaves the target out of `items`, fetch it and splice
+    // it into wi_number order rather than scrolling to a row that is not there.
+    if (!items.some((i) => i.wi_number === wi)) {
+      const full = await attempt(() => api.workItem(wi), "Load work item");
+      if (full) {
+        items = [...items, full].sort((a, b) => a.wi_number - b.wi_number);
+      }
+    }
     forceShow = new Set([wi]);
     cursor = wi;
     flashWi = wi;
@@ -984,7 +1062,30 @@
       />
     {/if}
 
-    <p class="text-xs text-[var(--color-muted)]">{filtered.length} items · ↑/↓ select · Enter open</p>
+    <!-- WI #762 — three numbers are in play and this line used to show only the
+         first while implying it was the whole story: `filtered.length`, the
+         filtered count of an arbitrary first 500 rows, rendered as "N items".
+         The count keeps that meaning — what you are looking at — and the fact
+         that the list is short of the collection becomes its own clause rather
+         than being folded into it, so "37 items" never has to double as an
+         answer to "out of how many?". A complete list is the normal case and
+         renders byte-identically to before: a list that hides nothing should
+         say nothing. A partial one has to look partial, so the clause is an
+         attention state and carries the control that finishes it. -->
+    <p class="flex flex-wrap items-center gap-x-1.5 text-xs text-[var(--color-muted)]">
+      <span data-testid="list-count">{filtered.length} items</span>
+      {#if !complete}
+        <span class="font-semibold text-amber-300" data-testid="list-truncated"
+          >· {items.length} of {total} loaded</span>
+        <button
+          class="rounded bg-amber-900/70 px-1.5 py-0.5 text-amber-100 hover:bg-amber-800 disabled:opacity-50"
+          data-testid="load-all"
+          disabled={loadingAll}
+          title={`Fetch the remaining ${total - items.length} work items`}
+          onclick={loadAll}>{loadingAll ? "Loading…" : "Load all"}</button>
+      {/if}
+      <span>· ↑/↓ select · Enter open</span>
+    </p>
 
     <div class="overflow-auto rounded border border-[var(--color-border)]">
       <table class="w-full text-sm">

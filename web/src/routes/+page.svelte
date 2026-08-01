@@ -105,8 +105,16 @@
     return KIND_CLASSES[kind] ?? "bg-[var(--color-surface-hi)] text-[var(--color-muted)]";
   }
 
+  // WI #701 — `loading` is the *first* load only, and no longer re-arms here.
+  // It gates the whole planner behind "Loading planner…", and every mutation on
+  // this page (add a topic, tick a checkbox, drag, remove) ends in a refresh —
+  // so re-arming it tore the planner down and rebuilt it several times a
+  // minute, destroying the state of every TopicPicker on screen along with it.
+  // Anything typed into a picker while a refresh was in flight was silently
+  // discarded, which is what made the planner's topic-creation spec flaky.
+  // A refresh now swaps the data in under the keyed rows; the toast each
+  // mutation already raises is the progress signal.
   async function load() {
-    loading = true;
     loadError = null;
     try {
       const from = isoDate(weekStart);

@@ -10,12 +10,23 @@ test("landing renders the weekly daily planner", async ({ page }) => {
   await expect(page.getByTestId("week-planner")).toBeVisible();
 });
 
+// WI #812 — this walked History → Topics through the top nav, which sprint 029
+// removed: both became buttons on Today, and each page grew a BackTo control in
+// exchange. The old walk did not merely fail, it asserted a nav that no longer
+// exists. Walking them the way they are now reached — out from Today and back —
+// also covers that BackTo control, which nothing else in the smoke suite did.
 test("nav reaches planner support pages", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("link", { name: "History" }).click();
   await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
+  await page.getByTestId("back-to").click();
+  await expect(page.getByTestId("week-planner")).toBeVisible();
+
   await page.getByRole("link", { name: "Topics" }).click();
   await expect(page.getByRole("heading", { name: "Topics" })).toBeVisible();
+  await page.getByTestId("back-to").click();
+  await expect(page.getByTestId("week-planner")).toBeVisible();
+
   await page.getByRole("link", { name: "Cards" }).click();
   await expect(page.getByRole("heading", { name: "Cards" })).toBeVisible();
   await page.getByRole("link", { name: "Work Items" }).click();
