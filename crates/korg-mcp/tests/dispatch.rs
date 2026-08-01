@@ -468,13 +468,16 @@ async fn collection_reads_return_the_shape_the_instructions_promise() {
             has_envelope,
             "`{name}` is documented as paginated but returned {value}"
         );
-        // The survey is the one paginated read that also narrows by default
-        // (#851), and the instructions say so in as many words.
-        if name == "survey_work_items" {
+        // The two work-item reads are the paginated ones that ALSO narrow by
+        // default (#851, #861), and the instructions say so in as many words.
+        // Both spellings are the same read since #861 — asserting on each name
+        // is what would catch the alias being wired to something else.
+        if name == "list_work_items" || name == "survey_work_items" {
+            let omitted = value.get("omitted");
             assert!(
-                value.get("omitted").is_some(),
-                "the instructions say `survey_work_items` carries `omitted`, but it \
-                 returned {value} — a sweep cannot tell a narrowed count from a \
+                omitted.is_some_and(|o| o.get("closed").is_some() && o.get("archived").is_some()),
+                "the instructions say `{name}` carries `omitted` {{closed, archived}}, \
+                 but it returned {value} — a sweep cannot tell a narrowed count from a \
                  complete one without it"
             );
         }

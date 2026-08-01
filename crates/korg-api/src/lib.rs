@@ -258,10 +258,13 @@ struct SurveyQuery {
     offset: Option<i64>,
 }
 
+/// The lean projection, shared with the MCP `list_work_items` since #861 — so
+/// omitting `wi_status` here now means "everything not terminal" rather than
+/// "every status". Safe for the one caller: the Review page asks per status.
 async fn survey_work_items(State(s): State<AppState>, Query(q): Query<SurveyQuery>) -> ApiResult {
     let limit = q.limit.unwrap_or(50).clamp(1, 500);
     let offset = q.offset.unwrap_or(0).max(0);
-    let survey = repo::survey_work_items(
+    let survey = repo::list_work_items_lean(
         &s.pool,
         q.project.as_deref(),
         q.wi_status.as_deref(),

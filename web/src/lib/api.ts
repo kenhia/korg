@@ -27,8 +27,8 @@ import type {
   ReportRow,
   Topic,
   WorkItemDetail,
+  WorkItemListLean,
   WorkItemRow,
-  WorkItemSurvey,
 } from "./generated/korg";
 import type {
   CardStatus,
@@ -281,7 +281,12 @@ export const api = {
    *  to be a complete answer, which filtering `workItems` in the client cannot
    *  give: that read is capped at LIST_LIMIT_MAX and the cap is spent on rows
    *  of every status (WI #762). Asking the server for the two statuses costs
-   *  two requests and can only truncate on 500 items *of those statuses*. */
+   *  two requests and can only truncate on 500 items *of those statuses*.
+   *
+   *  Since WI #861 this shares one core read with the MCP `list_work_items`,
+   *  so omitting `wi_status` means "everything not terminal" rather than
+   *  "every status" — pass `"all"` for the old behaviour. Every caller here
+   *  passes a status explicitly. */
   surveyWorkItems: (
     params: {
       project?: string;
@@ -291,7 +296,7 @@ export const api = {
       offset?: number;
     } = {},
   ) =>
-    http<WorkItemSurvey>(
+    http<WorkItemListLean>(
       "GET",
       `/api/work-items/survey${listQuery({ ...params, limit: params.limit ?? 500 })}`,
     ),

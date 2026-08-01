@@ -23,6 +23,7 @@ fn proposal(title: &str, rank: i64, covers: Vec<i64>) -> NewProposal {
         tags: vec![],
         title: title.into(),
         summary: "because reasons".into(),
+        notes: None,
         rank: Decimal::new(rank, 0),
         pinned: false,
         covers,
@@ -143,6 +144,7 @@ async fn update_proposal_patches_only_given_fields() {
         p.row.node_id,
         ProposalPatch {
             summary: Some("updated summary".into()),
+            notes: None,
             rank: Some(Decimal::new(3, 0)),
             ..Default::default()
         },

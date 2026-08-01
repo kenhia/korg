@@ -92,6 +92,23 @@ UPDATE project SET description = notes, notes = NULL
 ALTER TABLE project DROP CONSTRAINT project_description_routing_line;
 ```
 
+**0021 (proposal `notes` + the capped `summary`) is 0020's shape at larger
+scale**: a nullable column plus a data move, so an old image ignores `notes` and
+nothing breaks in the dangerous direction. What it *would* show is the 96
+proposals whose summary is now its first paragraph plus a ` […]` marker — the
+analysis is intact in `notes`, just not where a pre-036 image looks.
+
+```sql
+UPDATE sprint_proposal SET summary = notes, notes = NULL WHERE notes IS NOT NULL;
+ALTER TABLE sprint_proposal DROP CONSTRAINT sprint_proposal_summary_routing_line;
+```
+
+That reversal restores the pre-036 corpus exactly, which is the point — but note
+it also discards any routing contract written *after* the deploy (036's D-4 data
+pass re-authors the live queue by hand). Rolling back across 0021 is therefore
+cheap for history and lossy for whatever was authored since; take a dump first if
+the pass has already run.
+
 0020 also narrows `PROJECT_STATUSES` to `active | archived`, converting
 `maintenance` → `active` and `inactive` → `archived` on the way. That conversion
 is **not** decoration: it was added after a rehearsal against a nightly dump

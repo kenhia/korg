@@ -262,6 +262,18 @@
       <span class="mt-1 inline-block {chip.project}" data-testid="proposal-project">{p.project}</span>
     {/if}
     <p class="mt-1 text-xs text-[var(--color-muted)]">{p.summary}</p>
+    <!-- WI #860 — `summary` is a 500-char routing contract now and the analysis
+         lives in `notes`. A card that showed only the contract would be hiding
+         prose this page used to render in full, so the long form stays one
+         click away rather than one fetch away: the row already carries it. -->
+    {#if p.notes}
+      <details class="mt-1">
+        <summary class="cursor-pointer text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+          >Notes</summary
+        >
+        <p class="mt-1 whitespace-pre-wrap text-xs text-[var(--color-muted)]">{p.notes}</p>
+      </details>
+    {/if}
     {#if covers[p.node_id]?.length}
       <div class="mt-2 flex flex-wrap gap-1">
         {#each covers[p.node_id] as c (c.wi_number)}

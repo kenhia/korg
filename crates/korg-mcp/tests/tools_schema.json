@@ -111,7 +111,7 @@
     "name": "create_work_item"
   },
   {
-    "description": "List work items as {items, total, limit, offset}, ordered by wi_number. Each row includes `comment_count` -- get_work_item to read the discussion. Pass `project` (name) to scope to one project; omit it for all projects, but prefer survey_work_items for cross-project sweeps because these rows carry full content and details. Archived items are EXCLUDED by default.",
+    "description": "The work-item list: lean rows (wi_number, node_id, project, title, wi_type, wi_status, wi_tshirt, comment_count -- no content/details), ordered by wi_number, as {items, total, limit, offset, omitted}. `omitted` is {closed, archived} -- the rows the defaults hid, so a narrowed list can never be mistaken for the whole corpus. Defaults: everything not terminal (`open`, `resolved`, `done`) and unarchived. Pass wi_status:\"all\" (or one status, including \"closed\") for the rest, `project` (name) to scope to one project. There is no detail flag: reading one item in full is get_work_item, which also inlines its comments and edges.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -140,6 +140,20 @@
             "string",
             "null"
           ]
+        },
+        "wi_status": {
+          "description": "Which rows. Omit for everything not terminal (`open`, `resolved`,\n`done`); `\"all\"` to include `closed` too; one status for exactly that.",
+          "enum": [
+            "open",
+            "resolved",
+            "done",
+            "closed",
+            "all"
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -147,7 +161,7 @@
     "name": "list_work_items"
   },
   {
-    "description": "Slim, paginated work-item listing (wi_number, node_id, project, title, wi_type, wi_status, wi_tshirt, comment_count only -- no content/details). Use this instead of list_work_items for cross-project surveys, which can exceed tool-output limits at instance scale. Returns {items, total, limit, offset, omitted}. Archived items are EXCLUDED by default like every other list read (this used to be the one exception, silently over-counting any sweep used to size a backlog); `omitted.archived` counts what that hid, so a narrowed sweep cannot pass for a complete one.",
+    "description": "DEPRECATED -- use list_work_items, which returns exactly this and narrows by status as well. Kept for one deprecation window as an alias so existing callers keep working; it dispatches to the same read and differs only in paging defaults (limit 50). Slim, paginated work-item listing as {items, total, limit, offset, omitted}.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -178,7 +192,14 @@
           ]
         },
         "wi_status": {
-          "description": "Status to filter by, e.g. \"open\"",
+          "description": "Which rows. Omit for everything not terminal (`open`, `resolved`,\n`done`); `\"all\"` to include `closed` too; one status for exactly that.",
+          "enum": [
+            "open",
+            "resolved",
+            "done",
+            "closed",
+            "all"
+          ],
           "type": [
             "string",
             "null"
@@ -207,7 +228,7 @@
     "name": "get_work_item"
   },
   {
-    "description": "Partially update a work item by its wi_number; returns the updated row (isError with code `not_found` if the wi_number does not exist). Only the fields you pass are changed. Status lifecycle: open -> resolved (implemented; may still need a user test or PR) -> done (agent satisfied; terminal but visible in default lists) -> closed (reserved for Ken; hidden by default -- do not set unless directed). For nullable fields (project_id, details, sprint, area_id, parent, category) pass null to clear or omit to leave unchanged. Moving projects (project_id) clears an area that no longer belongs to the target project unless you pass a valid area_id in the same call.",
+    "description": "Partially update a work item by its wi_number; returns the updated row (isError with code `not_found` if the wi_number does not exist). Only the fields you pass are changed. Status lifecycle: open -> resolved (implemented; may still need a user test or PR) -> done (agent satisfied; terminal but visible in default lists) -> closed (reserved for Ken; hidden from list_work_items unless you pass wi_status \"closed\" or \"all\" -- do not set unless directed). For nullable fields (project_id, details, sprint, area_id, parent, category) pass null to clear or omit to leave unchanged. Moving projects (project_id) clears an area that no longer belongs to the target project unless you pass a valid area_id in the same call.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1217,11 +1238,18 @@
     "name": "daily_plan_history"
   },
   {
-    "description": "Propose a sprint: bundle a title + summary with the work items it covers, in one call. Returns the created proposal plus `covered` -- which of the given wi_numbers actually resolved. Numbers that do not resolve are dropped, so compare `covered` against your request.",
+    "description": "Propose a sprint: bundle a title + summary with the work items it covers, in one call. `summary` is a routing contract capped at 500 characters -- what the bundle is, why now, roughly how big -- and the analysis goes in `notes`, which is unbounded; an over-long summary is invalid_input, not a truncation. Returns the created proposal plus `covered` -- which of the given wi_numbers actually resolved. Numbers that do not resolve are dropped, so compare `covered` against your request.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notes": {
+          "description": "The analysis — measurements, dependencies, sequencing, alternatives\nconsidered. Unbounded, and the home for everything that will not fit\n`summary`. Returned by `get_proposal` and `list_proposals detail:\"full\"`,\nnever by the lean queue row.",
           "type": [
             "string",
             "null"
@@ -1251,6 +1279,7 @@
           "type": "number"
         },
         "summary": {
+          "description": "The routing contract. **≤500 characters** (rejected above that): what\nthis bundle is, why now, roughly how big. Written for a session choosing\na sprint from a queue, not for one that has already chosen it.",
           "type": "string"
         },
         "tags": {
@@ -1384,7 +1413,7 @@
     "name": "get_report"
   },
   {
-    "description": "The sprint queue: pinned first, then rank, then node_id (a stable order -- equal ranks no longer shuffle between calls). Returns {items, omitted} -- NOT a bare array; `omitted` counts the rows the defaults hid ({done, declined, archived}), so a narrowed queue can never be mistaken for the whole corpus. Defaults: live proposals only (`proposed` + `active`), unarchived, and the lean projection -- node_id, title, status, project, rank, pinned, covered_count, comment_count, no `summary`. Pass status:\"all\" (or one status) for the rest, detail:\"full\" for every column including `summary`. Reading one proposal is get_proposal, which also gives you the work items it covers.",
+    "description": "The sprint queue: pinned first, then rank, then node_id (a stable order -- equal ranks no longer shuffle between calls). Returns {items, omitted} -- NOT a bare array; `omitted` counts the rows the defaults hid ({done, declined, archived}), so a narrowed queue can never be mistaken for the whole corpus. Defaults: live proposals only (`proposed` + `active`), unarchived, and the lean projection -- node_id, title, status, project, rank, pinned, covered_count, comment_count, no `summary`. Pass status:\"all\" (or one status) for the rest, detail:\"full\" for every column including `summary` and `notes`. Reading one proposal is get_proposal, which also gives you the work items it covers.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1432,7 +1461,7 @@
     "name": "list_proposals"
   },
   {
-    "description": "Fetch one sprint proposal by node_id with everything needed to start it: the proposal fields, `covered` (the work items it covers -- wi_number, node_id, title, wi_status, wi_tshirt, project, comment_count -- ordered by wi_number), and inlined comments (up to 10, with `comments_truncated`). This replaces the old list_proposals + neighbors + list_work_items dance. isError with code `not_found` if there is none.",
+    "description": "Fetch one sprint proposal by node_id with everything needed to start it: the proposal fields (including `notes`, the full analysis the 500-character `summary` cannot hold), `covered` (the work items it covers -- wi_number, node_id, title, wi_status, wi_tshirt, project, comment_count -- ordered by wi_number), and inlined comments (up to 10, with `comments_truncated`). This replaces the old list_proposals + neighbors + list_work_items dance. isError with code `not_found` if there is none.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1449,7 +1478,7 @@
     "name": "get_proposal"
   },
   {
-    "description": "Partially update a sprint proposal by its node_id; returns the updated proposal (isError with code `not_found` if that node is missing or is not a proposal). Only the fields you pass are changed. Use this for status transitions (proposed -> active -> done/declined), reordering (rank), pinning, or archiving.",
+    "description": "Partially update a sprint proposal by its node_id; returns the updated proposal (isError with code `not_found` if that node is missing or is not a proposal). Only the fields you pass are changed. Use this for status transitions (proposed -> active -> done/declined), reordering (rank), pinning, or archiving. `summary` is capped at 500 characters (invalid_input above that) -- long-form analysis belongs in `notes`, which is unbounded; pass null to clear it.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1462,6 +1491,13 @@
         "node_id": {
           "format": "int64",
           "type": "integer"
+        },
+        "notes": {
+          "description": "The analysis: measurements, dependencies, sequencing, what was\nconsidered and rejected. Unbounded; pass `null` to clear it.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "pinned": {
           "type": [
@@ -1482,6 +1518,7 @@
           "type": "string"
         },
         "summary": {
+          "description": "The routing contract, **≤500 characters** (rejected above that). Put the\nanalysis in `notes` — it is unbounded, and that is what it is for.",
           "type": [
             "string",
             "null"

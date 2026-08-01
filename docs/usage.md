@@ -87,7 +87,7 @@ describing a route that no longer exists.
 | `PATCH` | `/api/projects/:name` | Update project metadata (everything but the name). |
 | `GET` | `/api/projects/:name/plan` | A project's work items plus their `depends_on` edges, for plan/frontier views. |
 | `GET`, `POST` | `/api/work-items` | List (`{items,total,limit,offset}`; filters `project`, `archived`, `limit`, `offset`) or create. |
-| `GET` | `/api/work-items/survey` | Slim, paginated work-item projection (no content/details) for cross-project surveys; filters `project`, `wi_status`, `archived` (tri-state since #851, excluding archived by default). |
+| `GET` | `/api/work-items/survey` | Slim, paginated work-item projection (no content/details); filters `project`, `wi_status` (+ `all`), `archived` (tri-state since #851, excluding archived by default). Since #861 it shares the MCP `list_work_items` read, so omitting `wi_status` means everything **not terminal** rather than every status, and the response carries `omitted: {closed, archived}`. |
 | `GET`, `PATCH` | `/api/work-items/:wi_number` | Fetch with inlined comments (same shape as the MCP tool), or update. |
 | `GET`, `POST` | `/api/areas` | List or create areas. |
 | `GET`, `POST` | `/api/cards` | List cards (enveloped; filters `status`, `project`, `archived`) or create. |
@@ -294,6 +294,19 @@ archived}`. It measured ~46k tokens unfiltered, 71% of it `done` proposals no
 caller had ever wanted. `GET /api/proposals` is unchanged — the Planning page
 renders those summaries.
 
+**`list_work_items` joined it in WI #861**, with the same two ideas and one more:
+the lean projection is now the *only* MCP projection (the full tier is
+`get_work_item`), and the row filter is `wi_status`, which defaults to everything
+not terminal. `omitted` is `{closed, archived}`. `survey_work_items` is a
+deprecated alias for it; `GET /api/work-items` still returns full rows, because
+the Work Items page searches `content` in the browser.
+
+**The object shape changed underneath both proposals reads in WI #860**:
+`summary` is a ≤500-character routing contract (CHECK-enforced by migration
+0021, `invalid_input` above it) and the analysis lives in `notes`, unbounded and
+returned by `get_proposal`, `detail:"full"` and REST. The migration moved every
+over-cap summary verbatim rather than truncating it — see `docs/api.md`.
+
 Tier 1 is rendered from live data at `initialize`, so every new agent session
 gets a current roster with no restart: korg is a long-running HTTP server that
 can go weeks between deploys, and anything baked at process start goes
@@ -348,10 +361,10 @@ any other through a single generalized `relationship` edge:
   anything else is refused rather than stored as an unresolvable reference.
   `sprint_proposal` joined it in sprint 029, so "which sprint am I pushing on
   today" is answerable by the planner.
-- **sprint_proposal** — an agent-planning proposal (title, summary, status,
-  drag-orderable `rank`, `pinned`); covers work items via the same
-  `relationship` mechanism, label `covers`, rather than a dedicated join
-  table.
+- **sprint_proposal** — an agent-planning proposal (title, a ≤500-char `summary`
+  routing contract, unbounded `notes` for the analysis, status, drag-orderable
+  `rank`, `pinned`); covers work items via the same `relationship` mechanism,
+  label `covers`, rather than a dedicated join table.
 
 Cross-cutting attributes (project, category, tags, archived, timestamps) live on
 `node`. Projects are a unified taxonomy; areas stay project-scoped; tags and

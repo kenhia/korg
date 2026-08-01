@@ -18,7 +18,7 @@ use crate::ops::{self, schema};
 use crate::relationships;
 use crate::vocab::{
     self, CARD_STATUSES, LINK_DISPOSITIONS, PROPOSAL_LIVE_STATUSES, PROPOSAL_STATUSES,
-    REPORT_STATUSES,
+    REPORT_STATUSES, WI_LIVE_STATUSES,
 };
 pub use crate::vocab::{PROJECT_CATEGORIES, PROJECT_STATUSES, WI_STATUSES};
 
@@ -318,7 +318,9 @@ where
 ///
 /// Unbounded list reads were the review's context bomb: `list_work_items`
 /// returned every row with full content, which is why `survey_work_items` had
-/// to exist at all.
+/// to exist at all. Since #861 the lean projection *is* the MCP list read and
+/// the survey is a deprecated alias for it; this envelope carries `omitted`
+/// alongside on the reads that also narrow by default.
 #[derive(Debug, Clone, Serialize, PartialEq, TS)]
 #[ts(export, export_to = "korg.ts")]
 pub struct Page<T> {
@@ -1276,7 +1278,7 @@ pub async fn get_node_preview(pool: &PgPool, id: i64) -> Result<Option<NodePrevi
         }
         "sprint_proposal" => {
             if let Some(r) = sqlx::query(
-                "SELECT title, summary, status::text AS status, pinned \
+                "SELECT title, summary, notes, status::text AS status, pinned \
                  FROM sprint_proposal WHERE node_id = $1",
             )
             .bind(id)
@@ -1288,8 +1290,21 @@ pub async fn get_node_preview(pool: &PgPool, id: i64) -> Result<Option<NodePrevi
                 if r.get::<bool, _>("pinned") {
                     p.badges.push("pinned".into());
                 }
-                p.body = Some(r.get("summary"));
-                p.body_label = Some("Summary".into());
+                // Since #860 the summary is a 500-char contract and the analysis
+                // lives in `notes`, so the body is `notes` where there is one —
+                // otherwise this preview would show the shortest form korg has
+                // and nothing else. The summary stays visible as a field.
+                match r.get::<Option<String>, _>("notes") {
+                    Some(notes) => {
+                        p.fields.push(field("Summary", r.get::<String, _>("summary")));
+                        p.body = Some(notes);
+                        p.body_label = Some("Notes".into());
+                    }
+                    None => {
+                        p.body = Some(r.get("summary"));
+                        p.body_label = Some("Summary".into());
+                    }
+                }
             }
         }
         "topic" => {
@@ -1411,8 +1426,11 @@ impl Default for WorkItemQuery {
 }
 
 /// Full work-item rows for one project (or all), enveloped and bounded
-/// (WI #534). Kept alongside `survey_work_items` per D-10: one project's items
-/// with content stay a single call; cross-project callers want the survey.
+/// (WI #534). **REST only since #861** — `GET /api/work-items`, which the Work
+/// Items page walks to completion (035 D-1) and then filters, searches and
+/// derives tag chips from in memory, all of which need `content` and `details`.
+/// The MCP `list_work_items` is [`list_work_items_lean`]; the full tier there is
+/// `get_work_item`, one row at a time.
 pub async fn list_work_items(pool: &PgPool, query: WorkItemQuery) -> Result<Page<WorkItemRow>> {
     let (limit, offset) = query.page.resolve();
     let sql = format!(
@@ -1502,7 +1520,19 @@ pub async fn get_work_item_detail(pool: &PgPool, wi_number: i64) -> Result<Optio
     }))
 }
 
-// --- work item survey (slim, paginated) -------------------------------------
+// --- the lean work-item list (WI #861) --------------------------------------
+//
+// `list_work_items` above is the REST/web read and stays as it is: the Work
+// Items page holds its whole collection and filters, searches and derives tag
+// chips in memory (035 D-1), which needs `content` and `details`. It is a
+// browser, not a token budget — the same split `list_proposals` has had since
+// #852 and `list_projects` since #828.
+//
+// The MCP read is the one that measured ~890k chars of content+details across
+// the corpus, with 78% of the rows `closed` while `update_work_item`'s own
+// schema claimed closed items were "hidden by default". Everything below is
+// that read: survey's projection, terminal statuses excluded by default, and an
+// `omitted` envelope so both narrowings are visible.
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
 #[ts(export, export_to = "korg.ts")]
@@ -1518,48 +1548,71 @@ pub struct WorkItemSummary {
     pub comment_count: i64,
 }
 
-/// What the survey's archived filter hid (WI #851).
+/// What the lean list's defaults hid (WI #851, extended by #861), computed as a
+/// **cascade** so no row is counted twice: `archived` is what the archived
+/// filter excluded, and `closed` is counted only over the rows that *passed* it.
+/// An archived closed item therefore lands in `archived` and nowhere else.
 ///
-/// Counts **archived rows the filter excluded**, so it is 0 under
-/// `archived: true` (they are all shown) and under `archived: null` (nothing is
-/// hidden). Naming the field for what it counts keeps it honest under every
-/// setting, rather than meaning "unarchived" half the time.
+/// A field is 0 when the caller asked to see that class — `wi_status: "all"`
+/// (or `"closed"`) zeroes `closed`, `archived: null`/`true` zeroes `archived`.
+/// Naming each field for what it counts keeps it honest under every setting,
+/// rather than meaning "unarchived" half the time.
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "korg.ts")]
-pub struct SurveyOmitted {
+pub struct WorkItemOmitted {
+    pub closed: i64,
     pub archived: i64,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "korg.ts")]
-pub struct WorkItemSurvey {
+pub struct WorkItemListLean {
     pub items: Vec<WorkItemSummary>,
     pub total: i64,
     pub limit: i64,
     pub offset: i64,
-    /// The rows the archived filter hid. `total` is the count *after* filtering,
-    /// so without this a survey used to decide "is this project drained?" cannot
+    /// The rows the defaults hid. `total` is the count *after* filtering, so
+    /// without this a sweep used to decide "is this project drained?" cannot
     /// tell a narrowed answer from a complete one — the same silent-truncation
     /// failure `list_projects`' `omitted` exists to treat (WI #828).
-    pub omitted: SurveyOmitted,
+    pub omitted: WorkItemOmitted,
 }
 
-/// A slim, paginated projection of work items (no content/details) for
-/// cross-project surveys — e.g. the `refill-queue` skill — which can't
-/// afford `list_work_items`'s full payload at instance scale. `total` is
-/// the full filtered count (before LIMIT/OFFSET), so callers can page.
+/// Resolve the `wi_status` argument into the statuses a lean list returns.
 ///
-/// `archived` is tri-state and defaults to `Some(false)` at the transports, like
-/// every sibling read. Before #851 it defaulted to `None` ("both"), against the
-/// server instructions and with nothing in the response to reveal it.
-pub async fn survey_work_items(
+/// Absent → the non-terminal ones (`open` + `resolved` + `done`), which is what
+/// makes `update_work_item`'s "closed … hidden by default" true for the first
+/// time. `Some("all")` → no filter. Anything else is validated against
+/// `WI_STATUSES` and returned alone. Identical in shape to
+/// `proposal_status_predicate` (#852) and `project_status_predicate` (#828).
+fn wi_status_predicate(status: Option<&str>) -> Result<Option<Vec<String>>> {
+    match status {
+        None => Ok(Some(
+            WI_LIVE_STATUSES.iter().map(|s| s.to_string()).collect(),
+        )),
+        Some("all") => Ok(None),
+        Some(s) => {
+            validate_status(s, &WI_STATUSES, "work item status")?;
+            Ok(Some(vec![s.to_string()]))
+        }
+    }
+}
+
+/// A slim, paginated projection of work items (no content/details), excluding
+/// terminal and archived rows by default and saying what that hid.
+///
+/// This is `list_work_items` over MCP and `GET /api/work-items/survey` over
+/// REST. `total` is the full filtered count (before LIMIT/OFFSET), so callers
+/// can page.
+pub async fn list_work_items_lean(
     pool: &PgPool,
     project: Option<&str>,
     wi_status: Option<&str>,
     archived: ArchivedFilter,
     limit: i64,
     offset: i64,
-) -> Result<WorkItemSurvey> {
+) -> Result<WorkItemListLean> {
+    let shown = wi_status_predicate(wi_status)?;
     #[derive(sqlx::FromRow)]
     struct Row {
         wi_number: i64,
@@ -1581,13 +1634,13 @@ pub async fn survey_work_items(
          JOIN node n ON n.id = w.node_id \
          LEFT JOIN project pj ON pj.id = n.project_id \
          WHERE ($1::text IS NULL OR pj.name = $1) \
-           AND ($2::text IS NULL OR w.wi_status = $2) \
+           AND ($2::text[] IS NULL OR w.wi_status = ANY($2)) \
            AND ($3::bool IS NULL OR n.archived = $3) \
          ORDER BY w.wi_number \
          LIMIT $4 OFFSET $5",
     )
     .bind(project)
-    .bind(wi_status)
+    .bind(shown.as_deref())
     .bind(archived)
     .bind(limit)
     .bind(offset)
@@ -1608,33 +1661,51 @@ pub async fn survey_work_items(
             comment_count: r.comment_count,
         })
         .collect();
-    // Only a filter that excludes archived rows can hide any; asking for
-    // archived-only or for both hides nothing, so skip the query entirely.
-    let omitted_archived = if archived == Some(false) {
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM workitem w \
-             JOIN node n ON n.id = w.node_id \
-             LEFT JOIN project pj ON pj.id = n.project_id \
-             WHERE ($1::text IS NULL OR pj.name = $1) \
-               AND ($2::text IS NULL OR w.wi_status = $2) \
-               AND n.archived",
-        )
-        .bind(project)
-        .bind(wi_status)
-        .fetch_one(pool)
-        .await?
-    } else {
-        0
-    };
 
-    Ok(WorkItemSurvey {
+    Ok(WorkItemListLean {
         items,
         total,
         limit,
         offset,
-        omitted: SurveyOmitted {
-            archived: omitted_archived,
-        },
+        omitted: wi_omitted(pool, project, archived, shown.as_deref()).await?,
+    })
+}
+
+/// Count what the lean list's defaults hid, in one round trip.
+///
+/// The counts are taken over the `project`-filtered corpus — narrowing to a
+/// project is the caller *choosing* a scope, not a default hiding rows from
+/// them, so it is not something `omitted` should report. Same reasoning as
+/// `proposal_omitted`.
+async fn wi_omitted(
+    pool: &PgPool,
+    project: Option<&str>,
+    archived: ArchivedFilter,
+    shown: Option<&[String]>,
+) -> Result<WorkItemOmitted> {
+    let (archived_hidden, closed) = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT \
+           count(*) FILTER (WHERE n.archived AND $2::bool IS NOT NULL AND NOT $2), \
+           count(*) FILTER (WHERE ($2::bool IS NULL OR n.archived = $2) \
+                              AND w.wi_status = 'closed') \
+         FROM workitem w \
+         JOIN node n ON n.id = w.node_id \
+         LEFT JOIN project pj ON pj.id = n.project_id \
+         WHERE ($1::text IS NULL OR pj.name = $1)",
+    )
+    .bind(project)
+    .bind(archived)
+    .fetch_one(pool)
+    .await?;
+    // A status the caller asked for isn't omitted, however many rows it has.
+    let closed_hidden = match shown {
+        Some(list) if list.iter().any(|s| s == "closed") => 0,
+        None => 0,
+        _ => closed,
+    };
+    Ok(WorkItemOmitted {
+        closed: closed_hidden,
+        archived: archived_hidden,
     })
 }
 
@@ -2405,6 +2476,32 @@ pub async fn list_areas(pool: &PgPool, project: &str) -> Result<Vec<AreaRow>> {
 
 // --- sprint proposals (agent planning) -------------------------------------
 
+/// The routing contract's only mechanically-enforceable clause (WI #860), the
+/// proposal counterpart of [`PROJECT_DESCRIPTION_MAX`].
+///
+/// 500 rather than projects' 160 because a proposal has more to say than a
+/// routing line: what the bundle is, why now, roughly how big. Sized in 036's
+/// D-1 against what the *full* row carries — after #852 the lean queue row has
+/// no `summary` at all, so this is not sizing the pick.
+pub const PROPOSAL_SUMMARY_MAX: usize = 500;
+
+/// Checked here as well as by `sprint_proposal_summary_routing_line` (0021) so
+/// an over-long summary is `invalid_input` naming the field and the overage,
+/// rather than a raw constraint violation surfacing as `internal`. Characters,
+/// not bytes — the constraint uses `char_length` and a summary is prose.
+fn check_proposal_summary(summary: &str) -> Result<()> {
+    let n = summary.chars().count();
+    if n > PROPOSAL_SUMMARY_MAX {
+        return Err(RepoError::InvalidInput(format!(
+            "proposal summary is {n} characters; the routing contract caps it at \
+             {PROPOSAL_SUMMARY_MAX}. Put the analysis in `notes` — it is unbounded, \
+             and that is what it exists for."
+        ))
+        .into());
+    }
+    Ok(())
+}
+
 /// `propose_sprint` / `POST /api/proposals`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct NewProposal {
@@ -2425,7 +2522,16 @@ pub struct NewProposal {
     pub tags: Vec<String>,
     #[schemars(schema_with = "schema::non_empty")]
     pub title: String,
+    /// The routing contract. **≤500 characters** (rejected above that): what
+    /// this bundle is, why now, roughly how big. Written for a session choosing
+    /// a sprint from a queue, not for one that has already chosen it.
     pub summary: String,
+    /// The analysis — measurements, dependencies, sequencing, alternatives
+    /// considered. Unbounded, and the home for everything that will not fit
+    /// `summary`. Returned by `get_proposal` and `list_proposals detail:"full"`,
+    /// never by the lean queue row.
+    #[serde(default)]
+    pub notes: Option<String>,
     /// Drag-order position; lower sorts first among unpinned proposals.
     #[serde(default)]
     #[schemars(schema_with = "schema::rank")]
@@ -2455,6 +2561,7 @@ pub struct ProposalCreated {
 /// wi_number -> node_id resolution happens before the transaction, matching
 /// `update_work_item`'s handling of `parent`.
 pub async fn create_proposal(pool: &PgPool, new: NewProposal) -> Result<ProposalCreated> {
+    check_proposal_summary(&new.summary)?;
     let project_id = resolve_project(pool, new.project_id, new.project.as_deref()).await?;
     let mut covered = Vec::with_capacity(new.covers.len());
     for wi in &new.covers {
@@ -2476,12 +2583,13 @@ pub async fn create_proposal(pool: &PgPool, new: NewProposal) -> Result<Proposal
     .get("id");
 
     sqlx::query(
-        "INSERT INTO sprint_proposal (node_id, title, summary, rank, pinned) \
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO sprint_proposal (node_id, title, summary, notes, rank, pinned) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(node_id)
     .bind(&new.title)
     .bind(&new.summary)
+    .bind(&new.notes)
     .bind(new.rank)
     .bind(new.pinned)
     .execute(&mut *tx)
@@ -2515,7 +2623,14 @@ pub async fn create_proposal(pool: &PgPool, new: NewProposal) -> Result<Proposal
 pub struct ProposalRow {
     pub node_id: i64,
     pub title: String,
+    /// The routing contract, ≤500 chars (WI #860) — what the bundle is, why
+    /// now, roughly how big. It used to hold the whole analysis, which is why
+    /// the unfiltered `list_proposals` measured ~46k tokens (#852).
     pub summary: String,
+    /// The analysis the summary used to carry. Unbounded, `None` on a proposal
+    /// whose summary always fit. Migration 0021 moved every over-cap summary
+    /// here verbatim.
+    pub notes: Option<String>,
     pub status: String,
     #[ts(type = "string")]
     pub rank: Decimal,
@@ -2538,7 +2653,7 @@ pub struct ProposalRow {
 }
 
 const PROPOSAL_SELECT: &str =
-    "SELECT p.node_id, p.title, p.summary, p.status::text AS status, p.rank, p.pinned, \
+    "SELECT p.node_id, p.title, p.summary, p.notes, p.status::text AS status, p.rank, p.pinned, \
             pj.name AS project, n.category, n.tags, n.archived, \
             (SELECT count(*) FROM comment cm WHERE cm.node_id = p.node_id) AS comment_count, \
             (SELECT count(*) FROM relationship r JOIN node wn ON wn.id = r.right_id \
@@ -2862,8 +2977,14 @@ pub struct ProposalPatch {
     #[serde(default)]
     #[schemars(schema_with = "schema::non_empty")]
     pub title: Option<String>,
+    /// The routing contract, **≤500 characters** (rejected above that). Put the
+    /// analysis in `notes` — it is unbounded, and that is what it is for.
     #[serde(default)]
     pub summary: Option<String>,
+    /// The analysis: measurements, dependencies, sequencing, what was
+    /// considered and rejected. Unbounded; pass `null` to clear it.
+    #[serde(default, deserialize_with = "ops::double_option")]
+    pub notes: Option<Option<String>>,
     #[serde(default)]
     #[schemars(schema_with = "schema::proposal_status")]
     pub status: Option<String>,
@@ -2890,6 +3011,9 @@ pub async fn update_proposal(
     if let Some(v) = &patch.status {
         validate_status(v, &PROPOSAL_STATUSES, "proposal status")?;
     }
+    if let Some(v) = &patch.summary {
+        check_proposal_summary(v)?;
+    }
     let mut tx = pool.begin().await?;
     require_kind(&mut *tx, node_id, "sprint_proposal", "proposal").await?;
     if let Some(v) = &patch.title {
@@ -2903,6 +3027,14 @@ pub async fn update_proposal(
         sqlx::query("UPDATE sprint_proposal SET summary = $2 WHERE node_id = $1")
             .bind(node_id)
             .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    // Double-option: absent leaves `notes` alone, explicit null clears it.
+    if let Some(v) = &patch.notes {
+        sqlx::query("UPDATE sprint_proposal SET notes = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v.as_deref())
             .execute(&mut *tx)
             .await?;
     }

@@ -23,7 +23,9 @@ pub fn server_instructions() -> &'static str {
      filter; and the filtered ones \
      (list_proposals, list_projects) return {items, omitted}, where `omitted` counts \
      the rows their defaults hid — so a narrowed view can never be mistaken for the \
-     whole corpus. survey_work_items carries `omitted` too, for the same reason. \
+     whole corpus. list_work_items and survey_work_items carry `omitted` too, for the \
+     same reason: both are lean by default (no content/details) and both hide `closed` \
+     items unless you pass wi_status \"closed\" or \"all\". \
      Every read that filters archived rows excludes them by default: pass \
      `archived: null` for both, `true` for archived only. Writes take a project or area by name \
      (`project`/`area`) or by id (`project_id`/`area_id`), never both. \

@@ -178,6 +178,7 @@ pub mod new {
             tags: Vec::new(),
             title: title.into(),
             summary: String::new(),
+            notes: None,
             rank: Decimal::ZERO,
             pinned: false,
             covers: Vec::new(),

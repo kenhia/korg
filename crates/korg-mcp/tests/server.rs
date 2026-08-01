@@ -1371,3 +1371,183 @@ async fn tools_accept_a_project_name_and_explain_a_bad_one() {
         "a failed name resolution created a project (the WI #537 bug)"
     );
 }
+
+/// WI #861 — `list_work_items` is the lean read, and the default is the
+/// contract: no `content`/`details`, no terminal rows, no archived rows, and an
+/// `omitted` envelope saying what the last two hid.
+///
+/// The `closed` half is the one that was a *lie* rather than an absence.
+/// `update_work_item`'s schema has said since sprint 010 that closed items are
+/// "hidden by default"; nothing on the MCP surface hid anything, and 78% of the
+/// production corpus is closed. This asserts the sentence.
+#[tokio::test]
+async fn list_work_items_is_lean_and_terminal_excluded_by_default() {
+    let (_c, pool) = fresh_korg().await;
+    let server = server(pool);
+
+    for (title, status) in [
+        ("open one", "open"),
+        ("resolved one", "resolved"),
+        ("done one", "done"),
+        ("closed one", "closed"),
+    ] {
+        server
+            .call(
+                "create_work_item",
+                args(json!({"title": title, "content": "the body nobody wanted", "wi_status": status})),
+            )
+            .await
+            .unwrap();
+    }
+
+    let call = |name: &'static str, arguments: Value| {
+        let server = &server;
+        async move { body(&server.call(name, args(arguments)).await.unwrap()) }
+    };
+
+    let default = call("list_work_items", json!({})).await;
+    assert_eq!(
+        default["total"].as_i64(),
+        Some(3),
+        "the default is open + resolved + done — `closed` is terminal"
+    );
+    assert_eq!(
+        default["omitted"]["closed"].as_i64(),
+        Some(1),
+        "and it says so, rather than the row simply not being there"
+    );
+    assert_eq!(default["omitted"]["archived"].as_i64(), Some(0));
+
+    let row = &default["items"][0];
+    for absent in ["content", "details"] {
+        assert!(
+            row.get(absent).is_none(),
+            "the lean row must not carry `{absent}` — it is the payload problem"
+        );
+    }
+    for present in [
+        "wi_number",
+        "node_id",
+        "project",
+        "title",
+        "wi_type",
+        "wi_status",
+        "wi_tshirt",
+        "comment_count",
+    ] {
+        assert!(
+            row.get(present).is_some(),
+            "the lean row is missing `{present}`"
+        );
+    }
+
+    let all = call("list_work_items", json!({"wi_status": "all"})).await;
+    assert_eq!(all["total"].as_i64(), Some(4));
+    assert_eq!(
+        all["omitted"]["closed"].as_i64(),
+        Some(0),
+        "a status the caller asked for is not omitted"
+    );
+
+    // The deprecated alias is the same read, not a second implementation.
+    let via_survey = call("survey_work_items", json!({})).await;
+    assert_eq!(via_survey["total"], default["total"]);
+    assert_eq!(via_survey["omitted"], default["omitted"]);
+    assert_eq!(via_survey["items"], default["items"]);
+    assert_eq!(
+        via_survey["limit"].as_i64(),
+        Some(50),
+        "the alias keeps its own paging default so existing callers page as before"
+    );
+
+    // An unknown status is rejected rather than quietly returning everything.
+    let bad = server
+        .call("list_work_items", args(json!({"wi_status": "finished"})))
+        .await
+        .expect("call completes");
+    assert_eq!(bad.is_error, Some(true));
+}
+
+/// WI #860 — the proposal object shape over the wire: a bounded `summary`, an
+/// unbounded `notes`, and the tiering that keeps the analysis off the queue read.
+#[tokio::test]
+async fn proposal_summary_is_bounded_and_notes_carries_the_analysis() {
+    let (_c, pool) = fresh_korg().await;
+    let server = server(pool);
+
+    let analysis = "why this bundle, at length. ".repeat(100);
+    let created = body(
+        &server
+            .call(
+                "propose_sprint",
+                args(json!({
+                    "title": "a sprint",
+                    "summary": "What it is, why now, roughly how big.",
+                    "notes": analysis,
+                })),
+            )
+            .await
+            .unwrap(),
+    );
+    let node_id = created["node_id"].as_i64().unwrap();
+    assert_eq!(created["notes"].as_str(), Some(analysis.as_str()));
+
+    // The full read carries it; the lean queue read carries neither it nor the
+    // summary — that is the tier boundary #852 drew and #860 widened.
+    let full = body(
+        &server
+            .call("get_proposal", args(json!({"node_id": node_id})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(full["notes"].as_str(), Some(analysis.as_str()));
+
+    let lean = body(
+        &server
+            .call("list_proposals", args(json!({})))
+            .await
+            .unwrap(),
+    );
+    let lean_row = &lean["items"][0];
+    assert!(
+        lean_row.get("summary").is_none(),
+        "lean row must have no summary"
+    );
+    assert!(
+        lean_row.get("notes").is_none(),
+        "and certainly no notes — it is the largest field korg stores"
+    );
+
+    let detailed = body(
+        &server
+            .call("list_proposals", args(json!({"detail": "full"})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        detailed["items"][0]["notes"].as_str(),
+        Some(analysis.as_str()),
+        "`full` is the escape hatch, so nothing became unreachable"
+    );
+
+    // The cap is a rejection, never a truncation.
+    let over = "x".repeat(501);
+    let rejected = server
+        .call(
+            "update_proposal",
+            args(json!({"node_id": node_id, "summary": over})),
+        )
+        .await
+        .expect("call completes");
+    assert_eq!(rejected.is_error, Some(true));
+    let text = rejected.content[0].as_text().expect("text").text.clone();
+    let err: Value = serde_json::from_str(&text).expect("error body is json");
+    assert_eq!(err["code"], "invalid_input");
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("notes"),
+        "the error must name the remedy: {err}"
+    );
+}
