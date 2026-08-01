@@ -115,6 +115,7 @@ async fn every_write_accepts_a_project_name() {
             tags: vec![],
             title: "p".into(),
             summary: "s".into(),
+            notes: None,
             rank: Decimal::ZERO,
             pinned: false,
             covers: vec![],

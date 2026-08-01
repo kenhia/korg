@@ -99,7 +99,9 @@ export type NodePreview = { node_id: number, kind: string, wi_number: number | n
  *
  * Unbounded list reads were the review's context bomb: `list_work_items`
  * returned every row with full content, which is why `survey_work_items` had
- * to exist at all.
+ * to exist at all. Since #861 the lean projection *is* the MCP list read and
+ * the survey is a deprecated alias for it; this envelope carries `omitted`
+ * alongside on the reads that also narrow by default.
  */
 export type Page<T> = { items: Array<T>, total: number, limit: number, offset: number, };
 
@@ -224,7 +226,19 @@ deploy_to: Array<string>, category: string | null, };
  * `covered` is the honest echo of a drop-and-report input (F-06): compare it
  * against what you asked for.
  */
-export type ProposalCreated = { covered: Array<number>, node_id: number, title: string, summary: string, status: string, rank: string, pinned: boolean, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
+export type ProposalCreated = { covered: Array<number>, node_id: number, title: string, 
+/**
+ * The routing contract, ≤500 chars (WI #860) — what the bundle is, why
+ * now, roughly how big. It used to hold the whole analysis, which is why
+ * the unfiltered `list_proposals` measured ~46k tokens (#852).
+ */
+summary: string, 
+/**
+ * The analysis the summary used to carry. Unbounded, `None` on a proposal
+ * whose summary always fit. Migration 0021 moved every over-cap summary
+ * here verbatim.
+ */
+notes: string | null, status: string, rank: string, pinned: boolean, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
 /**
  * Comments on this proposal (WI #535).
  */
@@ -255,7 +269,19 @@ related: Array<RelatedRef>,
 /**
  * True when there are more such edges than were inlined (call `neighbors`).
  */
-related_truncated: boolean, node_id: number, title: string, summary: string, status: string, rank: string, pinned: boolean, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
+related_truncated: boolean, node_id: number, title: string, 
+/**
+ * The routing contract, ≤500 chars (WI #860) — what the bundle is, why
+ * now, roughly how big. It used to hold the whole analysis, which is why
+ * the unfiltered `list_proposals` measured ~46k tokens (#852).
+ */
+summary: string, 
+/**
+ * The analysis the summary used to carry. Unbounded, `None` on a proposal
+ * whose summary always fit. Migration 0021 moved every over-cap summary
+ * here verbatim.
+ */
+notes: string | null, status: string, rank: string, pinned: boolean, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
 /**
  * Comments on this proposal (WI #535).
  */
@@ -294,7 +320,19 @@ export type ProposalListLean = { items: Array<ProposalLeanRow>, omitted: Proposa
  */
 export type ProposalOmitted = { done: number, declined: number, archived: number, };
 
-export type ProposalRow = { node_id: number, title: string, summary: string, status: string, rank: string, pinned: boolean, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
+export type ProposalRow = { node_id: number, title: string, 
+/**
+ * The routing contract, ≤500 chars (WI #860) — what the bundle is, why
+ * now, roughly how big. It used to hold the whole analysis, which is why
+ * the unfiltered `list_proposals` measured ~46k tokens (#852).
+ */
+summary: string, 
+/**
+ * The analysis the summary used to carry. Unbounded, `None` on a proposal
+ * whose summary always fit. Migration 0021 moved every over-cap summary
+ * here verbatim.
+ */
+notes: string | null, status: string, rank: string, pinned: boolean, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
 /**
  * Comments on this proposal (WI #535).
  */
@@ -341,16 +379,6 @@ export type ReportRow = { node_id: number, source: string, report_date: string, 
  */
 comment_count: number, updated: string, };
 
-/**
- * What the survey's archived filter hid (WI #851).
- *
- * Counts **archived rows the filter excluded**, so it is 0 under
- * `archived: true` (they are all shown) and under `archived: null` (nothing is
- * hidden). Naming the field for what it counts keeps it honest under every
- * setting, rather than meaning "unarchived" half the time.
- */
-export type SurveyOmitted = { archived: number, };
-
 export type Topic = { node_id: number, name: string, description: string | null, project_id: number | null, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
 /**
  * Comments on this topic (WI #535) — the two-level read contract
@@ -385,6 +413,28 @@ related_truncated: boolean, wi_number: number, node_id: number, project: string 
  */
 comment_count: number, created: string, updated: string, };
 
+export type WorkItemListLean = { items: Array<WorkItemSummary>, total: number, limit: number, offset: number, 
+/**
+ * The rows the defaults hid. `total` is the count *after* filtering, so
+ * without this a sweep used to decide "is this project drained?" cannot
+ * tell a narrowed answer from a complete one — the same silent-truncation
+ * failure `list_projects`' `omitted` exists to treat (WI #828).
+ */
+omitted: WorkItemOmitted, };
+
+/**
+ * What the lean list's defaults hid (WI #851, extended by #861), computed as a
+ * **cascade** so no row is counted twice: `archived` is what the archived
+ * filter excluded, and `closed` is counted only over the rows that *passed* it.
+ * An archived closed item therefore lands in `archived` and nowhere else.
+ *
+ * A field is 0 when the caller asked to see that class — `wi_status: "all"`
+ * (or `"closed"`) zeroes `closed`, `archived: null`/`true` zeroes `archived`.
+ * Naming each field for what it counts keeps it honest under every setting,
+ * rather than meaning "unarchived" half the time.
+ */
+export type WorkItemOmitted = { closed: number, archived: number, };
+
 export type WorkItemRow = { wi_number: number, node_id: number, project: string | null, area: string | null, wi_type: string, wi_status: string, wi_tshirt: string, sprint: string | null, title: string, content: string, details: string | null, category: string | null, tags: Array<string>, parent: number | null, archived: boolean, 
 /**
  * Number of comments on this work item (WI #392) — the hint that tells an
@@ -397,12 +447,3 @@ export type WorkItemSummary = { wi_number: number, node_id: number, project: str
  * Comment count (WI #392) — signals which rows carry discussion worth fetching.
  */
 comment_count: number, };
-
-export type WorkItemSurvey = { items: Array<WorkItemSummary>, total: number, limit: number, offset: number, 
-/**
- * The rows the archived filter hid. `total` is the count *after* filtering,
- * so without this a survey used to decide "is this project drained?" cannot
- * tell a narrowed answer from a complete one — the same silent-truncation
- * failure `list_projects`' `omitted` exists to treat (WI #828).
- */
-omitted: SurveyOmitted, };

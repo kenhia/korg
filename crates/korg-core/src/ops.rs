@@ -132,6 +132,16 @@ pub mod schema {
     pub fn wi_status(_: &mut SchemaGenerator) -> Schema {
         enumerated(&vocab::WI_STATUSES)
     }
+    /// The `list_work_items` row filter (WI #861). The vocabulary plus `"all"`,
+    /// which no single status names — omitting the argument means the
+    /// non-terminal statuses, so there has to be a way to ask for `closed` rows
+    /// alongside the rest. Same shape as `proposal_status_filter`, for the same
+    /// reason.
+    pub fn wi_status_filter(_: &mut SchemaGenerator) -> Schema {
+        let mut variants = strings(&vocab::WI_STATUSES);
+        variants.push(Value::String("all".into()));
+        json_schema!({ "type": ["string", "null"], "enum": variants })
+    }
     pub fn wi_tshirt(_: &mut SchemaGenerator) -> Schema {
         enumerated(&vocab::WI_TSHIRTS)
     }
@@ -395,12 +405,19 @@ pub struct HistoryRange {
 // REST spells these as query strings (see the module docs); both spellings
 // resolve to the same `repo::*Query`.
 
-/// `list_work_items`.
+/// `list_work_items` — the lean read since #861. Every argument is optional and
+/// the two defaults are the point: absent `wi_status` means the non-terminal
+/// statuses, absent `archived` means unarchived, and `omitted` reports both.
 #[derive(Debug, Clone, Deserialize, JsonSchema, Default)]
 pub struct ListWorkItems {
     /// Project name to filter by
     #[serde(default)]
     pub project: Option<String>,
+    /// Which rows. Omit for everything not terminal (`open`, `resolved`,
+    /// `done`); `"all"` to include `closed` too; one status for exactly that.
+    #[serde(default)]
+    #[schemars(schema_with = "schema::wi_status_filter")]
+    pub wi_status: Option<String>,
     #[serde(default = "archived_default")]
     #[schemars(schema_with = "schema::archived_filter")]
     pub archived: ArchivedFilter,
@@ -412,34 +429,29 @@ pub struct ListWorkItems {
     pub offset: Option<i64>,
 }
 
-impl From<ListWorkItems> for repo::WorkItemQuery {
-    fn from(a: ListWorkItems) -> Self {
-        Self {
-            project: a.project,
-            archived: a.archived,
-            page: PageQuery {
-                limit: a.limit,
-                offset: a.offset,
-            },
-        }
-    }
-}
-
-/// `survey_work_items` — the slim cross-project projection.
+/// `survey_work_items` — **deprecated** (WI #861), kept for one window as an
+/// alias of `list_work_items`, which now returns exactly what the survey did
+/// plus the terminal-status default.
+///
+/// It exists as a separate argument type only to keep its own paging defaults
+/// (limit 50, not 200), so a shipped consumer that walks it by offset — the
+/// `refill-queue` skill does — pages exactly as it did before. Delete this
+/// together with the tool once agent-skills #864 lands.
 ///
 /// Its `archived` default used to differ from every other list read, and the
 /// doc comment here called that deliberate. It was the bug (#851): the server
 /// `instructions` say every read excludes archived rows, an agent cannot check
 /// that, and the tool the instructions *recommend* for sizing a backlog was the
-/// one silently over-counting. It now takes the same `ArchivedFilter` as its
-/// siblings, and the response carries `omitted` so the narrowed count says so.
+/// one silently over-counting.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct SurveyWorkItems {
     /// Project name to filter by
     #[serde(default)]
     pub project: Option<String>,
-    /// Status to filter by, e.g. "open"
+    /// Which rows. Omit for everything not terminal (`open`, `resolved`,
+    /// `done`); `"all"` to include `closed` too; one status for exactly that.
     #[serde(default)]
+    #[schemars(schema_with = "schema::wi_status_filter")]
     pub wi_status: Option<String>,
     #[serde(default = "archived_default")]
     #[schemars(schema_with = "schema::archived_filter")]
@@ -450,6 +462,18 @@ pub struct SurveyWorkItems {
     #[serde(default)]
     #[schemars(schema_with = "schema::survey_offset")]
     pub offset: i64,
+}
+
+impl From<SurveyWorkItems> for ListWorkItems {
+    fn from(a: SurveyWorkItems) -> Self {
+        Self {
+            project: a.project,
+            wi_status: a.wi_status,
+            archived: a.archived,
+            limit: Some(a.limit),
+            offset: Some(a.offset),
+        }
+    }
 }
 
 /// `list_cards`.

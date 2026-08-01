@@ -34,11 +34,16 @@ enumerates the tools a third time. All three are drift-tested against
 | Handoffs | `create_handoff`, `get_handoff`, `update_handoff` |
 | Projects and areas | `list_projects`, `get_project`, `create_project`, `update_project`, `list_areas`, `create_area` |
 
-Two tools are not what their names suggest:
+Three tools are not what their names suggest:
 
 - `mark_link_read` is **deprecated** — `update_link` sets the read flag,
   disposition and tags in one transaction, which is what an agent recording a
   decision about a captured URL actually wants.
+- `survey_work_items` is **deprecated** (WI #861) — `list_work_items` is the
+  lean read now and returns exactly what the survey did, plus a status filter.
+  The name stays registered for one deprecation window, dispatching to the same
+  core read, so the skills that call it keep working; it differs only in paging
+  defaults (limit 50 rather than 200). It goes when agent-skills #864 lands.
 - `create_report` upserts: a re-run for the same `(source, date)` replaces the
   previous run's `finding` edges transactionally rather than accumulating them
   (D-7).
@@ -146,8 +151,8 @@ the same envelope", which was true of four of them:
 | bare array | `list_reports`, `list_areas`, `list_comments`, `list_daily_plan` |
 | `{items, omitted}` | `list_proposals`, `list_projects` |
 
-(`omitted` counts the rows a read's own defaults hid. `survey_work_items`
-carries it *in addition to* the paginated envelope.)
+(`omitted` counts the rows a read's own defaults hid. `list_work_items` and
+`survey_work_items` carry it *in addition to* the paginated envelope.)
 
 The bare-array reads are the ones with no natural paging story — a project has a
 handful of areas, a node has a handful of comments, a day has a handful of plan
@@ -158,10 +163,10 @@ not paging: both **filter rows by default** (WI #828, WI #852), so a bare array
 would be a narrowed view indistinguishable from a complete one. `omitted` is what
 stops an agent concluding "there is no such project" from "you did not ask for
 archived ones" — the same silent-truncation failure the four-shape table exists
-to make visible. `survey_work_items` carries `omitted` on top of its paginated
-envelope for exactly the same reason (WI #851): `total` is the count *after*
-filtering, so a sweep used to decide "is this project drained?" needs to see what
-the filter hid.
+to make visible. `list_work_items` and `survey_work_items` carry `omitted` on top
+of their paginated envelope for exactly the same reason (WI #851, WI #861):
+`total` is the count *after* filtering, so a sweep used to decide "is this
+project drained?" needs to see what the filter hid.
 
 Note the **MCP shape is the one tabled here**, and REST can differ where the web
 app's needs do: `GET /api/projects` and `GET /api/proposals` still return the
@@ -206,7 +211,7 @@ everything and sifting:
 
 | Operation | Filters | Ordering |
 |---|---|---|
-| `list_work_items` | `project` (name), `archived` | `wi_number` |
+| `list_work_items` | `project` (name), `wi_status` (+ `"all"`), `archived` | `wi_number` |
 | `list_cards` | `status`, `project`, `archived` | `status`, `rank`, `node_id` |
 | `list_links` | `disposition`, `read`, `archived` | `node_id` |
 | `list_topics` | `q` (name/description), `archived` | `name`, `node_id` |
@@ -216,9 +221,40 @@ everything and sifting:
 Every ordering carries an id tie-breaker, so equal ranks no longer shuffle
 between calls.
 
-`survey_work_items` remains the cross-project sweep: same envelope, no
-`content`/`details`. Reach for `list_work_items` when you want one project's
-items in full, and the survey when you want many projects' shape (D-10).
+### The work-item list is lean and terminal-excluded (WI #861)
+
+`list_work_items` used to return full `content`+`details` for every row —
+~890k characters across the corpus, of which 78% were `closed` items. Over MCP
+it is now the slim projection (`wi_number`, `node_id`, `project`, `title`,
+`wi_type`, `wi_status`, `wi_tshirt`, `comment_count`) and it narrows twice:
+
+| `wi_status` | rows returned |
+|---|---|
+| omitted | `open` + `resolved` + `done` — everything not terminal |
+| `"all"` | every status |
+| one of the four | exactly that status |
+
+`resolved` and `done` stay visible deliberately: `done`'s visibility is a
+promise `update_work_item`'s own schema makes, and `resolved` is the
+implemented-but-Ken-may-still-want-to-see state. `closed` is the terminal one,
+and hiding it is what finally makes that schema's "hidden by default" sentence
+true — nothing on the MCP surface hid anything before this.
+
+`omitted` is `{closed, archived}`, a cascade like `list_proposals`': `archived`
+counts what the archived filter hid, `closed` is counted only over rows that
+passed it, so no row lands in both. A field is `0` when you asked to see that
+class.
+
+There is **no `detail` flag**, unlike `list_proposals`. A proposal's full row is
+one field of prose, so `full` had to keep something reachable; a work item's full
+row is `content`+`details` across hundreds of rows, which is the payload problem
+itself. The full tier is `get_work_item`, one row at a time, and it already
+inlines comments and edges.
+
+`survey_work_items` is the same read under its old name for one deprecation
+window (see the catalogue note above). REST keeps the full rows at
+`GET /api/work-items` — the Work Items page walks that read to completion and
+then searches `content` and tickers `details` in memory.
 
 ### The proposal queue narrows by default (WI #852)
 
@@ -238,6 +274,32 @@ twice, and reports both:
 became unreachable; it just stopped being the default. `get_proposal` is still
 the authoritative single-proposal read, and it carries the covered work items
 too, which is what a caller wants immediately after picking one.
+
+### A proposal's summary is a routing contract; `notes` holds the analysis (WI #860)
+
+Proposals are written as plans, so `summary` had become the longest prose in
+korg: 189,471 characters across 119 rows, p90 of the `proposed` queue at 5,389.
+Migration 0021 applies the shape 0020 gave projects, one tier up in size:
+
+| Field | Bound | Returned by |
+|---|---|---|
+| `summary` | **≤500 chars**, CHECK-enforced | every read that returns a proposal at all |
+| `notes` | unbounded | `get_proposal`, `list_proposals detail:"full"`, REST |
+
+`summary` answers *should I pick this?* — what the bundle is, why now, roughly
+how big. `notes` answers everything after that: measurements, dependencies,
+sequencing, what was considered and rejected.
+
+Over-length is `invalid_input` naming the cap and the remedy, **never** a
+truncation — checked in `korg-core` so the caller gets a typed error rather than
+a raw constraint violation. The same rule as `project.description` (#828), and
+the same reason: a silently-trimmed contract is one nobody wrote.
+
+The migration **moved** every over-cap summary into `notes` verbatim and derived
+the new one from its first paragraph, marked ` […]` where anything was dropped.
+Nothing was lost, and nothing was invented: see
+`crates/korg-core/migrations/0021_proposal_notes_and_routing_summary.sql`, whose
+postcondition refuses to apply if a marked summary has no `notes` beside it.
 
 `omitted` is `{done, declined, archived}`, computed as a cascade — `archived`
 counts what the archived filter hid, and the two terminal counts are taken only

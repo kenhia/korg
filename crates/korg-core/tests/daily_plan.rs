@@ -177,6 +177,7 @@ async fn planning_snapshots_orders_duplicates_and_validates_sources() {
             tags: vec![],
             title: "Proposal source".into(),
             summary: "s".into(),
+            notes: None,
             rank: Decimal::ZERO,
             pinned: false,
             covers: vec![],

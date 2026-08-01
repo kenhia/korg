@@ -18,6 +18,20 @@ use crate::error::RepoError;
 /// `→ closed` (Ken only; hidden by default).
 pub const WI_STATUSES: [&str; 4] = ["open", "resolved", "done", "closed"];
 
+/// The work items a list read means by default (WI #861), i.e. everything that
+/// is not terminal. The program plan's §8 answer 1 decided the split: `closed`
+/// is 78% of the corpus and is Ken's own "I am finished with this" marker;
+/// `resolved` and `done` stay visible, because `done`'s visibility is already a
+/// promise `update_work_item`'s schema makes ("terminal but visible in default
+/// lists") and `resolved` is the may-still-want-to-see state.
+pub const WI_LIVE_STATUSES: [&str; 3] = ["open", "resolved", "done"];
+
+/// The complement of [`WI_LIVE_STATUSES`] — excluded from a lean
+/// `list_work_items` unless asked for, and counted in its `omitted`. Kept beside
+/// the full vocabulary so a fifth status cannot be added without deciding which
+/// side it falls on; `wi_statuses_partition_cleanly` fences that.
+pub const WI_TERMINAL_STATUSES: [&str; 1] = ["closed"];
+
 /// Work-item types (D-2). `brainstorm` is deliberate: half-formed ideas get
 /// filed as work items rather than lost.
 pub const WI_TYPES: [&str; 7] = [
@@ -139,7 +153,10 @@ pub fn validate(value: &str, allowed: &[&str], what: &str) -> Result<(), RepoErr
 /// `ts-rs` uses.
 #[cfg(test)]
 mod partition {
-    use super::{PROPOSAL_LIVE_STATUSES, PROPOSAL_STATUSES, PROPOSAL_TERMINAL_STATUSES};
+    use super::{
+        PROPOSAL_LIVE_STATUSES, PROPOSAL_STATUSES, PROPOSAL_TERMINAL_STATUSES, WI_LIVE_STATUSES,
+        WI_STATUSES, WI_TERMINAL_STATUSES,
+    };
     use std::collections::BTreeSet;
 
     /// A lean `list_proposals` shows the live statuses and counts the terminal
@@ -161,6 +178,28 @@ mod partition {
             live.union(&terminal).copied().collect::<BTreeSet<&str>>(),
             "every proposal status must be classified live or terminal — \
              list_proposals' default and its `omitted` counts both depend on it"
+        );
+    }
+
+    /// The same fence for work items (WI #861), and it matters more here: a
+    /// fifth work-item status in neither half would drop out of the default
+    /// `list_work_items` **and** out of `omitted.closed`, which is precisely the
+    /// silent under-count the envelope exists to prevent.
+    #[test]
+    fn wi_statuses_partition_cleanly() {
+        let all: BTreeSet<&str> = WI_STATUSES.into_iter().collect();
+        let live: BTreeSet<&str> = WI_LIVE_STATUSES.into_iter().collect();
+        let terminal: BTreeSet<&str> = WI_TERMINAL_STATUSES.into_iter().collect();
+        assert!(
+            live.is_disjoint(&terminal),
+            "a work-item status is both live and terminal: {:?}",
+            live.intersection(&terminal).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            all,
+            live.union(&terminal).copied().collect::<BTreeSet<&str>>(),
+            "every work-item status must be classified live or terminal — \
+             list_work_items' default and its `omitted` counts both depend on it"
         );
     }
 }
