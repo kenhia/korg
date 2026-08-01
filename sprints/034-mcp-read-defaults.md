@@ -167,6 +167,59 @@ against a fixture with one of each status plus an archived one.
 
 `just check` green: fmt, gen-check, web checks, clippy `-D warnings`, full suite.
 
+## Deployed 2026-08-01
+
+- PR **#38**, squash-merged as `58afde4`. Image `korg:58afde4af036`
+  (`org.opencontainers.image.revision` confirmed on the running container).
+  Rollback target: `korg:c5f756f3d90a`.
+- `post-deploy-check.sh --compare`: every count identical to the pre-deploy
+  baseline (`node_count` 782, `node_max` 869, work items 597, proposals 119,
+  migrations 20 → 20). **No schema migration in this deploy** — the whole sprint
+  is MCP surface.
+- Backups current at deploy time: `korg-20260801-032006.sql.gz` (685 KB, larger
+  than the prior night's 589 KB), timer active.
+
+### Verified live, against production data
+
+**#851** — `survey_work_items { project: "klams" }`, the WI's own measurement,
+re-run on the deployed instance (the corpus has grown since it was filed, so the
+numbers are 109/108 rather than 105/104 — the *relationship* is the fix):
+
+| call | `total` | `omitted.archived` |
+|---|---|---|
+| `archived` omitted | **108** | 1 |
+| `archived: false` | 108 | 1 |
+| `archived: null` | 109 | 0 |
+| `archived: true` | 1 | 0 |
+| `list_work_items` (for reference) | 108 | — |
+
+Omitting the filter now agrees with `archived:false` and with `list_work_items`,
+which is exactly the disagreement #851 was. `omitted.archived` accounts for the
+one row the default hides, and is 0 under both settings that hide nothing.
+
+**#852** — `list_proposals` payload, same instance:
+
+| call | bytes |
+|---|---|
+| default (lean, live queue) | **4,001** |
+| `status:"all"` (lean) | 21,781 |
+| `status:"all", detail:"full", archived:null` | **234,580** |
+
+The default call is **~59× smaller** than the equivalent old read — bigger than
+the ~46k-token figure #852 measured, because the corpus grew in the meantime.
+20 live rows returned; `omitted` was `{done: 91, declined: 3, archived: 5}`, and
+20 + 91 + 3 + 5 = 119 = the count `GET /api/proposals` still returns, so the
+cascade adds up with nothing double-counted or lost.
+
+Also confirmed live: the lean row's key set is exactly D-4's list; `detail:"full"`
+restores `summary`; the advertised schemas carry `archived.default: false` on both
+tools, `detail: ["lean","full"]`, and `status` with `"all"`; the `initialize`
+instructions no longer contain "All exclude archived rows unless you ask for
+them" and do name the no-archived-filter class; `/plan` returns 200; REST
+`/api/proposals` still returns its 119-element bare array; and
+`GET /api/work-items/survey?archived=all` now answers 200 where it used to be a
+400.
+
 ## Follow-ups
 
 - #861 (rank 4.3) retires `survey_work_items` in favour of a lean
