@@ -221,6 +221,50 @@ frozen-past spec fails when its pinned clock is moved to Monday 2026-01-05 and
 passes on Wednesday the 7th, which is what shows the pin is carrying it; and the
 drag failure was read off a Playwright trace naming the wrong plan item.
 
+## Deployed 2026-08-01
+
+- PR **#39**, squash-merged as `a81bfd8`. Image `korg:a81bfd8ba179`
+  (`org.opencontainers.image.revision` confirmed on the running container).
+  Rollback target: `korg:58afde4af036`.
+- `post-deploy-check.sh --compare`: every count identical to the pre-deploy
+  baseline (work items 597, cards 29, links 4, proposals 119, reports 23,
+  projects 36; `node_count` 782, `node_max` 869). **No schema migration in this
+  deploy** — 20 → 20; the whole sprint is web assets.
+- Backups current at deploy time: `korg-20260801-032006.sql.gz` (685 KB, larger
+  than the prior night's 589 KB), timer active.
+
+### Verified live, against production data
+
+The bug's precondition is live on the deployed corpus: `GET
+/api/work-items?archived=all&limit=500` returns **500 of 597**, topping out at
+**#733**, while `offset=500` holds **97 more** rows up to **#869**. Those 97 are
+what the All-projects view used to drop.
+
+Driven read-only through the deployed UI (no writes to production):
+
+| | |
+|---|---|
+| requests the page issued | `offset=0` **and** `offset=500` — the walk pages |
+| footer | **133 items**, no truncation clause |
+| rows rendered | 133 |
+| `#861` visible | yes — `wi_number` > 733, so past row 500 of the ascending order |
+
+133 is exactly the non-closed, non-archived count computed independently from
+the API, so the footer's number now describes the whole collection rather than
+the filtered remains of an arbitrary first page. Before this deploy the same
+view held 500 rows ending at #733 and reported "N items" regardless.
+
+`/plan` and `/work-items` both return 200.
+
+Two dead ends worth recording, because both looked like production faults and
+neither was. Asserting on `#869` proves nothing — it is a **klams** item, so it
+is present in the sticky per-project view the page opens on. And waiting for the
+Project column header is not a "load finished" signal: `pick()` sets
+`current = ALL` synchronously, so the column appears while the previous
+project's rows are still on screen. Both made the page look like it was serving
+one capped read. The honest signal is a row that can only exist if the second
+page was fetched.
+
 ## Follow-ups
 
 - **`api.cards()`, `api.links()` and `api.topics()` have the same silent cap.**
