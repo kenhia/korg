@@ -86,7 +86,8 @@ Open korg WIs: 16. Live korg proposals: 817, 818, 822, 825.
 
 ## 4. Sequence
 
-**Step 0 — retire Phoenix, adopt kprojects.** Ken's call, and better motivated than tidiness: **korg has no `CLAUDE.md` and no `.github/copilot-instructions.md` at all.** We are about to run several agent sprints in this repo. `.phoenix/` is 196K of dead `trace.jsonl` + snapshots, referenced only by `.gitignore` and `.dockerignore`. Delete it, strip the two references, run `/kproject-init` to inject the managed harness block into both instruction files. Also commit the pending `.gitignore` change (`.scratch/`) or drop it deliberately. One small PR, and it makes every later session in this program cheaper.
+**Step 0 — retire Phoenix, adopt kprojects.** *(Also commits the `.gitignore` line
+that §7's overseer protocol depends on — see the prerequisite note there.)* Ken's call, and better motivated than tidiness: **korg has no `CLAUDE.md` and no `.github/copilot-instructions.md` at all.** We are about to run several agent sprints in this repo. `.phoenix/` is 196K of dead `trace.jsonl` + snapshots, referenced only by `.gitignore` and `.dockerignore`. Delete it, strip the two references, run `/kproject-init` to inject the managed harness block into both instruction files. Also commit the pending `.gitignore` change (`.scratch/`) or drop it deliberately. One small PR, and it makes every later session in this program cheaper.
 
 **Then, ranked. This is the recommendation; the starter session may reorder with reason.**
 
@@ -132,25 +133,52 @@ and the division below is not optional.**
 
 | | Overseer | Worker |
 |---|---|---|
-| Git working tree | **never writes** — no branch, no commit, no stash | **owns it exclusively** |
-| Repo files | reads freely | writes |
+| Git branch / commit / stash | **never** | **owns it exclusively** |
+| Source, tests, web, migrations | reads freely, **never writes** | writes |
+| **`.scratch/overseer/`** | **writes freely** — its own scratch space | leaves it alone |
+| **`sprints/review/`** | **writes freely** — its checked-in output | commits it (see below) |
 | `cargo` / `just check` | **does not run them** — a second build blocks on the same `target/` lock and stalls both panes | runs them |
 | korg MCP (WIs, proposals, comments) | **primary author** | updates only the WIs its own sprint covers |
 | This plan file | **decides** what should change | **makes and commits** the change, in its sprint PR |
 | Deploys to kubsdb | never | only via `sprint-ship` Phase 7 |
 
-**The rule that prevents the collision:** the overseer's output is **korg data and
-instructions**, never a commit. When the overseer wants this plan updated, it says so
-and the worker lands it in the current sprint's PR. An overseer editing files in a
-tree the worker has mid-branch is how you get a sprint PR carrying changes nobody
-meant to ship.
+**The rule that prevents the collision:** the overseer's output is **korg data,
+instructions, and files under those two paths** — never a commit. An overseer editing
+source in a tree the worker has mid-branch is how you get a sprint PR carrying changes
+nobody meant to ship.
 
-**Before starting a worker sprint, the tree must be clean and on `main`.** If it
-isn't, the previous sprint didn't finish — resolve that first rather than branching
-over it.
+### The two overseer write paths
 
-Reads never conflict, so the overseer should read code freely. It is only writes —
-git, files, and builds — that are exclusive.
+**`.scratch/overseer/`** — anything transient: things Ken may want to copy out, notes,
+intermediate output. It must never reach a commit.
+
+> **Prerequisite: `.scratch/` must be gitignored, and today it is not.** korg's
+> `.gitignore` carries an **uncommitted** line adding it. Until that is committed,
+> anything the overseer writes there shows up as untracked in the worker's tree.
+> **Step 0 must commit that line, not drop it** — this protocol depends on it.
+
+**`sprints/review/`** — checked-in output: reviews, findings, anything with a reader
+after this program ends. The overseer writes the file; **committing it happens one of
+two ways**, and both are safe:
+
+- The **worker** adds it explicitly in its next sprint PR, or
+- The **overseer** commits *only that path* — but **only when the tree is clean and on
+  `main`**, i.e. no sprint is in flight. One working tree means one branch, so the
+  overseer cannot have its own branch while the worker holds one.
+
+### The rule that makes all of this safe
+
+**Workers must never `git add -A`, `git add .`, or `git commit -a`. Add explicit
+paths.** Every collision above degenerates to this one: a blanket add sweeps whatever
+the other pane happened to be writing into a sprint PR. Explicit paths make the two
+panes independent even when they write simultaneously.
+
+**Before starting a worker sprint, the tree must be clean and on `main`** — modulo the
+overseer's two paths, which are expected to be dirty or ignored. If source files are
+dirty, the previous sprint didn't finish; resolve that rather than branching over it.
+
+Reads never conflict, so the overseer should read code freely. It is only writes to
+**shared** paths — source, git state, and builds — that are exclusive.
 
 ## 8. Open questions for the starter session
 
