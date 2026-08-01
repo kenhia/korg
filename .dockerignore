@@ -6,4 +6,3 @@ web/.svelte-kit/
 node_modules/
 .git/
 snapshots/
-.phoenix/
