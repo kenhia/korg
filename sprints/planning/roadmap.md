@@ -6,25 +6,23 @@
 
 ## Now
 
-- **Agent-surface program** — make the MCP surface cheap to read and honest
-  about what it returns. Step 0 (this harness) done; next is "stop the
-  bleeding": #852 (`list_proposals` unbounded) + #851 (`survey_work_items`
-  archived default).
+- **Agent-surface program, endgame** — ranks 4.1–4.4 shipped and deployed
+  (sprints 034–036 + the agent-skills consumer sweep; the global CLAUDE.md
+  korg block is empty on the fleet). Remaining: #871 (delete the
+  `survey_work_items` alias, XS, un-gated), then 868 — the fresh-session
+  re-review that is the program's exit gate.
 
 ## Next
 
-- Proposal 817 — e2e coverage against a real database ("fix the instrument").
-- The collection read contract: proposal object shape (`summary` → short
-  contract + overflow field, with migration) and work-item read tiering.
-- Consumers: the korg block in the global `CLAUDE.md` shrinks to empty as the
-  traps get fixed at source.
-- Re-review with a fresh session — measure, don't reason from schemas.
+- 825 — row-contract markers (`has_handoff`, in-proposal, has-details); also
+  what lets `/api/work-items` go lean (036 D-8).
+- #846 — the korg-side `cancel-in-progress` scoping (one line; the skill half
+  is verified live).
+- Staleness work from 816 §6: #862 `docs_drift` extensions, agent-skills #863
+  `start-sprint` premise check.
 
 ## Later / Ideas
 
-- #846 — CI cancels the merge commit's run (XS).
 - #855 — true-delete decision for `Agent-Plan`/`feedhub`/`loglens`.
-- Staleness work from 816 §6: `docs_drift` extensions, `start-sprint`
-  premise check.
 - #842 — production DB credential lives only in the running container
   (security; belongs to infra triage, not this program).

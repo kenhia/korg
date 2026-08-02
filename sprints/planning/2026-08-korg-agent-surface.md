@@ -260,3 +260,25 @@ in the covered WIs).
   korg's one-line `cancel-in-progress` scoping (still unscoped, ci.yml:47).
 - **#842 flagged for infra triage** by comment (§6 boundary holds; not folded
   into any surface sprint).
+
+## 10. Ranks 4.1–4.4 landed — 2026-08-01/02
+
+- korg sprints **034** (865: #851+#852), **035** (817: #762/#701/#812), **036**
+  (866: #860+#861, migration 0021 — 96 summaries moved to `notes`, every
+  character verified preserved) each shipped and deployed to kubsdb same-day.
+  865/866 `done`; all six covered WIs `closed`.
+- **867** (agent-skills #864) merged as `b322715`: the `## korg` CLAUDE.md
+  section deleted **whole**, start-sprint/refill-queue/plan-status reworked
+  against the new reads. plan-status's fallback was a live defect — the lean
+  default hid 26 of homelab-ai's 31 items from the frontier computation.
+  Record: `agent-skills/docs/2026-08-01-korg-consumers-sweep.md` (kubs0).
+- **Fleet deploy 2026-08-02** (overseer, via k-homelab routing): the three
+  skills md5-identical to the repo on kai/kubs0/cleo; the composed CLAUDE.md on
+  all three hosts carries no `## korg` section. **§5's block exit signal is
+  live on the fleet**, pending 868's independent confirmation.
+- **korg #871** filed (delete the `survey_work_items` deprecated alias — 036
+  D-7's follow-up, which had no WI) and un-gated by the deploy. Recommended
+  before 868 so the re-review sees the end-state surface.
+- **Next: 868** (rank 4.5) — fresh session, not one that built any of this.
+  Remaining opportunistic: #846 (korg half only), #855, #862, #863; 825 carries
+  the row-contract markers (036 D-8).
