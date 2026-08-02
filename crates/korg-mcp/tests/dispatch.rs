@@ -163,7 +163,6 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
             json!({"title": "created by the dispatch fence", "content": ""}),
         ),
         ("list_work_items", json!({})),
-        ("survey_work_items", json!({})),
         ("get_work_item", json!({"wi_number": wi.wi_number})),
         (
             "update_work_item",
@@ -418,9 +417,10 @@ async fn collection_reads_return_the_shape_the_instructions_promise() {
     // concluded from "you didn't ask for archived ones".
     let filtered = named_in_instructions("the filtered ones");
 
-    // `list_*` plus the survey are exactly the collection reads the instructions
-    // summarise. `neighbors` and `daily_plan_history` carry their own shapes and
-    // are named in docs/api.md's four-shape table instead.
+    // The `list_*` tools are exactly the collection reads the instructions
+    // summarise, now that the `survey_work_items` alias is gone (#871).
+    // `neighbors` and `daily_plan_history` carry their own shapes and are named
+    // in docs/api.md's four-shape table instead.
     let classified: BTreeSet<&str> = paginated
         .iter()
         .chain(bare.iter())
@@ -430,7 +430,7 @@ async fn collection_reads_return_the_shape_the_instructions_promise() {
     let advertised: BTreeSet<String> = korg_mcp::tools::tools()
         .iter()
         .map(|t| t.name.to_string())
-        .filter(|n| n.starts_with("list_") || n == "survey_work_items")
+        .filter(|n| n.starts_with("list_"))
         .collect();
     let unclassified: Vec<&String> = advertised
         .iter()
@@ -468,11 +468,9 @@ async fn collection_reads_return_the_shape_the_instructions_promise() {
             has_envelope,
             "`{name}` is documented as paginated but returned {value}"
         );
-        // The two work-item reads are the paginated ones that ALSO narrow by
+        // `list_work_items` is the paginated read that ALSO narrows by
         // default (#851, #861), and the instructions say so in as many words.
-        // Both spellings are the same read since #861 — asserting on each name
-        // is what would catch the alias being wired to something else.
-        if name == "list_work_items" || name == "survey_work_items" {
+        if name == "list_work_items" {
             let omitted = value.get("omitted");
             assert!(
                 omitted.is_some_and(|o| o.get("closed").is_some() && o.get("archived").is_some()),

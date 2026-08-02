@@ -6,11 +6,14 @@
 
 ## Now
 
-- **Agent-surface program, endgame** — ranks 4.1–4.4 shipped and deployed
-  (sprints 034–036 + the agent-skills consumer sweep; the global CLAUDE.md
-  korg block is empty on the fleet). Remaining: #871 (delete the
-  `survey_work_items` alias, XS, un-gated), then 868 — the fresh-session
-  re-review that is the program's exit gate.
+- **Agent-surface program, endgame** — ranks 4.1–4.6 shipped (sprints 034–038
+  + the agent-skills consumer sweep; the global CLAUDE.md korg block is empty
+  on the fleet). 868's re-review (037) failed the works-as-documented
+  measurement with seven behaviour gaps; 038 closed six of them plus #871's
+  alias deletion, and refuted the seventh (#886 — the probe read a UTC clock,
+  not a broken freeze). Remaining: deploy 038, then **re-run plan §5's exit
+  measurements** — the findings-all-works-as-documented half is what a rerun
+  now has a chance of passing.
 
 ## Next
 

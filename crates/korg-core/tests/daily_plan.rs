@@ -376,17 +376,23 @@ async fn history_includes_all_filters_and_rejects_today() {
     .await
     .unwrap();
     assert_eq!(filtered.total, 1);
-    assert!(history(
+    // The refusal names the boundary date since WI #886 — a caller on a
+    // different clock cannot otherwise tell which "today" it disagreed with.
+    let not_past = history(
         &pool,
         date!(2026 - 07 - 09),
         date!(2026 - 07 - 11),
         None,
-        &ctx()
+        &ctx(),
     )
     .await
     .unwrap_err()
-    .to_string()
-    .contains("before today"));
+    .to_string();
+    assert!(
+        not_past.contains("before the server's local today"),
+        "{not_past}"
+    );
+    assert!(not_past.contains("2026-07-11"), "{not_past}");
     assert!(history(
         &pool,
         date!(2026 - 07 - 10),

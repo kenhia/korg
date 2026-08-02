@@ -161,57 +161,7 @@
     "name": "list_work_items"
   },
   {
-    "description": "DEPRECATED -- use list_work_items, which returns exactly this and narrows by status as well. Kept for one deprecation window as an alias so existing callers keep working; it dispatches to the same read and differs only in paging defaults (limit 50). Slim, paginated work-item listing as {items, total, limit, offset, omitted}.",
-    "inputSchema": {
-      "additionalProperties": false,
-      "properties": {
-        "archived": {
-          "default": false,
-          "description": "Omit for unarchived only (the default); true for archived only; null for both.",
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
-        "limit": {
-          "default": 50,
-          "maximum": 500,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "offset": {
-          "default": 0,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "project": {
-          "description": "Project name to filter by",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "wi_status": {
-          "description": "Which rows. Omit for everything not terminal (`open`, `resolved`,\n`done`); `\"all\"` to include `closed` too; one status for exactly that.",
-          "enum": [
-            "open",
-            "resolved",
-            "done",
-            "closed",
-            "all"
-          ],
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "type": "object"
-    },
-    "name": "survey_work_items"
-  },
-  {
-    "description": "Fetch a single work item by its wi_number (isError with code `not_found` if there is none), with its comments inlined (up to 10; `comments_truncated:true` + `comment_count` signal a longer thread — page the tail via list_comments). Comments often hold the real payload (resolution rationale, decisions), so prefer this over list_work_items when you need the full state of one item.",
+    "description": "Fetch a single work item by its wi_number (isError with code `not_found` if there is none), with its comments inlined (up to 10; `comments_truncated:true` + `comment_count` signal a longer thread — fetch the whole thread with list_comments, which returns every comment in one unpaginated array). Comments often hold the real payload (resolution rationale, decisions), so prefer this over list_work_items when you need the full state of one item.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1097,7 +1047,7 @@
     "name": "list_daily_plan"
   },
   {
-    "description": "Plan a work item, card, topic, or sprint proposal. Display is resolved and snapshotted server-side. Returns the created item.",
+    "description": "Plan a work item, card, topic, or sprint proposal. Display is resolved and snapshotted server-side. Returns the created item. `plan_date` must be the server's local today or later -- that date is derived from the server's configured timezone, NOT from your clock, and a refusal names it.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1140,7 +1090,7 @@
     "name": "set_daily_plan_completion"
   },
   {
-    "description": "Delete an item from an open day; past structure is frozen. Returns {deleted: true}.",
+    "description": "Delete an item from an open day; past structure is frozen -- a day before the server's local today is a sealed record and is refused with conflict, naming that date. Returns {deleted: true}.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1157,7 +1107,7 @@
     "name": "delete_daily_plan_item"
   },
   {
-    "description": "Replace the complete order for an open day. Returns the day in its new order.",
+    "description": "Replace the complete order for an open day -- the server's local today or later; a past day is frozen (conflict, naming the date). Returns the day in its new order.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1182,7 +1132,7 @@
     "name": "reorder_daily_plan"
   },
   {
-    "description": "Move an item to today/future. Open sources transfer; past sources copy and remain unchanged.",
+    "description": "Move an item to the server's local today or a future day (a past target is refused, naming that date). Open sources transfer; past sources copy and remain unchanged.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1209,7 +1159,7 @@
     "name": "move_daily_plan_item"
   },
   {
-    "description": "Return all complete and incomplete historical items plus completion totals/rate. End must be before local today.",
+    "description": "Return all complete and incomplete historical items plus completion totals/rate. End must be before the server's local today, which is derived from its configured timezone rather than your clock; a refusal names that date.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

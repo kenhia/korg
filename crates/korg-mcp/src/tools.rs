@@ -182,8 +182,7 @@ pub fn tools() -> Vec<Tool> {
     vec![
         tool::<NewWorkItem>("create_work_item", "Create a work item. Returns the created row (including node_id and the serial wi_number, which are the same number since the 0009 identity migration)."),
         tool::<ops::ListWorkItems>("list_work_items", "The work-item list: lean rows (wi_number, node_id, project, title, wi_type, wi_status, wi_tshirt, comment_count -- no content/details), ordered by wi_number, as {items, total, limit, offset, omitted}. `omitted` is {closed, archived} -- the rows the defaults hid, so a narrowed list can never be mistaken for the whole corpus. Defaults: everything not terminal (`open`, `resolved`, `done`) and unarchived. Pass wi_status:\"all\" (or one status, including \"closed\") for the rest, `project` (name) to scope to one project. There is no detail flag: reading one item in full is get_work_item, which also inlines its comments and edges."),
-        tool::<ops::SurveyWorkItems>("survey_work_items", "DEPRECATED -- use list_work_items, which returns exactly this and narrows by status as well. Kept for one deprecation window as an alias so existing callers keep working; it dispatches to the same read and differs only in paging defaults (limit 50). Slim, paginated work-item listing as {items, total, limit, offset, omitted}."),
-        tool::<ops::WiNumber>("get_work_item", "Fetch a single work item by its wi_number (isError with code `not_found` if there is none), with its comments inlined (up to 10; `comments_truncated:true` + `comment_count` signal a longer thread — page the tail via list_comments). Comments often hold the real payload (resolution rationale, decisions), so prefer this over list_work_items when you need the full state of one item."),
+        tool::<ops::WiNumber>("get_work_item", "Fetch a single work item by its wi_number (isError with code `not_found` if there is none), with its comments inlined (up to 10; `comments_truncated:true` + `comment_count` signal a longer thread — fetch the whole thread with list_comments, which returns every comment in one unpaginated array). Comments often hold the real payload (resolution rationale, decisions), so prefer this over list_work_items when you need the full state of one item."),
         tool2::<ops::WiNumber, WorkItemPatch>("update_work_item", "Partially update a work item by its wi_number; returns the updated row (isError with code `not_found` if the wi_number does not exist). Only the fields you pass are changed. Status lifecycle: open -> resolved (implemented; may still need a user test or PR) -> done (agent satisfied; terminal but visible in default lists) -> closed (reserved for Ken; hidden from list_work_items unless you pass wi_status \"closed\" or \"all\" -- do not set unless directed). For nullable fields (project_id, details, sprint, area_id, parent, category) pass null to clear or omit to leave unchanged. Moving projects (project_id) clears an area that no longer belongs to the target project unless you pass a valid area_id in the same call."),
         tool::<NewCard>("create_card", "Create a kanban card. Returns the created card row."),
         tool2::<ops::NodeId, CardPatch>("update_card", "Partially update a kanban card by its node_id; returns the updated card (isError with code `not_found` if that node is missing or is not a card). Projects are addressed by `project_id` here and over REST alike (get ids from list_projects) -- REST used to take a project *name* and silently create it. Only the fields you pass are changed (move status/rank, edit title/description, archive, reassign project). For nullable fields (project_id, category) pass null to clear or omit to leave unchanged."),
@@ -206,12 +205,12 @@ pub fn tools() -> Vec<Tool> {
         tool2::<ops::NodeId, topics::TopicPatch>("update_topic", "Partially update a topic; returns the updated topic."),
         tool2::<ops::NodeId, ops::ArchiveTopic>("archive_topic", "Archive or restore a topic; returns the updated topic."),
         tool::<ops::DateRange>("list_daily_plan", "List daily plan items in an inclusive date range with snapshots and current source titles."),
-        tool::<ops::CreateDailyPlanItem>("create_daily_plan_item", "Plan a work item, card, topic, or sprint proposal. Display is resolved and snapshotted server-side. Returns the created item."),
+        tool::<ops::CreateDailyPlanItem>("create_daily_plan_item", "Plan a work item, card, topic, or sprint proposal. Display is resolved and snapshotted server-side. Returns the created item. `plan_date` must be the server's local today or later -- that date is derived from the server's configured timezone, NOT from your clock, and a refusal names it."),
         tool2::<ops::NodeId, ops::SetCompletion>("set_daily_plan_completion", "Complete or uncomplete any daily plan item; timestamp is server-authoritative. Returns the updated item."),
-        tool::<ops::NodeId>("delete_daily_plan_item", "Delete an item from an open day; past structure is frozen. Returns {deleted: true}."),
-        tool2::<ReorderPlanDate, ops::ReorderDailyPlan>("reorder_daily_plan", "Replace the complete order for an open day. Returns the day in its new order."),
-        tool2::<ops::NodeId, ops::MoveDailyPlanItem>("move_daily_plan_item", "Move an item to today/future. Open sources transfer; past sources copy and remain unchanged."),
-        tool::<ops::HistoryRange>("daily_plan_history", "Return all complete and incomplete historical items plus completion totals/rate. End must be before local today."),
+        tool::<ops::NodeId>("delete_daily_plan_item", "Delete an item from an open day; past structure is frozen -- a day before the server's local today is a sealed record and is refused with conflict, naming that date. Returns {deleted: true}."),
+        tool2::<ReorderPlanDate, ops::ReorderDailyPlan>("reorder_daily_plan", "Replace the complete order for an open day -- the server's local today or later; a past day is frozen (conflict, naming the date). Returns the day in its new order."),
+        tool2::<ops::NodeId, ops::MoveDailyPlanItem>("move_daily_plan_item", "Move an item to the server's local today or a future day (a past target is refused, naming that date). Open sources transfer; past sources copy and remain unchanged."),
+        tool::<ops::HistoryRange>("daily_plan_history", "Return all complete and incomplete historical items plus completion totals/rate. End must be before the server's local today, which is derived from its configured timezone rather than your clock; a refusal names that date."),
         tool::<NewProposal>("propose_sprint", "Propose a sprint: bundle a title + summary with the work items it covers, in one call. `summary` is a routing contract capped at 500 characters -- what the bundle is, why now, roughly how big -- and the analysis goes in `notes`, which is unbounded; an over-long summary is invalid_input, not a truncation. Returns the created proposal plus `covered` -- which of the given wi_numbers actually resolved. Numbers that do not resolve are dropped, so compare `covered` against your request."),
         tool::<NewReport>("create_report", "Create or replace the daily report for (source, report_date). Same-day re-runs REPLACE both the content and the finding set -- findings you omit are unlinked -- but keep the node_id (links/comments survive). `findings_linked` echoes the wi_numbers that resolved; numbers that do not resolve are dropped, so compare it against your request."),
         tool::<ops::ListReports>("list_reports", "List daily reports, newest first (summary fields only). Pass `source` to filter."),
@@ -355,14 +354,8 @@ impl KorgServer {
                 let new: NewWorkItem = parse_args(args)?;
                 respond(repo::create_work_item(pool, new).await)
             }
-            // One read behind two names for the deprecation window (#861):
-            // `survey_work_items` differs only in the paging defaults its own
-            // argument struct carries.
-            "list_work_items" | "survey_work_items" => {
-                let a: ops::ListWorkItems = match name {
-                    "survey_work_items" => parse_args::<ops::SurveyWorkItems>(args)?.into(),
-                    _ => parse_args(args)?,
-                };
+            "list_work_items" => {
+                let a: ops::ListWorkItems = parse_args(args)?;
                 let (limit, offset) = repo::PageQuery {
                     limit: a.limit,
                     offset: a.offset,

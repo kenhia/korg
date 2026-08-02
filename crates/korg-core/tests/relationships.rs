@@ -351,6 +351,62 @@ async fn unknown_label_is_rejected_naming_the_vocabulary_and_near_miss() {
     );
 }
 
+/// WI #890 — the near-miss the promise was falsest about.
+///
+/// `relate`'s description promises invalid_input "naming the registry and the
+/// near-miss", but T3 probed `depends-on` — one character from `depends_on` —
+/// and got the same bare registry listing as a wild miss like `blocks`. Which
+/// separator a label uses is unguessable from outside a registry that spells one
+/// `depends_on` and another `related-to`, so this is the confusion the
+/// vocabulary invites by construction, and the one a suggestion is worth most
+/// on. Both directions, because either spelling can be the one you brought.
+#[tokio::test]
+async fn a_separator_near_miss_suggests_the_registered_spelling() {
+    let (_c, pool) = fresh_korg().await;
+    let a = create_work_item(&pool, wi("a")).await.unwrap();
+    let b = create_work_item(&pool, wi("b")).await.unwrap();
+
+    let message = |label: &'static str| {
+        let pool = &pool;
+        async move {
+            let err = relate(pool, a.node_id, b.node_id, label, None)
+                .await
+                .unwrap_err();
+            match err.downcast_ref::<RepoError>() {
+                Some(RepoError::InvalidInput(m)) => m.clone(),
+                other => panic!("expected invalid_input for `{label}`, got {other:?}"),
+            }
+        }
+    };
+
+    for (typo, real) in [
+        ("depends-on", "depends_on"),
+        ("DEPENDS-ON", "depends_on"),
+        ("related_to", "related-to"),
+        ("has-handoff", "has_handoff"),
+    ] {
+        let msg = message(typo).await;
+        assert!(
+            msg.contains(&format!("did you mean '{real}'")),
+            "`{typo}` should suggest `{real}`: {msg}"
+        );
+    }
+
+    // And the suggestion stays honest: a label that isn't a near-miss of
+    // anything gets the registry and no guess. A confidently wrong "did you
+    // mean" is the failure mode the project-name path refuses for the same
+    // reason.
+    let wild = message("blocks").await;
+    assert!(
+        !wild.contains("did you mean"),
+        "`blocks` is not a near-miss of anything registered: {wild}"
+    );
+    assert!(
+        wild.contains("covers, finding, depends_on, related-to"),
+        "but it still gets the whole vocabulary: {wild}"
+    );
+}
+
 /// D-12: a kind-constrained label validates both endpoints. `covers` demands a
 /// sprint_proposal on the left; a work item there is invalid_input naming the
 /// expected kind. (create_proposal writes covers by construction and never

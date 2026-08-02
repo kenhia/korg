@@ -22,7 +22,7 @@ enumerates the tools a third time. All three are drift-tested against
 
 | Category | Tools |
 |---|---|
-| Work items | `create_work_item`, `get_work_item`, `update_work_item`, `list_work_items`, `survey_work_items` |
+| Work items | `create_work_item`, `get_work_item`, `update_work_item`, `list_work_items` |
 | Cards | `create_card`, `update_card`, `list_cards` |
 | Comments | `add_comment`, `list_comments`, `update_comment`, `delete_comment` |
 | Reading-list links | `create_link`, `list_links`, `update_link`, `mark_link_read` |
@@ -34,19 +34,21 @@ enumerates the tools a third time. All three are drift-tested against
 | Handoffs | `create_handoff`, `get_handoff`, `update_handoff` |
 | Projects and areas | `list_projects`, `get_project`, `create_project`, `update_project`, `list_areas`, `create_area` |
 
-Three tools are not what their names suggest:
+Two tools are not what their names suggest:
 
 - `mark_link_read` is **deprecated** — `update_link` sets the read flag,
   disposition and tags in one transaction, which is what an agent recording a
   decision about a captured URL actually wants.
-- `survey_work_items` is **deprecated** (WI #861) — `list_work_items` is the
-  lean read now and returns exactly what the survey did, plus a status filter.
-  The name stays registered for one deprecation window, dispatching to the same
-  core read, so the skills that call it keep working; it differs only in paging
-  defaults (limit 50 rather than 200). It goes when agent-skills #864 lands.
 - `create_report` upserts: a re-run for the same `(source, date)` replaces the
   previous run's `finding` edges transactionally rather than accumulating them
   (D-7).
+
+`survey_work_items` was a third until sprint 038. #861 folded its projection
+into `list_work_items` and kept the name as an alias for one deprecation
+window; #867 moved the last caller (`refill-queue`) off it, and #871 deleted
+it. Three work-item reads are two again. The REST `GET /api/work-items/survey`
+route is unaffected — it is the Review page's endpoint and never shared the
+alias's argument type.
 
 `update_project` takes `status`, `machines`, `deploy_to`, `category`,
 `description`, `gh_repo` and `src_path` — everything but the name. `src_path` is
@@ -139,20 +141,28 @@ The **paginated** lists return an envelope (sprint 015):
 without guessing and can tell a complete answer from a clipped one. `limit`
 defaults to 200 and is clamped to 500.
 
+That is true on **every** page, including one whose `offset` lands past the last
+row: `items` comes back empty and `total` still reports the corpus. Until sprint
+038 it was not (WI #883) — `list_work_items` computed `total` with a
+`count(*) OVER()` riding on the returned rows, so overshooting produced
+`total: 0`, breaking `remaining = total - offset` and "trust the last page's
+total" at exactly the moment a pager relies on them. `omitted` stayed correct
+throughout, which is what made the lie easy to miss.
+
 The unpaginated lists return a **bare JSON array**. Which is which, verified
 against the code in sprint 020 — this table was previously "every list returns
 the same envelope", which was true of four of them:
 
 | Shape | Reads |
 |---|---|
-| `{items, total, limit, offset}` | `list_work_items`, `list_cards`, `list_links`, `list_topics`, `survey_work_items` |
+| `{items, total, limit, offset}` | `list_work_items`, `list_cards`, `list_links`, `list_topics` |
 | `{items, total, limit, truncated}` | `neighbors` (`truncated`, not `offset` — it caps rather than pages) |
 | `{from, to, total, completed, items}` | `daily_plan_history` |
 | bare array | `list_reports`, `list_areas`, `list_comments`, `list_daily_plan` |
 | `{items, omitted}` | `list_proposals`, `list_projects` |
 
-(`omitted` counts the rows a read's own defaults hid. `list_work_items` and
-`survey_work_items` carry it *in addition to* the paginated envelope.)
+(`omitted` counts the rows a read's own defaults hid. `list_work_items` carries
+it *in addition to* the paginated envelope.)
 
 The bare-array reads are the ones with no natural paging story — a project has a
 handful of areas, a node has a handful of comments, a day has a handful of plan
@@ -163,8 +173,8 @@ not paging: both **filter rows by default** (WI #828, WI #852), so a bare array
 would be a narrowed view indistinguishable from a complete one. `omitted` is what
 stops an agent concluding "there is no such project" from "you did not ask for
 archived ones" — the same silent-truncation failure the four-shape table exists
-to make visible. `list_work_items` and `survey_work_items` carry `omitted` on top
-of their paginated envelope for exactly the same reason (WI #851, WI #861):
+to make visible. `list_work_items` carries `omitted` on top of its paginated
+envelope for exactly the same reason (WI #851, WI #861):
 `total` is the count *after* filtering, so a sweep used to decide "is this
 project drained?" needs to see what the filter hid.
 
@@ -194,10 +204,11 @@ into every answer. To see them:
 
 This is true of **every read that has an `archived` filter**. Until WI #851 it
 was not: `survey_work_items` defaulted to "both" — against this table, against
-the MCP `instructions`, and in the one tool the instructions recommend for
+the MCP `instructions`, and in the one tool the instructions recommended for
 sizing a backlog, so any sweep over-counted with nothing in the response saying
-so. `list_proposals` had no `archived` predicate at all. Both now behave like
-their siblings.
+so. `list_proposals` had no `archived` predicate at all. Both were brought into
+line, which is part of why the survey alias had nothing left of its own to
+justify it (deleted in #871).
 
 The bare-array reads (`list_reports`, `list_areas`, `list_comments`,
 `list_daily_plan`) have **no** `archived` filter — areas and comments are not
@@ -251,10 +262,9 @@ row is `content`+`details` across hundreds of rows, which is the payload problem
 itself. The full tier is `get_work_item`, one row at a time, and it already
 inlines comments and edges.
 
-`survey_work_items` is the same read under its old name for one deprecation
-window (see the catalogue note above). REST keeps the full rows at
-`GET /api/work-items` — the Work Items page walks that read to completion and
-then searches `content` and tickers `details` in memory.
+REST keeps the full rows at `GET /api/work-items` — the Work Items page walks
+that read to completion and then searches `content` and tickers `details` in
+memory.
 
 ### The proposal queue narrows by default (WI #852)
 

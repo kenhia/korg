@@ -86,6 +86,13 @@ pub const REPORT_STATUSES: [&str; 3] = ["ok", "attention", "problem"];
 /// both filter identically and a status exists to filter.
 pub const PROJECT_STATUSES: [&str; 2] = ["active", "archived"];
 
+/// The one status that is a legitimate target for new work — the question
+/// above, named, so the write paths that enforce it (`resolve_project`,
+/// `resolve_project_patch`; WI #884) read as the sentence rather than as a bare
+/// string comparison, and so a third status could not be added without this
+/// line forcing the "which side?" decision.
+pub const PROJECT_STATUS_ACTIVE: &str = PROJECT_STATUSES[0];
+
 /// Project categories (WI #678). `project.category` has existed since 0011 but
 /// as free text, and it drifted the way free text does — the live corpus held
 /// `ai` x8, `AI` x1, `tooling` x3, `infra` x2, `fun` x2 and NULL x15. This
