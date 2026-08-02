@@ -160,6 +160,37 @@ fail against those, and only those, then pass again on restore.
   mechanism, same class, and leaving them would have made the regression test
   assert an invariant the code only half held.
 
+## Deployed 2026-08-02
+
+PR #41, squash-merged as `21c6d59`. Image `korg:21c6d59878ed` (label
+`org.opencontainers.image.revision=21c6d59878ed2f19717d63dac19d46f614a36a5b`),
+built from the merged `main` and deployed to kubsdb `:5674`. Rollback target:
+`korg:9c452bcf933f` (sprint 036), confirmed present on the host before the
+build. **No migration in this sprint** — `migrations: 21` before and after — so
+rollback is a clean re-tag rather than a restore.
+
+`post-deploy-check.sh --compare` clean: every row count and the whole schema
+block identical to the pre-deploy baseline.
+
+Verified live, per fix, against `https://kubsdb.encke-wahoo.ts.net:5674/mcp`:
+
+| WI | probe | result |
+|---|---|---|
+| #871 | `tools/list` | **47** tools, `survey_work_items` absent |
+| #883 | `list_work_items {project:"korg", offset:100000}` | `items: 0`, **`total: 22`** — the T3 probe returned `total: 0` here |
+| #884 | `create_work_item {project:"kris"}` | `invalid_input`, "project 'kris' is archived and cannot take new work" |
+| #885 | ordinary field edit of #883 | `updated` moved off `created` (01:10:51 → 03:01:14) |
+| #887 | `update_project {src_path:"~/src/tools/korg (dev copy)"}` | `invalid_input` naming the rule, no Postgres text |
+| #890 | `relate {label:"depends-on"}` | "did you mean 'depends_on'?"; `get_work_item` description reworded |
+| #886 | `daily_plan_history {to:"2026-12-31"}` | "history end must be before the server's local today, **2026-08-01**" |
+
+That last row is the sprint's own thesis, live: at 03:00 **UTC on 2026-08-02**
+the server states its local today is **2026-08-01**. Anyone reading a UTC clock
+would have called that a bug, which is precisely what happened in 037.
+
+Both refusing probes were confirmed to have stored nothing — korg's `src_path`
+still `~/src/tools/korg`, and no probe work item in `kris`.
+
 ## Follow-ups
 
 - `refill-queue`'s SKILL.md carries a parenthetical saying `survey_work_items`
