@@ -326,7 +326,7 @@ pub struct ListProjects {
     pub status: Option<String>,
     /// How wide. Omit for the lean routing projection (name, description, and
     /// status only when it is not `active`); `"full"` for every column,
-    /// including `notes`.
+    /// including `notes` and the `created`/`updated` timestamps.
     #[serde(default)]
     #[schemars(schema_with = "schema::project_detail")]
     pub detail: Option<String>,
