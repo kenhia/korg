@@ -386,6 +386,34 @@ in the covered WIs).
 
 ## 15. Rank 4.8 ran — the measurement re-run, 2026-08-02
 
+- Sprint **040** (894): **all nine T3 findings verified fixed** against
+  production, each with its call; 039's new surface audited fresh and
+  needed no corrections; surface confirmed at 50 tools. **Measurement 1
+  PASS** (the global korg block is still empty). **Measurement 2 FAIL by
+  exactly one XS finding — #905**: `ProjectRow` omits `created`/`updated`
+  while `get_project` and `list_projects detail:"full"` promise "every
+  column". Down from T3's seven.
+- **F-18 answered and reframed**: 0013's touch trigger works — `updated`
+  advances; nothing can observe it. The projection is the gap, and
+  `0013_project_touch.sql`'s own header called it ("latent … but a booby
+  trap") three programs ago. #885 armed the trap by making `updated`
+  load-bearing everywhere else.
+- The briefing mechanism closed its own loop: the UTC/PT trap fired on
+  schedule (session clock a day ahead of the server) and was a non-event
+  because 038's refusals name the server's today; the prospective-#885
+  shape appeared (link 123, untouched since June) and was correctly not
+  filed. Both were the briefing's named hazards.
+- **906 (rank 4.9)** queued covering #905 — the last turn, XS, no
+  migration. On its deploy the **overseer** re-runs both measurements (one
+  `get_project`, a `tools/list` count, a read of the live global
+  CLAUDE.md — no fresh session needed for a two-field projection check)
+  and on green executes the drop: a close-out section here, the standing
+  re-review dropping to "when a new tool lands or a session hits friction"
+  (§5), and the opportunistic remainder (#846, #862, #863; 825's markers)
+  living in the normal queue on their own merits.
+
+## 15. Rank 4.8 ran — the measurement re-run, 2026-08-02
+
 Sprint 040, findings in `sprints/review/2026-08-02-894-measurement-re-run.md`.
 The briefing-by-comment mechanism worked: a bare `start-sprint korg:894` was
 sufficient, and no scope had to be re-derived.

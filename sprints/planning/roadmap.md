@@ -12,11 +12,11 @@
   measurement with seven behaviour gaps; 038 closed six of them plus #871's
   alias deletion, and refuted the seventh (#886 — the probe read a UTC clock,
   not a broken freeze). 039 added the disposal doctrine + link/area
-  lifecycle (50 tools); #855 dissolved with no delete_project verb; 896's
-  consumer one-liner is done. **Every T3 finding is addressed.** Remaining:
-  **894 re-runs plan §5's exit measurements** in a fresh session — briefed
-  by comment on the proposal; both measurements holding drops the program
-  to low-rank continual improvement.
+  lifecycle (50 tools). 040's measurement re-run verified every fix held;
+  measurement 2 failed by **one XS finding** (#905 — project rows expose no
+  timestamps while promising "every column"). Remaining: **906 (rank 4.9)**
+  ships #905, then the overseer's one-call re-measurement — on green the
+  program drops to low-rank continual improvement.
 
 ## Next
 
