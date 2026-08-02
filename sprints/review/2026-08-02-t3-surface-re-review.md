@@ -54,6 +54,16 @@ or deleted afterwards; the residue is declared at the end.
   day"). History whose end-before-today read validation *is* enforced can be
   silently rewritten on the write side.
 
+> **Addendum 2026-08-02 — refuted in sprint 038.** The probes ran at
+> 01:10–01:11Z, which is 18:10 **2026-08-01** PDT (`KORG_TIMEZONE=
+> America/Los_Angeles`), so the target date was the server's *today* and
+> every operation was correct to succeed — the reorder response even said
+> so ("for an open day"). The freeze has been enforced since sprint 011.
+> What shipped instead is the root-cause fix: the refusals and the five
+> tool descriptions now name the server's local today, so a UTC-clocked
+> session can no longer misread the boundary. See the #886 comment and
+> `sprints/038-t3-behaviour-gap-fixes.md`.
+
 ### 5. `src_path` CHECK violation → `internal` + raw Postgres — **korg #887**
 
 - `update_project {name:"korg", src_path:"~/src/tools/korg (dev copy)"}` →

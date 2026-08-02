@@ -1,4 +1,18 @@
 //! Source-linked daily planning with server-enforced lifecycle boundaries.
+//!
+//! The boundary is the **server's** local calendar date, derived from
+//! `KORG_TIMEZONE` by [`crate::config::KorgConfig::lifecycle_context`] and
+//! carried through every mutation as [`LifecycleContext`]. Production runs
+//! `America/Los_Angeles`, so between 17:00 local and midnight the server's
+//! today is the *previous* date in UTC — which is how sprint 037's re-review
+//! came to file the freeze as unenforced (WI #886) after successfully planning
+//! onto what its own UTC clock called yesterday. The freeze was working; the
+//! two clocks disagreed and nothing on the surface said which one governs.
+//!
+//! Nothing here reads a wall clock of its own. That is deliberate — the tests
+//! pin `today` and the surfaces pass a real one — and it is also why the answer
+//! to #886 is discoverability rather than enforcement: every date error below
+//! names the date the server is measuring against.
 
 use serde::Serialize;
 use sqlx::{PgPool, Postgres, Row, Transaction};
@@ -20,10 +34,23 @@ pub enum PlanningError {
     WrongSource { node_id: i64, kind: String },
     #[error("daily plan item {0} not found")]
     ItemNotFound(i64),
-    #[error("past daily plan structure is frozen")]
-    FrozenPast,
-    #[error("target date must be today or in the future")]
-    TargetPast,
+    /// Both date errors name the server's local today, and that is the fix for
+    /// WI #886 (see the module docs): the boundary is a *local* calendar date,
+    /// so a caller reasoning from its own UTC clock disagrees with the server
+    /// for the last hours of every local day — and until now got back an error
+    /// that never said so. Naming the date turns "why was this refused?" into
+    /// one round trip instead of a wrong hypothesis.
+    #[error("past daily plan structure is frozen: {requested} is before the server's local today, {today}")]
+    FrozenPast { requested: Date, today: Date },
+    #[error(
+        "target date must be the server's local today ({today}) or later; {requested} is before it"
+    )]
+    TargetPast { requested: Date, today: Date },
+    /// History is a *sealed* record, so its end must be strictly past — same
+    /// local-date boundary as the two above, and split out of `InvalidRange` so
+    /// it can say which date it is measuring against (WI #886).
+    #[error("history end must be before the server's local today, {today}; {requested} is not")]
+    HistoryNotPast { requested: Date, today: Date },
     #[error("invalid date range: {0}")]
     InvalidRange(&'static str),
     #[error("reorder must contain every item for the day exactly once")]
@@ -154,7 +181,10 @@ pub async fn create_item(
     context: &LifecycleContext,
 ) -> Result<DailyPlanItem> {
     if plan_date < context.today {
-        return Err(PlanningError::TargetPast);
+        return Err(PlanningError::TargetPast {
+            requested: plan_date,
+            today: context.today,
+        });
     }
     let mut tx = pool.begin().await?;
     let (_, display) = resolve_source(&mut tx, source_node_id).await?;
@@ -262,7 +292,10 @@ pub async fn reorder_day(
     context: &LifecycleContext,
 ) -> Result<Vec<DailyPlanItem>> {
     if plan_date < context.today {
-        return Err(PlanningError::FrozenPast);
+        return Err(PlanningError::FrozenPast {
+            requested: plan_date,
+            today: context.today,
+        });
     }
     let mut tx = pool.begin().await?;
     let actual: Vec<i64> = sqlx::query_scalar(
@@ -294,7 +327,10 @@ pub async fn delete_item(pool: &PgPool, node_id: i64, context: &LifecycleContext
     let mut tx = pool.begin().await?;
     let (plan_date, position, _, _) = item_location(&mut tx, node_id).await?;
     if plan_date < context.today {
-        return Err(PlanningError::FrozenPast);
+        return Err(PlanningError::FrozenPast {
+            requested: plan_date,
+            today: context.today,
+        });
     }
     sqlx::query("DELETE FROM node WHERE id = $1 AND kind = 'daily_plan_item'")
         .bind(node_id)
@@ -341,7 +377,10 @@ pub async fn move_item(
     context: &LifecycleContext,
 ) -> Result<MoveOutcome> {
     if target_date < context.today {
-        return Err(PlanningError::TargetPast);
+        return Err(PlanningError::TargetPast {
+            requested: target_date,
+            today: context.today,
+        });
     }
     let mut tx = pool.begin().await?;
     let (source_date, source_position, display, source_node_id) =
@@ -426,9 +465,10 @@ pub async fn history(
         return Err(PlanningError::InvalidRange("from must not be after to"));
     }
     if to >= context.today {
-        return Err(PlanningError::InvalidRange(
-            "history end must be before today",
-        ));
+        return Err(PlanningError::HistoryNotPast {
+            requested: to,
+            today: context.today,
+        });
     }
     let items = sqlx::query_as::<_, DailyPlanItem>(&format!(
         "{} WHERE d.plan_date BETWEEN $1 AND $2 \

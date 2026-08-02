@@ -57,9 +57,6 @@ pub(crate) fn default_backlog() -> String {
 pub(crate) fn default_true() -> bool {
     true
 }
-fn default_survey_limit() -> i64 {
-    50
-}
 fn default_report_limit() -> i64 {
     30
 }
@@ -236,17 +233,6 @@ pub mod schema {
     /// A 0-based position within an ordered day.
     pub fn position(_: &mut SchemaGenerator) -> Schema {
         json_schema!({ "type": "integer", "minimum": 0 })
-    }
-
-    pub fn survey_limit(_: &mut SchemaGenerator) -> Schema {
-        json_schema!({
-            "type": "integer", "minimum": 1, "maximum": repo::LIST_LIMIT_MAX,
-            "default": super::default_survey_limit()
-        })
-    }
-
-    pub fn survey_offset(_: &mut SchemaGenerator) -> Schema {
-        json_schema!({ "type": "integer", "minimum": 0, "default": 0 })
     }
 
     pub fn neighbor_limit(_: &mut SchemaGenerator) -> Schema {
@@ -429,52 +415,11 @@ pub struct ListWorkItems {
     pub offset: Option<i64>,
 }
 
-/// `survey_work_items` — **deprecated** (WI #861), kept for one window as an
-/// alias of `list_work_items`, which now returns exactly what the survey did
-/// plus the terminal-status default.
-///
-/// It exists as a separate argument type only to keep its own paging defaults
-/// (limit 50, not 200), so a shipped consumer that walks it by offset — the
-/// `refill-queue` skill does — pages exactly as it did before. Delete this
-/// together with the tool once agent-skills #864 lands.
-///
-/// Its `archived` default used to differ from every other list read, and the
-/// doc comment here called that deliberate. It was the bug (#851): the server
-/// `instructions` say every read excludes archived rows, an agent cannot check
-/// that, and the tool the instructions *recommend* for sizing a backlog was the
-/// one silently over-counting.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct SurveyWorkItems {
-    /// Project name to filter by
-    #[serde(default)]
-    pub project: Option<String>,
-    /// Which rows. Omit for everything not terminal (`open`, `resolved`,
-    /// `done`); `"all"` to include `closed` too; one status for exactly that.
-    #[serde(default)]
-    #[schemars(schema_with = "schema::wi_status_filter")]
-    pub wi_status: Option<String>,
-    #[serde(default = "archived_default")]
-    #[schemars(schema_with = "schema::archived_filter")]
-    pub archived: ArchivedFilter,
-    #[serde(default = "default_survey_limit")]
-    #[schemars(schema_with = "schema::survey_limit")]
-    pub limit: i64,
-    #[serde(default)]
-    #[schemars(schema_with = "schema::survey_offset")]
-    pub offset: i64,
-}
-
-impl From<SurveyWorkItems> for ListWorkItems {
-    fn from(a: SurveyWorkItems) -> Self {
-        Self {
-            project: a.project,
-            wi_status: a.wi_status,
-            archived: a.archived,
-            limit: Some(a.limit),
-            offset: Some(a.offset),
-        }
-    }
-}
+// `survey_work_items` lived here as a deprecated alias of `list_work_items`
+// (#861 folded the survey's projection into the list read; the alias kept the
+// shipped `refill-queue` skill working through one deprecation window). #867
+// moved that skill onto `list_work_items` and deployed it to all three hosts,
+// which un-gated the deletion (#871). Three work-item tools are two again.
 
 /// `list_cards`.
 #[derive(Debug, Clone, Deserialize, JsonSchema, Default)]

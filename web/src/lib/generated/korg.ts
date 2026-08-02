@@ -97,11 +97,19 @@ export type NodePreview = { node_id: number, kind: string, wi_number: number | n
  * filtered count *before* `limit`/`offset`, so a caller can page without
  * guessing and can tell a complete answer from a clipped one.
  *
+ * That holds on **every** page, including one whose `offset` overshoots the
+ * last row: `items` is empty there and `total` still reports the corpus, so
+ * `remaining = total - offset` and "trust the last page's total" both stay
+ * sound (WI #883). Count in a statement of your own, never with a
+ * `count(*) OVER()` riding on the paged rows — that one returns zero exactly
+ * when the page is empty.
+ *
  * Unbounded list reads were the review's context bomb: `list_work_items`
  * returned every row with full content, which is why `survey_work_items` had
- * to exist at all. Since #861 the lean projection *is* the MCP list read and
- * the survey is a deprecated alias for it; this envelope carries `omitted`
- * alongside on the reads that also narrow by default.
+ * to exist at all. #861 made the lean projection *the* MCP list read, leaving
+ * the survey a deprecated alias of it, and #871 deleted that alias once its
+ * last caller moved. This envelope carries `omitted` alongside on the reads
+ * that also narrow by default.
  */
 export type Page<T> = { items: Array<T>, total: number, limit: number, offset: number, };
 

@@ -17,8 +17,8 @@ pub use crate::error::RepoError;
 use crate::ops::{self, schema};
 use crate::relationships;
 use crate::vocab::{
-    self, CARD_STATUSES, LINK_DISPOSITIONS, PROPOSAL_LIVE_STATUSES, PROPOSAL_STATUSES,
-    REPORT_STATUSES, WI_LIVE_STATUSES,
+    self, CARD_STATUSES, LINK_DISPOSITIONS, PROJECT_STATUS_ACTIVE, PROPOSAL_LIVE_STATUSES,
+    PROPOSAL_STATUSES, REPORT_STATUSES, WI_LIVE_STATUSES,
 };
 pub use crate::vocab::{PROJECT_CATEGORIES, PROJECT_STATUSES, WI_STATUSES};
 
@@ -144,16 +144,30 @@ async fn unknown_project(pool: &PgPool, name: &str) -> anyhow::Error {
 /// sprint-017 principle that the error doubles as the retry instructions.
 ///
 /// A "did you mean" is safe here where it is not for open project names: the
-/// registry is a closed, four-entry set, so every suggestion is a real label.
-/// The near-miss is case-insensitive exact, then a prefix overlap
-/// (`related` -> `related-to`); anything further is left to the named
-/// vocabulary rather than guessed at.
+/// registry is a closed, five-entry set, so every suggestion is a real label.
+/// The near-miss is case-insensitive exact, then separator-insensitive exact,
+/// then a prefix overlap (`related` -> `related-to`); anything further is left
+/// to the named vocabulary rather than guessed at.
+///
+/// The separator pass is WI #890. The registry spells one label `depends_on`
+/// and another `related-to`, so which separator a label uses is unguessable
+/// from the outside — and `depends-on` returned the same bare registry listing
+/// as a wild miss like `blocks`, making the description's promise of a
+/// near-miss false for the one confusion the vocabulary invites by
+/// construction. Normalizing `-` and `_` to the same character is not fuzzy
+/// matching: it can only ever match a label that differs in nothing else.
 fn unknown_label(label: &str) -> anyhow::Error {
+    /// `-` and `_` are interchangeable noise for matching purposes only.
+    fn separator_blind(s: &str) -> String {
+        s.to_ascii_lowercase().replace('-', "_")
+    }
     let registered: Vec<&str> = relationships::REGISTRY.iter().map(|s| s.label).collect();
     let lower = label.to_ascii_lowercase();
+    let blind = separator_blind(label);
     let suggestion = registered
         .iter()
         .find(|l| l.eq_ignore_ascii_case(label))
+        .or_else(|| registered.iter().find(|l| separator_blind(l) == blind))
         .or_else(|| {
             registered
                 .iter()
@@ -171,35 +185,94 @@ fn unknown_label(label: &str) -> anyhow::Error {
     .into()
 }
 
-/// Look a project up by name.
-async fn project_id_for_name(pool: &PgPool, name: &str) -> Result<i64> {
-    let id: Option<i64> = sqlx::query_scalar("SELECT id FROM project WHERE name = $1")
-        .bind(name)
-        .fetch_optional(pool)
+/// A project that exists but cannot take work (WI #884).
+///
+/// The MCP instructions call the active roster "the only valid targets for new
+/// work", and `unknown_project` promises a name that doesn't resolve fails
+/// "rather than mis-filing". A known-but-archived name resolving silently broke
+/// both promises in the one direction they exist to prevent: the work lands,
+/// somewhere nobody is looking. Naming the status is the point — an agent that
+/// picked the name off a stale list needs to know it is *retired*, not
+/// misspelled, because the remedy is a different project rather than a
+/// different spelling.
+fn archived_project_target(name: &str, status: &str) -> anyhow::Error {
+    RepoError::InvalidInput(format!(
+        "project '{name}' is {status} and cannot take new work — call list_projects \
+         (GET /api/projects) for the active projects, whose work this probably belongs to"
+    ))
+    .into()
+}
+
+/// Advance a node's `updated` after a write that landed in its satellite table
+/// (WI #885).
+///
+/// `updated` is a `node` column and 0001's `touch_updated` trigger fires on
+/// writes to `node` and `comment` only — but an ordinary field edit of a work
+/// item, card, proposal or link writes `workitem`/`card`/`sprint_proposal`/
+/// `link`. So `updated` advanced on exactly the fields that happen to live on
+/// `node` (`archived`, `tags`, `category`, the project move) and sat frozen at
+/// creation time for title, status, content, rank and the rest: an agent
+/// sorting by recency saw creation order, and "recently touched" missed
+/// everything actively being worked.
+///
+/// A trigger on each satellite table would be the more robust shape, and is
+/// deliberately not what this is. The importer's second pass rewrites
+/// `workitem.parent_node_id` after inserting every row, which such a trigger
+/// would stamp with `now()` — and because the `node` trigger sets
+/// `NEW.updated := now()` unconditionally on *any* update, nothing could then
+/// restore the source timestamp `fidelity.rs` asserts. Cheap invariant, real
+/// cost; the call sites are few and they are all here.
+async fn touch_node<'e, E>(executor: E, node_id: i64) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    sqlx::query("UPDATE node SET updated = now() WHERE id = $1")
+        .bind(node_id)
+        .execute(executor)
         .await?;
-    match id {
-        Some(id) => Ok(id),
+    Ok(())
+}
+
+/// Look a project up by name, refusing one that can't take work.
+async fn project_id_for_name(pool: &PgPool, name: &str) -> Result<i64> {
+    let found: Option<(i64, String)> =
+        sqlx::query_as("SELECT id, status FROM project WHERE name = $1")
+            .bind(name)
+            .fetch_optional(pool)
+            .await?;
+    match found {
+        Some((id, status)) if status == PROJECT_STATUS_ACTIVE => Ok(id),
+        Some((_, status)) => Err(archived_project_target(name, &status)),
         None => Err(unknown_project(pool, name).await),
     }
 }
 
-/// Confirm a project id exists. Without this a typo'd id reached the FK and
-/// came back as a raw Postgres error in a 500 — the same shape WI #524 fixed
-/// for `relate`'s endpoints.
+/// Confirm a project id exists and can take work. Without the existence half a
+/// typo'd id reached the FK and came back as a raw Postgres error in a 500 —
+/// the same shape WI #524 fixed for `relate`'s endpoints; the status half is
+/// #884, so that `project_id` cannot route around the name path's refusal.
 async fn require_project(pool: &PgPool, id: i64) -> Result<()> {
-    let found: Option<i64> = sqlx::query_scalar("SELECT id FROM project WHERE id = $1")
-        .bind(id)
-        .fetch_optional(pool)
-        .await?;
-    found.map(|_| ()).ok_or_else(|| {
-        RepoError::InvalidInput(format!(
+    let found: Option<(String, String)> =
+        sqlx::query_as("SELECT name, status FROM project WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+    match found {
+        Some((_, status)) if status == PROJECT_STATUS_ACTIVE => Ok(()),
+        Some((name, status)) => Err(archived_project_target(&name, &status)),
+        None => Err(RepoError::InvalidInput(format!(
             "no project with id {id} — call list_projects (GET /api/projects) for the available projects"
         ))
-        .into()
-    })
+        .into()),
+    }
 }
 
 /// Resolve a create-time project selector: id, name, or neither.
+///
+/// Every create that takes a project funnels through here — work items, cards,
+/// links, topics, proposals, handoffs — which is why #884's status check lives
+/// in the two resolvers rather than in six call sites. `update_project` is
+/// deliberately *not* one of them: setting `status` is how a project comes back.
 pub(crate) async fn resolve_project(
     pool: &PgPool,
     id: Option<i64>,
@@ -218,6 +291,11 @@ pub(crate) async fn resolve_project(
 
 /// Resolve a patch-time project selector, where the outer `Option` is
 /// "mentioned at all" and the inner one is "unassign".
+///
+/// Shares [`resolve_project`]'s archived refusal: moving an item *into* a
+/// retired project is the same mis-file as creating it there. Moving one *out*
+/// stays legal — that is the remedy, not the offence — because the check reads
+/// the target, never the current project.
 pub(crate) async fn resolve_project_patch(
     pool: &PgPool,
     id: Option<Option<i64>>,
@@ -316,11 +394,19 @@ where
 /// filtered count *before* `limit`/`offset`, so a caller can page without
 /// guessing and can tell a complete answer from a clipped one.
 ///
+/// That holds on **every** page, including one whose `offset` overshoots the
+/// last row: `items` is empty there and `total` still reports the corpus, so
+/// `remaining = total - offset` and "trust the last page's total" both stay
+/// sound (WI #883). Count in a statement of your own, never with a
+/// `count(*) OVER()` riding on the paged rows — that one returns zero exactly
+/// when the page is empty.
+///
 /// Unbounded list reads were the review's context bomb: `list_work_items`
 /// returned every row with full content, which is why `survey_work_items` had
-/// to exist at all. Since #861 the lean projection *is* the MCP list read and
-/// the survey is a deprecated alias for it; this envelope carries `omitted`
-/// alongside on the reads that also narrow by default.
+/// to exist at all. #861 made the lean projection *the* MCP list read, leaving
+/// the survey a deprecated alias of it, and #871 deleted that alias once its
+/// last caller moved. This envelope carries `omitted` alongside on the reads
+/// that also narrow by default.
 #[derive(Debug, Clone, Serialize, PartialEq, TS)]
 #[ts(export, export_to = "korg.ts")]
 pub struct Page<T> {
@@ -746,6 +832,7 @@ pub async fn update_link(pool: &PgPool, node_id: i64, patch: LinkPatch) -> Resul
             .execute(&mut *tx)
             .await?;
     }
+    touch_node(&mut *tx, node_id).await?;
     tx.commit().await?;
     reread_link(pool, node_id).await
 }
@@ -762,6 +849,7 @@ pub async fn set_link_disposition(
         .bind(disposition)
         .execute(pool)
         .await?;
+    touch_node(pool, node_id).await?;
     reread_link(pool, node_id).await
 }
 
@@ -783,6 +871,7 @@ pub async fn mark_link_read(pool: &PgPool, node_id: i64, read: bool) -> Result<L
         .bind(read)
         .execute(pool)
         .await?;
+    touch_node(pool, node_id).await?;
     reread_link(pool, node_id).await
 }
 
@@ -1470,7 +1559,8 @@ pub async fn get_work_item(pool: &PgPool, wi_number: i64) -> Result<Option<WorkI
 
 /// Max comments inlined into a single-item detail fetch (WI #392). A
 /// pathological thread past this is truncated with `comments_truncated`, and
-/// the caller can page the tail via `list_comments`.
+/// the caller fetches the whole thread from `list_comments` — which is
+/// unpaginated, so it is a re-read rather than a tail (WI #890).
 pub const WORKITEM_COMMENT_CAP: i64 = 10;
 
 /// A work item plus its comments, capped (WI #392). The single-item detail
@@ -1623,13 +1713,11 @@ pub async fn list_work_items_lean(
         wi_status: String,
         wi_tshirt: String,
         comment_count: i64,
-        total: i64,
     }
     let rows = sqlx::query_as::<_, Row>(
         "SELECT w.wi_number, w.node_id, pj.name AS project, w.title, \
                 w.wi_type, w.wi_status, w.wi_tshirt, \
-                (SELECT count(*) FROM comment c WHERE c.node_id = w.node_id) AS comment_count, \
-                count(*) OVER() AS total \
+                (SELECT count(*) FROM comment c WHERE c.node_id = w.node_id) AS comment_count \
          FROM workitem w \
          JOIN node n ON n.id = w.node_id \
          LEFT JOIN project pj ON pj.id = n.project_id \
@@ -1647,7 +1735,6 @@ pub async fn list_work_items_lean(
     .fetch_all(pool)
     .await?;
 
-    let total = rows.first().map(|r| r.total).unwrap_or(0);
     let items = rows
         .into_iter()
         .map(|r| WorkItemSummary {
@@ -1662,29 +1749,40 @@ pub async fn list_work_items_lean(
         })
         .collect();
 
+    let (total, omitted) = wi_counts(pool, project, archived, shown.as_deref()).await?;
     Ok(WorkItemListLean {
         items,
         total,
         limit,
         offset,
-        omitted: wi_omitted(pool, project, archived, shown.as_deref()).await?,
+        omitted,
     })
 }
 
-/// Count what the lean list's defaults hid, in one round trip.
+/// The lean list's corpus size and what its defaults hid, in one round trip.
 ///
-/// The counts are taken over the `project`-filtered corpus — narrowing to a
-/// project is the caller *choosing* a scope, not a default hiding rows from
-/// them, so it is not something `omitted` should report. Same reasoning as
-/// `proposal_omitted`.
-async fn wi_omitted(
+/// `total` is deliberately *not* a `count(*) OVER()` on the page query. That
+/// window count rides on the returned rows, so a page whose `offset` overshoots
+/// the last row returns no rows, no count, and `total: 0` — the envelope
+/// claiming an empty corpus exactly when a pager runs off the end (WI #883).
+/// Counting in this statement, whose result set is one row whatever the paging
+/// did, is what makes `total` mean the same thing on every page.
+///
+/// The `omitted` counts are taken over the `project`-filtered corpus —
+/// narrowing to a project is the caller *choosing* a scope, not a default
+/// hiding rows from them, so it is not something `omitted` should report. Same
+/// reasoning as `proposal_omitted`. `total` narrows further than that: it is
+/// the count after *every* filter, which is what a pager needs.
+async fn wi_counts(
     pool: &PgPool,
     project: Option<&str>,
     archived: ArchivedFilter,
     shown: Option<&[String]>,
-) -> Result<WorkItemOmitted> {
-    let (archived_hidden, closed) = sqlx::query_as::<_, (i64, i64)>(
+) -> Result<(i64, WorkItemOmitted)> {
+    let (total, archived_hidden, closed) = sqlx::query_as::<_, (i64, i64, i64)>(
         "SELECT \
+           count(*) FILTER (WHERE ($2::bool IS NULL OR n.archived = $2) \
+                              AND ($3::text[] IS NULL OR w.wi_status = ANY($3))), \
            count(*) FILTER (WHERE n.archived AND $2::bool IS NOT NULL AND NOT $2), \
            count(*) FILTER (WHERE ($2::bool IS NULL OR n.archived = $2) \
                               AND w.wi_status = 'closed') \
@@ -1695,6 +1793,7 @@ async fn wi_omitted(
     )
     .bind(project)
     .bind(archived)
+    .bind(shown)
     .fetch_one(pool)
     .await?;
     // A status the caller asked for isn't omitted, however many rows it has.
@@ -1703,10 +1802,13 @@ async fn wi_omitted(
         None => 0,
         _ => closed,
     };
-    Ok(WorkItemOmitted {
-        closed: closed_hidden,
-        archived: archived_hidden,
-    })
+    Ok((
+        total,
+        WorkItemOmitted {
+            closed: closed_hidden,
+            archived: archived_hidden,
+        },
+    ))
 }
 
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
@@ -1862,6 +1964,53 @@ pub fn canonical_src_path(raw: &str) -> String {
     p
 }
 
+/// Reject a `src_path` that migration 0019's `project_src_path_canonical`
+/// constraint would reject, before it reaches the constraint (WI #887).
+///
+/// The CHECK works — nothing bad was ever stored — but it surfaced as
+/// `{code: "internal", message: "… violates check constraint
+/// \"project_src_path_canonical\""}`: a user-correctable input error at the
+/// tier reserved for korg's own faults, documented only by leaked Postgres
+/// text. The rules are knowable app-side, so the caller gets the same shape the
+/// description cap already gets right — `invalid_input`, naming the rule that
+/// broke and what the field wants instead.
+///
+/// Deliberately validates rather than canonicalizes. [`canonical_src_path`]
+/// could mechanically fix a trailing slash or an absolute home path, but the
+/// failure worth catching is prose in a path field (korg's own probe was
+/// `~/src/tools/korg (dev copy)`), and silently rewriting *some* inputs while
+/// rejecting others is a worse contract than rejecting all of them with the
+/// form spelled out. The constraint stays as the backstop.
+fn check_src_path(value: &str) -> Result<()> {
+    // The remedy, quoted identically whichever rule broke: one form to learn.
+    const FORM: &str = "`src_path` is the working copy on the project's development machine and \
+                        must be a path and nothing else — `~/`-relative, no trailing slash, no \
+                        whitespace or parentheses, e.g. `~/src/tools/korg`. Host notes and \
+                        history belong in `notes`.";
+    let fault = if !value.starts_with("~/") {
+        Some(if value.starts_with('/') {
+            "it is absolute; write it relative to home"
+        } else {
+            "it does not start with `~/`"
+        })
+    } else if value.chars().any(|c| c.is_whitespace()) {
+        Some("it contains whitespace")
+    } else if value.contains('(') || value.contains(')') {
+        Some("it contains parentheses")
+    } else if value.ends_with('/') {
+        Some("it has a trailing slash")
+    } else {
+        None
+    };
+    match fault {
+        Some(why) => Err(RepoError::InvalidInput(format!(
+            "src_path '{value}' is not canonical: {why}. {FORM}"
+        ))
+        .into()),
+        None => Ok(()),
+    }
+}
+
 /// Everything but `name` is editable (WI #246). `None` = leave unchanged;
 /// inner `None` on the nullable fields clears them.
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
@@ -1924,6 +2073,12 @@ pub async fn update_project(pool: &PgPool, id: i64, patch: &ProjectPatch) -> Res
             ))
             .into());
         }
+    }
+    // Same reasoning one field over (WI #887): the CHECK constraint would catch
+    // this, but as an `internal` carrying raw Postgres text. Clearing it stays
+    // legal — NULL satisfies the constraint and means "not recorded".
+    if let Some(Some(v)) = &patch.src_path {
+        check_src_path(v)?;
     }
     // Setting a category validates against the closed vocabulary (WI #678);
     // clearing it (inner None) stays legal, since `create_project` takes only a
@@ -2381,6 +2536,7 @@ pub async fn update_card(pool: &PgPool, node_id: i64, patch: CardPatch) -> Resul
             .execute(&mut *tx)
             .await?;
     }
+    touch_node(&mut *tx, node_id).await?;
     tx.commit().await?;
     get_card(pool, node_id)
         .await?
@@ -3075,6 +3231,7 @@ pub async fn update_proposal(
             .execute(&mut *tx)
             .await?;
     }
+    touch_node(&mut *tx, node_id).await?;
     tx.commit().await?;
     get_proposal(pool, node_id)
         .await?
@@ -3360,6 +3517,7 @@ pub async fn update_work_item(
             .execute(&mut *tx)
             .await?;
     }
+    touch_node(&mut *tx, node_id).await?;
 
     tx.commit().await?;
     get_work_item(pool, wi_number)
@@ -3441,10 +3599,7 @@ pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
             .bind(new.escalated)
             .execute(&mut *tx)
             .await?;
-            sqlx::query("UPDATE node SET updated = now() WHERE id = $1")
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
+            touch_node(&mut *tx, id).await?;
             (id, true)
         }
         None => {
@@ -3893,12 +4048,7 @@ pub async fn update_handoff(
             .execute(&mut *tx)
             .await?;
     }
-    // Detail-table edits don't fire the node touch trigger; bump updated so a
-    // body-only edit still moves the timestamp (as upsert_report does).
-    sqlx::query("UPDATE node SET updated = now() WHERE id = $1")
-        .bind(node_id)
-        .execute(&mut *tx)
-        .await?;
+    touch_node(&mut *tx, node_id).await?;
     tx.commit().await?;
     get_handoff_row(pool, node_id)
         .await?

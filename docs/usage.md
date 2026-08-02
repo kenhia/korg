@@ -224,7 +224,9 @@ Agents: `update_project` MCP tool / `PATCH /api/projects/:name`.
 `inactive` both held **zero rows** and neither had semantics distinct from
 `archived`, and an unused vocabulary value is a standing invitation to invent a
 meaning nobody agreed. The status answers one question — *is this a legitimate
-target for new work?* — and that has two answers. Where `archived` covers both
+target for new work?* — and that has two answers. Since sprint 038 the server
+answers it too: creating in, or moving into, an archived project is
+`invalid_input` naming the status, rather than a silent mis-file (WI #884). Where `archived` covers both
 *superseded* (`kwi`/`kcard` → korg) and *dormant* (`trt-llm-explore`), the
 difference lives in the `description` prose, because both filter identically.
 
@@ -297,9 +299,10 @@ renders those summaries.
 **`list_work_items` joined it in WI #861**, with the same two ideas and one more:
 the lean projection is now the *only* MCP projection (the full tier is
 `get_work_item`), and the row filter is `wi_status`, which defaults to everything
-not terminal. `omitted` is `{closed, archived}`. `survey_work_items` is a
-deprecated alias for it; `GET /api/work-items` still returns full rows, because
-the Work Items page searches `content` in the browser.
+not terminal. `omitted` is `{closed, archived}`. `survey_work_items` was a
+deprecated alias for it and was deleted in sprint 038 (WI #871) once its last
+caller moved; `GET /api/work-items` still returns full rows, because the Work
+Items page searches `content` in the browser.
 
 **The object shape changed underneath both proposals reads in WI #860**:
 `summary` is a ≤500-character routing contract (CHECK-enforced by migration
@@ -357,8 +360,11 @@ any other through a single generalized `relationship` edge:
 - **daily_plan_item** — ordered local-date occurrence linked to a work item,
   card, topic, or sprint proposal; keeps an immutable display snapshot and
   optional completion timestamp. Past structure is frozen, while completion can
-  be corrected. The plannable set is closed (`PLANNABLE_KINDS` in korg-core) —
-  anything else is refused rather than stored as an unresolvable reference.
+  be corrected — and "past" means before the **server's** local date, derived
+  from `KORG_TIMEZONE` rather than from the caller's clock, which is why every
+  date refusal names the date it measured against (WI #886). The plannable set
+  is closed (`PLANNABLE_KINDS` in korg-core) — anything else is refused rather
+  than stored as an unresolvable reference.
   `sprint_proposal` joined it in sprint 029, so "which sprint am I pushing on
   today" is answerable by the planner.
 - **sprint_proposal** — an agent-planning proposal (title, a ≤500-char `summary`

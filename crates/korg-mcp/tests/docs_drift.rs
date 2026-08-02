@@ -232,9 +232,9 @@ fn the_collection_read_shapes_agree_across_docs_and_instructions() {
 ///
 /// korg's instructions used to end "All exclude archived rows unless you ask for
 /// them", which was false of `survey_work_items` — the tool those same
-/// instructions recommend for cross-project sweeps — and of `list_proposals`,
-/// which had no `archived` predicate at all. An agent cannot check a claim like
-/// that; it can only be burned by it.
+/// instructions recommended for cross-project sweeps, since deleted (#871) —
+/// and of `list_proposals`, which had no `archived` predicate at all. An agent
+/// cannot check a claim like that; it can only be burned by it.
 ///
 /// Both are fixed, and the sentence now names the class that genuinely has no
 /// archived filter (`list_reports`, `list_areas`, `list_comments`,
@@ -246,7 +246,7 @@ fn the_archived_affordance_matches_the_instructions() {
     let without: BTreeSet<String> = named_in_instructions("the unpaginated ones");
     for tool in korg_mcp::tools::tools() {
         let name = tool.name.to_string();
-        if !(name.starts_with("list_") || name == "survey_work_items") {
+        if !name.starts_with("list_") {
             continue;
         }
         let properties = tool.input_schema.get("properties");

@@ -96,10 +96,11 @@ impl ErrorClass for PlanningError {
     fn code(&self) -> ErrorCode {
         match self {
             Self::SourceNotFound(_) | Self::ItemNotFound(_) => ErrorCode::NotFound,
-            Self::WrongSource { .. } | Self::TargetPast | Self::InvalidRange(_) => {
-                ErrorCode::InvalidInput
-            }
-            Self::FrozenPast | Self::InvalidReorder => ErrorCode::Conflict,
+            Self::WrongSource { .. }
+            | Self::TargetPast { .. }
+            | Self::HistoryNotPast { .. }
+            | Self::InvalidRange(_) => ErrorCode::InvalidInput,
+            Self::FrozenPast { .. } | Self::InvalidReorder => ErrorCode::Conflict,
             Self::Database(_) => ErrorCode::Internal,
         }
     }

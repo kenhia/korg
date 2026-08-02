@@ -21,7 +21,7 @@ async fn mcp_surface_end_to_end() {
     let server = server(pool);
 
     // Tool descriptors are stable.
-    assert_eq!(tools().len(), 48, "expected 48 tools");
+    assert_eq!(tools().len(), 47, "expected 47 tools");
 
     // Create a work item.
     let wi = body(
@@ -598,11 +598,16 @@ async fn propose_sprint_and_lifecycle() {
     );
 }
 
-/// Sprint 006 — `survey_work_items`: a slim, paginated projection for
-/// cross-project surveys (the `refill-queue` skill's use case) that can't
-/// afford `list_work_items`'s full content/details payload at scale.
+/// Sprint 006 — the slim, paginated projection for cross-project surveys (the
+/// `refill-queue` skill's use case) that can't afford a full content/details
+/// payload at scale. Written against `survey_work_items`; #861 folded that
+/// projection into `list_work_items` and #871 deleted the alias, so the
+/// coverage moved to the surviving name rather than going with it.
+///
+/// The last stanza is WI #883: `total` must mean the same thing on a page that
+/// overshot the corpus as on one that didn't.
 #[tokio::test]
-async fn survey_work_items_paginates_and_filters() {
+async fn list_work_items_paginates_and_filters() {
     let (_c, pool) = fresh_korg().await;
     let server = server(pool);
 
@@ -627,7 +632,7 @@ async fn survey_work_items_paginates_and_filters() {
     let page1 = body(
         &server
             .call(
-                "survey_work_items",
+                "list_work_items",
                 args(json!({"wi_status": "open", "limit": 2, "offset": 0})),
             )
             .await
@@ -642,11 +647,11 @@ async fn survey_work_items_paginates_and_filters() {
     let item = &page1["items"][0];
     assert!(
         item.get("content").is_none(),
-        "survey is slim -- no content field"
+        "the lean read is slim -- no content field"
     );
     assert!(
         item.get("details").is_none(),
-        "survey is slim -- no details field"
+        "the lean read is slim -- no details field"
     );
     assert!(item.get("wi_number").is_some());
     assert!(item.get("node_id").is_some());
@@ -655,7 +660,7 @@ async fn survey_work_items_paginates_and_filters() {
     let page2 = body(
         &server
             .call(
-                "survey_work_items",
+                "list_work_items",
                 args(json!({"wi_status": "open", "limit": 2, "offset": 2})),
             )
             .await
@@ -670,7 +675,7 @@ async fn survey_work_items_paginates_and_filters() {
     let all_open = body(
         &server
             .call(
-                "survey_work_items",
+                "list_work_items",
                 args(json!({"wi_status": "open", "limit": 50})),
             )
             .await
@@ -681,19 +686,52 @@ async fn survey_work_items_paginates_and_filters() {
         5,
         "closed item excluded by the status filter"
     );
+
+    // WI #883: a page past the end. `total` used to be a `count(*) OVER()`
+    // riding on the returned rows, so overshooting produced `total: 0` — the
+    // envelope claiming an empty corpus at exactly the moment a pager runs off
+    // the end, which is when it is being trusted most. `omitted` stayed right
+    // throughout, which is what made the lie easy to miss.
+    let past_end = body(
+        &server
+            .call(
+                "list_work_items",
+                args(json!({"wi_status": "open", "limit": 2, "offset": 100})),
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        past_end["items"].as_array().unwrap().len(),
+        0,
+        "nothing lives past the last row"
+    );
+    assert_eq!(
+        past_end["total"].as_i64(),
+        Some(5),
+        "`total` is the corpus, not the page — a caller computing \
+         `remaining = total - offset` from the last page must not read garbage"
+    );
+    assert_eq!(
+        past_end["limit"].as_i64(),
+        Some(2),
+        "the echoed paging knobs describe the request, whatever it returned"
+    );
+    assert_eq!(past_end["offset"].as_i64(), Some(100));
 }
 
-/// WI #851 — the survey's archived default, the trap this tool spent two
-/// sprints being.
+/// WI #851 — the archived default on the lean work-item read, the trap that
+/// read spent two sprints being under its old `survey_work_items` name.
 ///
 /// The instructions told every agent "All exclude archived rows unless you ask
 /// for them"; the survey — the tool those same instructions *recommend* for
 /// cross-project sweeps — included them. Measured live on project `klams`:
 /// omitted → 105, `archived:false` → 104. A survey used to size a backlog or
 /// decide whether a project was drained over-counted, with nothing in the
-/// response saying so.
+/// response saying so. The alias is gone (#871); the trap it was is fenced on
+/// the surviving name.
 #[tokio::test]
-async fn survey_excludes_archived_by_default_and_says_what_it_hid() {
+async fn lean_list_excludes_archived_by_default_and_says_what_it_hid() {
     let (_c, pool) = fresh_korg().await;
     let server = server(pool);
 
@@ -728,7 +766,7 @@ async fn survey_excludes_archived_by_default_and_says_what_it_hid() {
         async move {
             body(
                 &server
-                    .call("survey_work_items", args(arguments))
+                    .call("list_work_items", args(arguments))
                     .await
                     .unwrap(),
             )
@@ -1109,24 +1147,14 @@ fn advertised_defaults_match_server_behaviour() {
         assert_eq!(props["offset"]["default"], 0, "{name}: offset default");
     }
 
-    // survey_work_items is the one that lied (F-11): it advertised
-    // `default: false` while the server treated omitted as *both*. That was
-    // reconciled the wrong way round — the schema was made to match the odd
-    // behaviour, and the server `instructions` went on promising the opposite to
-    // every agent that never reads a schema (#851). The behaviour is now the
-    // thing that moved, so the survey's filter must be *identical* to a
-    // sibling's: no special case left to advertise.
-    let survey = schema_of("survey_work_items");
-    assert_eq!(
-        survey["properties"]["archived"],
-        schema_of("list_work_items")["properties"]["archived"],
-        "survey_work_items' archived filter must be the same one every other \
-         collection read takes — a difference here is what #851 was"
-    );
-    assert_eq!(
-        survey["properties"]["archived"]["default"], false,
-        "survey_work_items: archived default must match korg_core::repo::archived_default()"
-    );
+    // `survey_work_items` is the tool that lied here (F-11): it advertised
+    // `default: false` while the server treated omitted as *both*, and that was
+    // reconciled the wrong way round — the schema made to match the odd
+    // behaviour while the server `instructions` went on promising the opposite
+    // to every agent that never reads a schema (#851). The behaviour moved
+    // instead, which left the alias with nothing of its own to advertise, which
+    // is half of why #871 could delete it. Nothing to assert about it now; the
+    // loop above covers the read under its surviving name.
 
     // list_proposals joined the class in #852; it had no archived filter at all.
     assert_eq!(
@@ -1449,15 +1477,13 @@ async fn list_work_items_is_lean_and_terminal_excluded_by_default() {
         "a status the caller asked for is not omitted"
     );
 
-    // The deprecated alias is the same read, not a second implementation.
-    let via_survey = call("survey_work_items", json!({})).await;
-    assert_eq!(via_survey["total"], default["total"]);
-    assert_eq!(via_survey["omitted"], default["omitted"]);
-    assert_eq!(via_survey["items"], default["items"]);
-    assert_eq!(
-        via_survey["limit"].as_i64(),
-        Some(50),
-        "the alias keeps its own paging default so existing callers page as before"
+    // WI #871 — the `survey_work_items` alias this read absorbed in #861 is
+    // gone, now that #867 moved `refill-queue` off it. A call by the old name
+    // must fail as an unknown tool rather than linger as a second spelling.
+    let gone = server.call("survey_work_items", args(json!({}))).await;
+    assert!(
+        gone.is_err() || gone.as_ref().is_ok_and(|r| r.is_error == Some(true)),
+        "survey_work_items must no longer answer: {gone:?}"
     );
 
     // An unknown status is rejected rather than quietly returning everything.

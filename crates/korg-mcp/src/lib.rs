@@ -17,14 +17,16 @@ pub fn server_instructions() -> &'static str {
      Mutations validate their target and return the updated entity; errors are isError \
      results carrying {message, code} where code is one of invalid_input, not_found, \
      conflict, internal. Paginated collection reads (list_work_items, list_cards, \
-     list_links, list_topics, survey_work_items) return {items, total, limit, offset}; \
+     list_links, list_topics) return {items, total, limit, offset}, where `total` is the \
+     whole filtered corpus on every page — including one whose offset overshot the last \
+     row, which returns no items and the same total; \
      the unpaginated ones (list_reports, list_areas, \
      list_comments, list_daily_plan) return a bare array and have no archived \
      filter; and the filtered ones \
      (list_proposals, list_projects) return {items, omitted}, where `omitted` counts \
      the rows their defaults hid — so a narrowed view can never be mistaken for the \
-     whole corpus. list_work_items and survey_work_items carry `omitted` too, for the \
-     same reason: both are lean by default (no content/details) and both hide `closed` \
+     whole corpus. list_work_items carries `omitted` too, for the \
+     same reason: it is lean by default (no content/details) and hides `closed` \
      items unless you pass wi_status \"closed\" or \"all\". \
      Every read that filters archived rows excludes them by default: pass \
      `archived: null` for both, `true` for archived only. Writes take a project or area by name \
@@ -61,7 +63,8 @@ pub async fn server_instructions_with_roster(pool: &sqlx::PgPool) -> String {
         // (~87 tokens for 27 projects). A longer explanation would cost more
         // than the thing it explains.
         Ok(names) if !names.is_empty() => format!(
-            "{base}\n\nActive projects (the only valid targets for new work): {}. \
+            "{base}\n\nActive projects (the only valid targets for new work — an \
+             archived one is refused, not filed): {}. \
              Pass one by name directly; call list_projects only when you need their \
              descriptions to choose between them.",
             names.join(", ")
