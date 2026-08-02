@@ -25,14 +25,14 @@ enumerates the tools a third time. All three are drift-tested against
 | Work items | `create_work_item`, `get_work_item`, `update_work_item`, `list_work_items` |
 | Cards | `create_card`, `update_card`, `list_cards` |
 | Comments | `add_comment`, `list_comments`, `update_comment`, `delete_comment` |
-| Reading-list links | `create_link`, `list_links`, `update_link`, `mark_link_read` |
+| Reading-list links | `create_link`, `list_links`, `update_link`, `delete_link`, `mark_link_read` |
 | Relationships | `relate`, `unrelate`, `neighbors` |
 | Topics | `create_topic`, `get_topic`, `update_topic`, `list_topics`, `search_topics`, `archive_topic` |
 | Daily planning | `create_daily_plan_item`, `list_daily_plan`, `move_daily_plan_item`, `reorder_daily_plan`, `set_daily_plan_completion`, `delete_daily_plan_item`, `daily_plan_history` |
 | Sprint proposals | `propose_sprint`, `list_proposals`, `get_proposal`, `update_proposal` |
 | Reports | `create_report`, `list_reports`, `get_report` |
 | Handoffs | `create_handoff`, `get_handoff`, `update_handoff` |
-| Projects and areas | `list_projects`, `get_project`, `create_project`, `update_project`, `list_areas`, `create_area` |
+| Projects and areas | `list_projects`, `get_project`, `create_project`, `update_project`, `list_areas`, `create_area`, `update_area`, `delete_area` |
 
 Two tools are not what their names suggest:
 
@@ -216,6 +216,44 @@ nodes and have no archived state, and reports and plan items have never exposed
 one. `docs_drift.rs::the_archived_affordance_matches_the_instructions` fences
 that split against the derived schemas, so a read cannot quietly join or leave
 the class.
+
+### Disposal semantics (WI #855)
+
+The table above says how to *read past* a disposal. This says which disposal to
+*write*, and it is a decision the corpus needs made once: korg had two endings
+in the code and no rule saying which applied to what, and using one flag for
+three different claims is how a corpus drifts.
+
+> **`archived` means "real, but not a target for new work."** Lossless,
+> reversible, keeps history. This is the ending for anything with identity.
+>
+> **A hard delete means "this was never real."** Irreversible, and it
+> **refuses when the row is referenced**. It exists only where mis-capture is
+> routine and there is no history worth keeping.
+>
+> **Test residue is a `category`, not a disposal.** `EVAL` (migration 0018)
+> already makes harness leakage findable as a group; it needs no new ending.
+
+| Kind | Ending | Why |
+|---|---|---|
+| work items, cards, proposals, topics, reports, handoffs | `archived` only | each carries a thread and a decision history |
+| projects | `archived` only (#828) | a project is the routing target for real work; `archived` already means "not a target for new work", so a delete would have nothing left to mean |
+| links | `archived` **or** `delete_link` | a capture is either something you decided about or something you mistyped |
+| areas | `delete_area` only | an area is a label with a description, not a record — nothing accumulates on it, so there is no history to archive |
+| comments, daily-plan items, edges | delete only | correcting them *is* the edit |
+
+**The refuse-if-referenced clause is the load-bearing half.** Without it the
+schema answers the question instead, and answers it wrongly in both directions:
+`relationship` and `comment` both cascade from `node`, so deleting a link would
+take its edges and its whole thread with it; `workitem.area_id` is `ON DELETE
+SET NULL`, so deleting an area would silently unfile every item under it.
+Neither is a decision a caller made. So both deletes count what points at the
+row, refuse with `conflict` naming it, and leave the resolution — move the
+items, drop the edges, or just archive it — to the caller.
+
+Both deletes return `{deleted: bool}` where `false` means there was no such
+row, matching `delete_comment`; a wrong-kind `node_id` is `invalid_input`, not
+a silent cross-kind delete.
 
 Per-entity filters, all applied server-side — prefer them to fetching
 everything and sifting:

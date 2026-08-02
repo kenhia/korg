@@ -75,8 +75,9 @@ async fn mcp_http_end_to_end() {
     assert_eq!(st, StatusCode::OK);
     let tools = tl["result"]["tools"].as_array().expect("tools array");
     // 48 once #828 added get_project; 47 since #871 deleted the
-    // `survey_work_items` alias.
-    assert_eq!(tools.len(), 47, "expected 47 tools, got {}", tools.len());
+    // `survey_work_items` alias; 50 since #888/#889 added the three disposal
+    // tools (delete_link, update_area, delete_area).
+    assert_eq!(tools.len(), 50, "expected 50 tools, got {}", tools.len());
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     assert!(names.contains(&"create_work_item"));
     assert!(names.contains(&"list_work_items"));

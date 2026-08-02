@@ -625,7 +625,7 @@
     "name": "create_link"
   },
   {
-    "description": "List reading-list links as {items, total, limit, offset}, ordered by node_id. Archived links are EXCLUDED by default.",
+    "description": "List reading-list links as {items, total, limit, offset}, ordered by node_id. Archived links are EXCLUDED by default. Each row carries `created` and `updated`, so capture recency is readable without a second call.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -674,10 +674,17 @@
     "name": "list_links"
   },
   {
-    "description": "Update a reading-list link in ONE transaction: disposition, read flag, tags -- any combination. This is how an agent records what it decided about a captured URL (migration 0004's intended workflow). Returns the updated link; isError `not_found` if the node is missing or is not a link; an invalid disposition changes nothing.",
+    "description": "Update a reading-list link in ONE transaction: disposition, read flag, tags, archived -- any combination. This is how an agent records what it decided about a captured URL (migration 0004's intended workflow), and `archived` is its lifecycle end: the disposal list_links has always excluded by default. Returns the updated link; isError `not_found` if the node is missing or is not a link; an invalid disposition changes nothing.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "archived": {
+          "description": "The lifecycle end for a link that was real (WI #888). `list_links` has\ndocumented an archived-excluded default since #534 with no write able\nto reach it; this is that write. For a capture that was never real —\na probe, a mistyped URL — `delete_link` is the honest disposal.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "disposition": {
           "enum": [
             "Unread",
@@ -712,6 +719,23 @@
       "type": "object"
     },
     "name": "update_link"
+  },
+  {
+    "description": "Hard-delete a captured URL -- the disposal for a link that was never real (a probe, a mistyped capture). For a link that WAS real, archive it with update_link instead; delete is irreversible. REFUSES with `conflict` if the link has any relationship edge, comment, or daily-plan reference, naming what points at it -- anything referenced has a history, and resolving that reference is your decision, not the database's. Returns {deleted: bool} -- false means there was no such link.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "delete_link"
   },
   {
     "description": "DEPRECATED -- use update_link, which does this plus disposition and tags in one transaction. Marks a reading-list link read or unread; returns the updated link.",
@@ -1776,7 +1800,7 @@
     "name": "update_project"
   },
   {
-    "description": "List the areas under a project (by project name).",
+    "description": "List the areas under a project (by project name), each with its `description` — what the area is for. get_project inlines the same rows, so a focused project read needs no follow-up call.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1819,5 +1843,65 @@
       "type": "object"
     },
     "name": "create_area"
+  },
+  {
+    "description": "Rename an area (`new_name`) and/or re-describe it (`description`; null clears), selected by project + current name. Returns the updated row. Work items keep pointing at the same area through a rename. isError `not_found` if no such area, `conflict` if the new name is already taken in that project.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "description": "What the area is for; null clears it, omitted leaves it unchanged.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The area to update, by its current name.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "new_name": {
+          "description": "Rename to this. Omit to leave the name alone.",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "project"
+      ],
+      "type": "object"
+    },
+    "name": "update_area"
+  },
+  {
+    "description": "Delete an area by project + name. An area is a label, not a record with a history, so delete is its lifecycle end — there is no archive. REFUSES with `conflict` naming the count if any work item is still filed under it; move those off first, because deleting would silently unfile them. Returns {deleted: bool} — false means there was no such area.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "project": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "project"
+      ],
+      "type": "object"
+    },
+    "name": "delete_area"
   }
 ]

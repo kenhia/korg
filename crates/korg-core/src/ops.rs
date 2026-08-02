@@ -111,6 +111,12 @@ pub mod schema {
         json_schema!({ "type": "string", "minLength": 1 })
     }
 
+    /// An optional string that must not be blank when it *is* given — an
+    /// omitted rename is "leave it alone", an empty one is a mistake.
+    pub fn non_empty_opt(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({ "type": ["string", "null"], "minLength": 1 })
+    }
+
     pub fn tags(_: &mut SchemaGenerator) -> Schema {
         json_schema!({ "type": "array", "items": { "type": "string", "minLength": 1 } })
     }
@@ -273,6 +279,33 @@ pub struct CreateArea {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
+}
+
+/// `update_area` (WI #889). Areas are keyed by `(project, name)` like every
+/// other name-selected entity, so `name` selects and `new_name` renames.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct UpdateArea {
+    #[schemars(schema_with = "schema::non_empty")]
+    pub project: String,
+    /// The area to update, by its current name.
+    #[schemars(schema_with = "schema::non_empty")]
+    pub name: String,
+    /// Rename to this. Omit to leave the name alone.
+    #[serde(default)]
+    #[schemars(schema_with = "schema::non_empty_opt")]
+    pub new_name: Option<String>,
+    /// What the area is for; null clears it, omitted leaves it unchanged.
+    #[serde(default, deserialize_with = "double_option")]
+    pub description: Option<Option<String>>,
+}
+
+/// `delete_area` (WI #889) — the `(project, name)` selector, no payload.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct AreaRef {
+    #[schemars(schema_with = "schema::non_empty")]
+    pub project: String,
+    #[schemars(schema_with = "schema::non_empty")]
+    pub name: String,
 }
 
 /// `list_areas` — and the `project` query parameter it shares with REST.
