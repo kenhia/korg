@@ -354,3 +354,32 @@ in the covered WIs).
   their own 0013 touch trigger, outside #885's node-satellite mechanism —
   confirm, don't assume) and, with 893 landed, §5's works-as-documented
   measurement has a real chance of holding.
+
+## 14. Rank 4.7 shipped — 2026-08-02
+
+- **039 (893) merged `baec94c`, deployed same day**; 896's quick sprint also
+  done. Every T3 finding is now addressed and the surface is **50 tools**.
+- The sprint's centre is the **disposal doctrine** (`docs/api.md`):
+  `archived` = real-but-not-a-target (anything with identity); hard delete =
+  never-real, **refuses when referenced** (comments, plan items, edges,
+  links, areas); test residue is a `category` (`EVAL`), not a disposal.
+  Postgres would have answered the reference question wrongly in both
+  directions (cascade for links, SET NULL for areas) — the refusal makes it
+  a caller's decision.
+- **#855 dissolved as 816 predicted**: no `delete_project` verb — projects
+  always have identity. `feedhub`/`loglens` already carried `EVAL`+archived
+  (verified live before any code); `Agent-Plan` stays archived as the
+  superseded idea it is. And **816 §8's loose end finally closed**: the five
+  #108–#112 placeholders claiming "Archived; kept for history" while
+  `archived:false` are now actually archived. Two programs after it was
+  first recorded.
+- **Premise correction worth logging**: 893's summary guessed "likely a
+  link-timestamps migration" — wrong. Links are nodes; `node` has carried
+  both timestamps since 0001. They were unprojected, not absent. No
+  migration shipped (21 before and after).
+- Probe link 878 disposed post-deploy — the doctrine's first worked example,
+  against the row that motivated it.
+- **894 is briefed by comment on the proposal** (the 867 mechanism): 039's
+  never-audited new surface, F-18, the prospective-#885 subtlety, T3's
+  method and residue discipline, both §5 measurements. A bare
+  `start-sprint korg:894` in a fresh session is sufficient.

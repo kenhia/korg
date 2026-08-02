@@ -11,12 +11,12 @@
   on the fleet). 868's re-review (037) failed the works-as-documented
   measurement with seven behaviour gaps; 038 closed six of them plus #871's
   alias deletion, and refuted the seventh (#886 — the probe read a UTC clock,
-  not a broken freeze). 038 deployed 2026-08-02 with per-fix live
-  verification; the surface is 47 tools. Remaining: **893** (disposal
-  semantics — #888/#889, the two T3 gaps still open, plus #855), then
-  **894 re-runs plan §5's exit measurements** — with 893 landed, the
-  works-as-documented half has a real chance of passing. Side quest: 896
-  (agent-skills, rank 0.5) deletes refill-queue's dead alias mention.
+  not a broken freeze). 039 added the disposal doctrine + link/area
+  lifecycle (50 tools); #855 dissolved with no delete_project verb; 896's
+  consumer one-liner is done. **Every T3 finding is addressed.** Remaining:
+  **894 re-runs plan §5's exit measurements** in a fresh session — briefed
+  by comment on the proposal; both measurements holding drops the program
+  to low-rank continual improvement.
 
 ## Next
 
