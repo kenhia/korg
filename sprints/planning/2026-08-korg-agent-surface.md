@@ -383,3 +383,43 @@ in the covered WIs).
   never-audited new surface, F-18, the prospective-#885 subtlety, T3's
   method and residue discipline, both §5 measurements. A bare
   `start-sprint korg:894` in a fresh session is sufficient.
+
+## 15. Rank 4.8 ran — the measurement re-run, 2026-08-02
+
+Sprint 040, findings in `sprints/review/2026-08-02-894-measurement-re-run.md`.
+The briefing-by-comment mechanism worked: a bare `start-sprint korg:894` was
+sufficient, and no scope had to be re-derived.
+
+- **All nine T3 findings verified fixed** against production, each with its
+  call. **039's new surface audited fresh for the first time** and needed no
+  corrections — the refuse-if-referenced contract holds in both directions
+  (refuses with counts and kinds, succeeds once clean, `{deleted:false}` on a
+  miss). Surface confirmed at **50 tools**.
+- **§5 measurement 1 holds** — the korg block in the global `CLAUDE.md` is
+  still empty; nothing regressed into it across 038 and 039.
+- **§5 measurement 2 fails by one XS finding — #905.** `project` rows expose
+  no `created`/`updated` on any surface (MCP or REST) while `get_project` and
+  `list_projects detail:"full"` both promise "every column".
+- **F-18 answered and reframed.** The 0013 touch trigger is fine —
+  `project.updated` does advance. Nothing can observe it. The gap is
+  `ProjectRow` omitting two fields, and **`0013_project_touch.sql`'s own
+  header predicted exactly this** ("Latent today (ProjectRow doesn't expose
+  timestamps) but a booby trap for anything that starts sorting projects by
+  recency"). #885 armed the trap by making `updated` load-bearing everywhere
+  else. Confirmed only *after* the finding was written, per method — which is
+  what turned "projects have no timestamps" into "projects have timestamps
+  nothing projects", the same premise correction 039 made about links, caught
+  before publication this time.
+- **The UTC/PT trap fired on schedule and was a non-event.** The session's
+  clock read 2026-08-02 against a server whose local today was 2026-08-01;
+  038's date-naming refusals are what made it harmless. A fix that prevents
+  the next session's mistake, not one that merely passes a test.
+- **Loop state: one more turn, narrowly.** §5 requires both measurements;
+  one failed, so #905 is filed and the rank holds. But T3 found seven gaps
+  and this pass found one, in a projection, on the only kind that had not
+  been through a timestamps sprint. The honest reading is that this is the
+  last turn before the drop — a single XS WI, not another 038-sized fix
+  sprint. That call is Ken's; the rule as written says turn.
+- Next: a proposal covering **#905** alone (or #905 as a rider on whatever
+  lands next in korg). Re-running measurement 2 afterwards is one
+  `get_project` call.
