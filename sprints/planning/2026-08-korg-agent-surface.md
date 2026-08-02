@@ -282,3 +282,52 @@ in the covered WIs).
 - **Next: 868** (rank 4.5) — fresh session, not one that built any of this.
   Remaining opportunistic: #846 (korg half only), #855, #862, #863; 825 carries
   the row-contract markers (036 D-8).
+
+## 11. Rank 4.5 ran — the T3 re-review, 2026-08-02
+
+- Sprint **037** (868): a fresh session (none of 4.1–4.4's work in its
+  context; docs/code unread until findings were written) ran T2's method
+  against the deployed surface. 47/48 tools called, failure paths included.
+  Record: `sprints/review/2026-08-02-t3-surface-re-review.md`.
+- **§5 measurement 1 — PASS.** The global CLAUDE.md korg block is empty,
+  independently confirmed by the re-reviewer reading the live file. T2's
+  traps (#851/#852) verified fixed at source: survey defaults honest,
+  list_proposals lean with `omitted`, no token bomb.
+- **§5 measurement 2 — FAIL.** Eight WIs filed: **#883** (envelope `total`
+  → 0 past the last row), **#884** (archived projects accept new work),
+  **#885** (`updated` frozen on ordinary edits of WIs/cards/proposals —
+  F-18's wider class), **#886** (daily-plan past-day freeze unenforced on
+  create/delete/reorder), **#887** (src_path CHECK → raw `internal`),
+  **#888** (links: no archive/delete, no timestamps), **#889** (area
+  descriptions write-only; no area lifecycle), **#890** (two description
+  nits). The gaps are a tier smaller than T2's — behaviour edges, not
+  misleading defaults — the loop is converging but not done.
+- **Program stays at rank.** Natural 4.6: a fix sprint over #883–#890
+  (mostly S/XS, #885 the M), folding #871 in (the alias was still live and
+  the re-review exercised it), then re-run the measurements.
+- Declared residue: probe nodes 872–882 archived/deleted per the findings
+  doc; link 878 and report 880 outlive the session because their kinds have
+  no removal path (#888, and reports by design).
+
+## 12. The loop's next turn — 2026-08-02 (overseer)
+
+- **868 closed `done`** (its deliverables are the findings doc + the eight
+  WIs; the fail on measurement 2 is the loop working, not the sprint
+  failing). Closing it live-demonstrated #885: the status change left
+  `updated` frozen.
+- **892 (rank 4.6)** — fix sprint: #871 + #883/#884/#885/#886/#887/#890.
+  Seven small fixes sharing test surfaces; #885 is the M and the priority —
+  until it lands, `updated` is not evidence of recency anywhere.
+- **893 (rank 4.7)** — disposal semantics: #888 + #889 + **#855, promoted
+  from opportunistic deliberately**: links, areas and dead projects are the
+  same what-does-delete-mean question, and answering it three times in
+  three sprints would answer it three different ways. After 4.6; additive.
+- **894 (rank 4.8)** — the measurement re-run: fresh session, 037's findings
+  doc as the checklist, both §5 measurements again. Both hold → the program
+  drops to low-rank continual improvement; else the loop turns again.
+- The 500-char cap **rejected the overseer's own first drafts of 892/893**
+  (572 and 587 chars) with the counts-and-remedy error 036 wrote. The
+  contract polices its author; working as designed.
+- Still opportunistic, unchanged: #846 (korg one-liner), #862, #863.
+  825 stays at 6.5 and now also carries 036's D-8 hand-off (the has-details
+  marker that lets `/api/work-items` go lean).
