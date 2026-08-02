@@ -49,6 +49,29 @@ found.
   and `created`/`updated`" would have been true; saying what the timestamps
   tell you is what makes an agent reach for them.
 
+## Deployed 2026-08-02
+
+Image `korg:9cbf81e5efac` (rev `9cbf81e5efac1ea35effca4d9a167d187b966794`, the
+squash-merge of PR #44) on kubsdb `:5674`. Rollback target
+`korg:baec94c1bb9e` (sprint 039). No migration — `migrations: 21` before and
+after, every row count unchanged.
+
+Verified live, on the two surfaces #905 was filed against:
+
+- `GET /api/projects` — rows now carry `created` and `updated` alongside the
+  ten they already had. Twelve keys, not ten.
+- `list_projects detail:"full"` over MCP — same, and both shipped tool
+  descriptions read back with the timestamps named.
+- **The trigger is observable in production for the first time.** The
+  post-deploy check's idempotent write on the `korg` project row left it
+  reading `updated: 2026-08-02T06:11:14Z` against `created: 2026-06-24` —
+  0013 has been doing that since #529 with nothing able to see it.
+- Projects nobody has edited since creation (`hv-simulator`, `kapollo`,
+  `kpidash`, `kvllm`, `mortars`) read `updated == created`. Correct, not a
+  regression — the same shape 040's briefing flagged for link 123, and the
+  one that would become the next loop's false finding if filed.
+- `GET /plan` 200; `post-deploy-check.sh --compare` exits 0.
+
 ## Follow-ups
 
 On deploy, the overseer re-runs plan §5's two exit measurements. Measurement 2
