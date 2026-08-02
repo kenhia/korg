@@ -139,4 +139,37 @@ its work items off it first; the refusal is what forces that to be a decision.
 
 - **Probe link 878 is disposed after deploy, not before.** `delete_link` does
   not exist on kubsdb until this ships, so the stuck row #888 cites as live
-  evidence is cleared as a ship step.
+  evidence is cleared as a ship step. **Done — see below.**
+
+## Deployed 2026-08-02
+
+PR [#42](https://github.com/kenhia/korg/pull/42), squash-merged as `baec94c`.
+
+| | |
+| --- | --- |
+| Image | `korg:baec94c1bb9e` (label `…image.revision=baec94c1bb9eb8f91cdc0f14f06fc870fbd2e531`) |
+| Rollback target | `korg:21c6d597` (sprint 038) |
+| Migrations | none — 21 before, 21 after |
+
+`post-deploy-check.sh --compare` exited 0 with **every** row count unchanged
+(work_items 611, cards 30, links 5, proposals 124, reports 24, projects 36,
+topics 1; node_count 806). No migration in this sprint, so an unchanged schema
+is the expected result rather than a lucky one.
+
+### Verified live, per fix
+
+- **50 tools** over MCP, including `delete_link`, `update_area`, `delete_area`.
+- **#888** — `/api/links` rows now carry `archived`, `created`, `updated`.
+- **#889** — `/api/areas?project=korg` returns descriptions, and three of the
+  four had one already: *"Timebox slots, slot templates, weekly schedule."*,
+  *"korg backend"*, *"User facing web UI"*. **Written long ago and unreadable
+  from the surface until this deploy** — the bug, visible in its own fix.
+- **The refusal** — `DELETE /api/areas {project:"korg", name:"engine"}` →
+  `409 conflict`, *"area 'engine' still has 5 work item(s) filed under it"*,
+  and the area survives with its five items. The load-bearing clause holds in
+  production, not just in tests.
+- **Probe link 878 disposed.** `DELETE /api/links/878` → `{"deleted":true}`;
+  links total 5 → 4. The doctrine's first worked example against the exact row
+  that motivated it: a probe capture that was never real, so a delete rather
+  than an archive.
+- Deep link `/plan` → 200.
