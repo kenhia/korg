@@ -11,9 +11,12 @@
   on the fleet). 868's re-review (037) failed the works-as-documented
   measurement with seven behaviour gaps; 038 closed six of them plus #871's
   alias deletion, and refuted the seventh (#886 — the probe read a UTC clock,
-  not a broken freeze). Remaining: deploy 038, then **re-run plan §5's exit
-  measurements** — the findings-all-works-as-documented half is what a rerun
-  now has a chance of passing.
+  not a broken freeze). 038 deployed 2026-08-02 with per-fix live
+  verification; the surface is 47 tools. Remaining: **893** (disposal
+  semantics — #888/#889, the two T3 gaps still open, plus #855), then
+  **894 re-runs plan §5's exit measurements** — with 893 landed, the
+  works-as-documented half has a real chance of passing. Side quest: 896
+  (agent-skills, rank 0.5) deletes refill-queue's dead alias mention.
 
 ## Next
 

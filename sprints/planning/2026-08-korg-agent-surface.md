@@ -331,3 +331,26 @@ in the covered WIs).
 - Still opportunistic, unchanged: #846 (korg one-liner), #862, #863.
   825 stays at 6.5 and now also carries 036's D-8 hand-off (the has-details
   marker that lets `/api/work-items` go lean).
+
+## 13. Rank 4.6 shipped — 2026-08-02
+
+- **038 (892) merged `21c6d59`, deployed same day** with per-fix live
+  verification in its record. Five WIs fixed, #871's alias deleted (the
+  surface is **47 tools** — verified from two independent sessions), and
+  **#886 refuted, not fixed**: the T3 probe read a UTC clock against a
+  server whose `KORG_TIMEZONE` is America/Los_Angeles; the freeze has been
+  enforced since sprint 011. What shipped for it is the root-cause fix —
+  refusals and the five daily-plan descriptions now name the server's local
+  today. The deploy record's own probe has production declaring "today,
+  **2026-08-01**" at 03:00Z: the refutation, demonstrated live.
+- The T3 findings doc carries a finding-4 addendum recording the refutation,
+  so 894's checklist self-corrects rather than inviting re-belief.
+- Consumer residue queued: agent-skills **#895** / proposal **896** (rank
+  0.5, top of queue) — the one-line refill-queue cleanup, standalone by
+  design.
+- **Loop state: 893 (4.7) next** — #888/#889 are the only T3 gaps still
+  open, both lifecycle, both in 893's scope alongside #855. Then **894
+  (4.8)**; its checklist gains F-18's `project.updated` (projects have
+  their own 0013 touch trigger, outside #885's node-satellite mechanism —
+  confirm, don't assume) and, with 893 landed, §5's works-as-documented
+  measurement has a real chance of holding.
