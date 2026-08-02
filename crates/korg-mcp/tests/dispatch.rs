@@ -66,13 +66,25 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
         .await
         .expect("card");
 
-    // Two links: one to patch, one to mark read.
+    // Three links: one to patch, one to mark read, one to delete.
     let link = repo::create_link(pool, new::link("https://example.invalid/one"))
         .await
         .expect("link");
     let readable = repo::create_link(pool, new::link("https://example.invalid/two"))
         .await
         .expect("readable link");
+    let doomed_link = repo::create_link(pool, new::link("https://example.invalid/three"))
+        .await
+        .expect("doomed link");
+
+    // Two more areas: one to rename, one to delete. Both stay unreferenced —
+    // delete_area refuses while work items are filed under it (#889).
+    repo::create_area(pool, "korg", "renameable", None)
+        .await
+        .expect("renameable area");
+    repo::create_area(pool, "korg", "doomed", None)
+        .await
+        .expect("doomed area");
 
     // Two comments: one to patch, one to delete.
     let comment = repo::add_comment(pool, wi.node_id, "a comment")
@@ -196,6 +208,7 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
             "update_link",
             json!({"node_id": link.node_id, "disposition": "Done"}),
         ),
+        ("delete_link", json!({"node_id": doomed_link.node_id})),
         (
             "mark_link_read",
             json!({"node_id": readable.node_id, "read": true}),
@@ -299,6 +312,11 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
             "create_area",
             json!({"project": "korg", "name": "created-area"}),
         ),
+        (
+            "update_area",
+            json!({"project": "korg", "name": "renameable", "new_name": "renamed"}),
+        ),
+        ("delete_area", json!({"project": "korg", "name": "doomed"})),
     ])
 }
 

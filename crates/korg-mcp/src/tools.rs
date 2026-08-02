@@ -192,8 +192,9 @@ pub fn tools() -> Vec<Tool> {
         tool::<ops::Id>("delete_comment", "Delete a comment by its id. Returns {deleted: bool} — false means there was no such comment."),
         tool2::<ops::Id, ops::CommentBody>("update_comment", "Edit a comment's body by its id (from list_comments). `created` is preserved; `updated` advances."),
         tool::<NewLink>("create_link", "Capture a reading-list URL. Returns the created link row."),
-        tool::<ops::ListLinks>("list_links", "List reading-list links as {items, total, limit, offset}, ordered by node_id. Archived links are EXCLUDED by default."),
-        tool2::<ops::NodeId, LinkPatch>("update_link", "Update a reading-list link in ONE transaction: disposition, read flag, tags -- any combination. This is how an agent records what it decided about a captured URL (migration 0004's intended workflow). Returns the updated link; isError `not_found` if the node is missing or is not a link; an invalid disposition changes nothing."),
+        tool::<ops::ListLinks>("list_links", "List reading-list links as {items, total, limit, offset}, ordered by node_id. Archived links are EXCLUDED by default. Each row carries `created` and `updated`, so capture recency is readable without a second call."),
+        tool2::<ops::NodeId, LinkPatch>("update_link", "Update a reading-list link in ONE transaction: disposition, read flag, tags, archived -- any combination. This is how an agent records what it decided about a captured URL (migration 0004's intended workflow), and `archived` is its lifecycle end: the disposal list_links has always excluded by default. Returns the updated link; isError `not_found` if the node is missing or is not a link; an invalid disposition changes nothing."),
+        tool::<ops::NodeId>("delete_link", "Hard-delete a captured URL -- the disposal for a link that was never real (a probe, a mistyped capture). For a link that WAS real, archive it with update_link instead; delete is irreversible. REFUSES with `conflict` if the link has any relationship edge, comment, or daily-plan reference, naming what points at it -- anything referenced has a history, and resolving that reference is your decision, not the database's. Returns {deleted: bool} -- false means there was no such link."),
         tool::<MarkLinkReadArgs>("mark_link_read", "DEPRECATED -- use update_link, which does this plus disposition and tags in one transaction. Marks a reading-list link read or unread; returns the updated link."),
         tool::<ops::Relate>("relate", "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these five labels and no others: `covers` (proposal -> work item), `finding` (report -> work item), `depends_on` (dependent -> dependency), and `has_handoff` (node -> handoff; normally written by create_handoff, but relate attaches an existing handoff to another node) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. An unregistered label is invalid_input naming the registry and the near-miss; `covers`, `finding`, and `has_handoff` also validate endpoint kinds (`has_handoff`'s right end must be a handoff). Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected)."),
         tool2::<ops::NodeId, ops::Neighbors>("neighbors", "List the nodes linked to a node (any kind), with labels. Returns {items, total, limit, truncated}. Each item has `rel_id` (pass to `unrelate`), `direction` (\"out\" = the queried node is the edge's left, so the label reads queried->neighbor; \"in\" = the reverse) and `directed` -- when `directed` is false the label is registry-undirected (e.g. related-to) and you MUST treat the edge as symmetric, ignoring `direction`. Filter server-side with `label` and/or `kind` instead of pulling every edge: e.g. label=\"covers\", kind=\"workitem\" for a proposal's work items. Ordering is neighbor node_id then rel_id."),
@@ -225,8 +226,10 @@ pub fn tools() -> Vec<Tool> {
         tool::<ops::ProjectName>("get_project", "Fetch one project by name: every column — including `notes`, the long-form operational context the lean list omits — plus the areas under it, so a focused read needs no follow-up list_areas. isError with code `not_found` if there is none."),
         tool::<ops::CreateProject>("create_project", "Create a project by name (idempotent — returns the existing id if it already exists). Returns its id."),
         tool2::<ops::ProjectName, ProjectPatch>("update_project", "Update a project's metadata by name (the name itself is immutable), returning the updated project: status (active|maintenance|inactive|archived), machines, deploy_to, category, description, notes, gh_repo, src_path. Omitted fields are unchanged. `description` is capped at 160 characters — it is a routing line, not a blurb; put anything longer in `notes`."),
-        tool::<ops::ProjectRef>("list_areas", "List the areas under a project (by project name)."),
+        tool::<ops::ProjectRef>("list_areas", "List the areas under a project (by project name), each with its `description` — what the area is for. get_project inlines the same rows, so a focused project read needs no follow-up call."),
         tool::<ops::CreateArea>("create_area", "Create an area under a project by name (idempotent — updates the description if it already exists). Returns its id."),
+        tool::<ops::UpdateArea>("update_area", "Rename an area (`new_name`) and/or re-describe it (`description`; null clears), selected by project + current name. Returns the updated row. Work items keep pointing at the same area through a rename. isError `not_found` if no such area, `conflict` if the new name is already taken in that project."),
+        tool::<ops::AreaRef>("delete_area", "Delete an area by project + name. An area is a label, not a record with a history, so delete is its lifecycle end — there is no archive. REFUSES with `conflict` naming the count if any work item is still filed under it; move those off first, because deleting would silently unfile them. Returns {deleted: bool} — false means there was no such area."),
     ]
 }
 
@@ -431,6 +434,13 @@ impl KorgServer {
             "update_link" => {
                 let (a, patch) = parse_args2::<ops::NodeId, LinkPatch>(args)?;
                 respond(repo::update_link(pool, a.node_id, patch).await)
+            }
+            "delete_link" => {
+                let a: ops::NodeId = parse_args(args)?;
+                match repo::delete_link(pool, a.node_id).await {
+                    Ok(deleted) => ok_json(json!({ "deleted": deleted })),
+                    Err(e) => Ok(to_err(e)),
+                }
             }
             "mark_link_read" => {
                 let a: MarkLinkReadArgs = parse_args(args)?;
@@ -653,6 +663,26 @@ impl KorgServer {
                 let a: ops::CreateArea = parse_args(args)?;
                 match repo::create_area(pool, &a.project, &a.name, a.description.as_deref()).await {
                     Ok(id) => ok_json(json!({ "id": id })),
+                    Err(e) => Ok(to_err(e)),
+                }
+            }
+            "update_area" => {
+                let a: ops::UpdateArea = parse_args(args)?;
+                respond(
+                    repo::update_area(
+                        pool,
+                        &a.project,
+                        &a.name,
+                        a.new_name.as_deref(),
+                        a.description.as_ref().map(|d| d.as_deref()),
+                    )
+                    .await,
+                )
+            }
+            "delete_area" => {
+                let a: ops::AreaRef = parse_args(args)?;
+                match repo::delete_area(pool, &a.project, &a.name).await {
+                    Ok(deleted) => ok_json(json!({ "deleted": deleted })),
                     Err(e) => Ok(to_err(e)),
                 }
             }

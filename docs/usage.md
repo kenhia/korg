@@ -89,13 +89,13 @@ describing a route that no longer exists.
 | `GET`, `POST` | `/api/work-items` | List (`{items,total,limit,offset}`; filters `project`, `archived`, `limit`, `offset`) or create. |
 | `GET` | `/api/work-items/survey` | Slim, paginated work-item projection (no content/details); filters `project`, `wi_status` (+ `all`), `archived` (tri-state since #851, excluding archived by default). Since #861 it shares the MCP `list_work_items` read, so omitting `wi_status` means everything **not terminal** rather than every status, and the response carries `omitted: {closed, archived}`. |
 | `GET`, `PATCH` | `/api/work-items/:wi_number` | Fetch with inlined comments (same shape as the MCP tool), or update. |
-| `GET`, `POST` | `/api/areas` | List or create areas. |
+| `GET`, `POST`, `PATCH`, `DELETE` | `/api/areas` | List, create, rename/re-describe, or delete areas (delete refuses while work items are filed under one). Selected by `{project, name}` in the body. |
 | `GET`, `POST` | `/api/cards` | List cards (enveloped; filters `status`, `project`, `archived`) or create. |
 | `PATCH` | `/api/cards/:node_id` | Update a card. |
 | `GET`, `POST` | `/api/nodes/:node_id/comments` | List or add comments on a node of any kind. |
 | `PATCH`, `DELETE` | `/api/comments/:id` | Edit or delete a comment. |
 | `GET`, `POST` | `/api/links` | List links (enveloped; filters `disposition`, `read`, `archived`) or create. |
-| `PATCH` | `/api/links/:node_id` | Update a link: disposition, read flag and tags in one transaction. |
+| `PATCH`, `DELETE` | `/api/links/:node_id` | Update a link: disposition, read flag, tags and archived in one transaction. `DELETE` hard-deletes an unreferenced capture and refuses (`409`) otherwise — see [disposal semantics](api.md#disposal-semantics-wi-855). |
 | `GET`, `POST` | `/api/topics` | List/search (`?q=`, enveloped) or create topics. |
 | `GET`, `PATCH` | `/api/topics/:node_id` | Fetch or update a topic. |
 | `POST` | `/api/topics/:node_id/archive` | Archive or restore a topic. |

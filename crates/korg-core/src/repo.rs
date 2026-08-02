@@ -9,7 +9,7 @@ use anyhow::Result;
 use rust_decimal::Decimal;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sqlx::{Executor, PgPool, Postgres, Row};
+use sqlx::{Executor, PgPool, Postgres, Row, Transaction};
 use time::OffsetDateTime;
 use ts_rs::TS;
 
@@ -693,6 +693,16 @@ pub struct LinkRow {
     pub disposition: String,
     pub category: Option<String>,
     pub tags: Vec<String>,
+    pub archived: bool,
+    /// Capture recency (WI #888). Links are nodes, so `node` has carried both
+    /// timestamps since 0001 — the row simply never selected them, leaving the
+    /// one kind whose whole point is *when did I capture this* unable to say.
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub created: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub updated: OffsetDateTime,
 }
 
 pub async fn create_link(pool: &PgPool, new: NewLink) -> Result<LinkRow> {
@@ -725,7 +735,7 @@ pub async fn create_link(pool: &PgPool, new: NewLink) -> Result<LinkRow> {
 
 const LINK_SELECT: &str =
     "SELECT l.node_id, l.url, l.title, l.read, l.disposition::text AS disposition, \
-            n.category, n.tags \
+            n.category, n.tags, n.archived, n.created, n.updated \
      FROM link l JOIN node n ON n.id = l.node_id";
 
 #[derive(Debug, Clone)]
@@ -799,6 +809,12 @@ pub struct LinkPatch {
     #[serde(default)]
     #[schemars(schema_with = "schema::tags")]
     pub tags: Option<Vec<String>>,
+    /// The lifecycle end for a link that was real (WI #888). `list_links` has
+    /// documented an archived-excluded default since #534 with no write able
+    /// to reach it; this is that write. For a capture that was never real —
+    /// a probe, a mistyped URL — `delete_link` is the honest disposal.
+    #[serde(default)]
+    pub archived: Option<bool>,
 }
 
 /// One transactional link update (WI #538). The REST handler used to make up
@@ -832,9 +848,88 @@ pub async fn update_link(pool: &PgPool, node_id: i64, patch: LinkPatch) -> Resul
             .execute(&mut *tx)
             .await?;
     }
+    if let Some(archived) = patch.archived {
+        sqlx::query("UPDATE node SET archived = $2 WHERE id = $1")
+            .bind(node_id)
+            .bind(archived)
+            .execute(&mut *tx)
+            .await?;
+    }
     touch_node(&mut *tx, node_id).await?;
     tx.commit().await?;
     reread_link(pool, node_id).await
+}
+
+/// Hard-delete a link (WI #888) — the disposal for a capture that was never
+/// real. `Ok(false)` means there was no such link, matching `delete_comment`.
+///
+/// It **refuses** rather than cascading. `relationship` and `comment` both
+/// cascade from `node`, so an unguarded delete would take a link's edges and
+/// its whole thread with it, and `daily_plan_item.source_node_id` would fail
+/// with raw Postgres text instead of a `conflict` an agent can branch on.
+/// Anything referenced is by definition real; archive it instead.
+pub async fn delete_link(pool: &PgPool, node_id: i64) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM node WHERE id = $1")
+        .bind(node_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    match kind.as_deref() {
+        None => return Ok(false),
+        Some("link") => {}
+        Some(other) => {
+            return Err(
+                RepoError::invalid(format!("node {node_id} is a {other}, not a link")).into(),
+            );
+        }
+    }
+    refuse_if_referenced(&mut tx, node_id).await?;
+    sqlx::query("DELETE FROM node WHERE id = $1")
+        .bind(node_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+/// The refuse-if-referenced guard shared by korg's node-level hard deletes.
+/// A row something else points at is a row with a history, and history is what
+/// `archived` is for — so the caller has to resolve the reference explicitly
+/// rather than let the schema's cascade decide silently.
+async fn refuse_if_referenced(tx: &mut Transaction<'_, Postgres>, node_id: i64) -> Result<()> {
+    let edges: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM relationship WHERE left_id = $1 OR right_id = $1")
+            .bind(node_id)
+            .fetch_one(&mut **tx)
+            .await?;
+    let comments: i64 = sqlx::query_scalar("SELECT count(*) FROM comment WHERE node_id = $1")
+        .bind(node_id)
+        .fetch_one(&mut **tx)
+        .await?;
+    let plan_items: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM daily_plan_item WHERE source_node_id = $1")
+            .bind(node_id)
+            .fetch_one(&mut **tx)
+            .await?;
+    if edges + comments + plan_items > 0 {
+        let mut refs = Vec::new();
+        if edges > 0 {
+            refs.push(format!("{edges} relationship(s)"));
+        }
+        if comments > 0 {
+            refs.push(format!("{comments} comment(s)"));
+        }
+        if plan_items > 0 {
+            refs.push(format!("{plan_items} daily-plan item(s)"));
+        }
+        return Err(RepoError::Conflict(format!(
+            "node {node_id} is referenced by {} — delete is for rows that were \
+             never real; archive it instead, or remove the references first",
+            refs.join(", ")
+        ))
+        .into());
+    }
+    Ok(())
 }
 
 pub async fn set_link_disposition(
@@ -2616,11 +2711,15 @@ pub async fn delete_comment(pool: &PgPool, id: i64) -> Result<bool> {
 pub struct AreaRow {
     pub id: i64,
     pub name: String,
+    /// What the area is for. `create_area` has accepted and idempotently
+    /// updated this since 0001, but no read returned it (WI #889), so the
+    /// contract it documents was unverifiable from the surface offering it.
+    pub description: Option<String>,
 }
 
 pub async fn list_areas(pool: &PgPool, project: &str) -> Result<Vec<AreaRow>> {
     let rows = sqlx::query_as::<_, AreaRow>(
-        "SELECT a.id, a.name FROM area a \
+        "SELECT a.id, a.name, a.description FROM area a \
          JOIN project p ON p.id = a.project_id \
          WHERE p.name = $1 ORDER BY a.name",
     )
@@ -2628,6 +2727,98 @@ pub async fn list_areas(pool: &PgPool, project: &str) -> Result<Vec<AreaRow>> {
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+/// Rename and/or re-describe an area (WI #889). An area is a label, not a
+/// record with a history — `workitem.area_id` keeps pointing at the same row,
+/// so a rename is safe and needs no fixup.
+pub async fn update_area(
+    pool: &PgPool,
+    project: &str,
+    name: &str,
+    new_name: Option<&str>,
+    description: Option<Option<&str>>,
+) -> Result<AreaRow> {
+    if let Some(n) = new_name {
+        require_non_empty(n, "area name")?;
+    }
+    let id = area_row_id(pool, project, name).await?;
+    if let Some(n) = new_name {
+        let clash: Option<i64> = sqlx::query_scalar(
+            "SELECT a.id FROM area a JOIN project p ON p.id = a.project_id \
+             WHERE p.name = $1 AND a.name = $2 AND a.id <> $3",
+        )
+        .bind(project)
+        .bind(n)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+        if clash.is_some() {
+            return Err(RepoError::Conflict(format!(
+                "project '{project}' already has an area named '{n}'"
+            ))
+            .into());
+        }
+        sqlx::query("UPDATE area SET name = $2 WHERE id = $1")
+            .bind(id)
+            .bind(n)
+            .execute(pool)
+            .await?;
+    }
+    if let Some(d) = description {
+        sqlx::query("UPDATE area SET description = $2 WHERE id = $1")
+            .bind(id)
+            .bind(d)
+            .execute(pool)
+            .await?;
+    }
+    let row = sqlx::query_as::<_, AreaRow>("SELECT id, name, description FROM area WHERE id = $1")
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+    Ok(row)
+}
+
+/// Delete an area (WI #889) — refusing while work items are still filed under
+/// it. Areas carry no history of their own, so delete rather than archive is
+/// their whole lifecycle end; the refusal is what stops the schema's
+/// `ON DELETE SET NULL` from silently unfiling every item instead.
+pub async fn delete_area(pool: &PgPool, project: &str, name: &str) -> Result<bool> {
+    let id = match area_row_id(pool, project, name).await {
+        Ok(id) => id,
+        Err(e) if matches!(e.downcast_ref::<RepoError>(), Some(RepoError::NotFound(_))) => {
+            return Ok(false);
+        }
+        Err(e) => return Err(e),
+    };
+    let filed: i64 = sqlx::query_scalar("SELECT count(*) FROM workitem WHERE area_id = $1")
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+    if filed > 0 {
+        return Err(RepoError::Conflict(format!(
+            "area '{name}' still has {filed} work item(s) filed under it — move \
+             them off it first; deleting would silently unfile them"
+        ))
+        .into());
+    }
+    sqlx::query("DELETE FROM area WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(true)
+}
+
+async fn area_row_id(pool: &PgPool, project: &str, name: &str) -> Result<i64> {
+    sqlx::query_scalar(
+        "SELECT a.id FROM area a JOIN project p ON p.id = a.project_id \
+         WHERE p.name = $1 AND a.name = $2",
+    )
+    .bind(project)
+    .bind(name)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| RepoError::NotFound(format!("no area '{name}' in project '{project}'")).into())
 }
 
 // --- sprint proposals (agent planning) -------------------------------------

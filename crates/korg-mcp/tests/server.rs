@@ -21,7 +21,7 @@ async fn mcp_surface_end_to_end() {
     let server = server(pool);
 
     // Tool descriptors are stable.
-    assert_eq!(tools().len(), 47, "expected 47 tools");
+    assert_eq!(tools().len(), 50, "expected 50 tools");
 
     // Create a work item.
     let wi = body(

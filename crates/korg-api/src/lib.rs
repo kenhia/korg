@@ -53,7 +53,13 @@ pub fn build_router(state: AppState) -> Router {
             "/api/work-items/:wi_number",
             get(get_work_item).patch(update_work_item),
         )
-        .route("/api/areas", get(list_areas).post(create_area))
+        .route(
+            "/api/areas",
+            get(list_areas)
+                .post(create_area)
+                .patch(update_area)
+                .delete(delete_area),
+        )
         .route("/api/cards", get(list_cards).post(create_card))
         .route("/api/cards/:node_id", patch(update_card))
         .route("/api/nodes/:id", get(get_node))
@@ -66,7 +72,10 @@ pub fn build_router(state: AppState) -> Router {
             delete(delete_comment).patch(update_comment),
         )
         .route("/api/links", get(list_links).post(create_link))
-        .route("/api/links/:node_id", patch(update_link))
+        .route(
+            "/api/links/:node_id",
+            patch(update_link).delete(delete_link),
+        )
         .route("/api/topics", get(list_topics).post(create_topic))
         .route("/api/topics/:node_id", get(get_topic).patch(update_topic))
         .route("/api/topics/:node_id/archive", post(archive_topic))
@@ -311,6 +320,24 @@ async fn create_area(State(s): State<AppState>, Json(b): Json<ops::CreateArea>) 
     Ok(Json(json!({ "id": id, "name": b.name })))
 }
 
+async fn update_area(State(s): State<AppState>, Json(b): Json<ops::UpdateArea>) -> ApiResult {
+    Ok(Json(json!(
+        repo::update_area(
+            &s.pool,
+            &b.project,
+            &b.name,
+            b.new_name.as_deref(),
+            b.description.as_ref().map(|d| d.as_deref()),
+        )
+        .await?
+    )))
+}
+
+async fn delete_area(State(s): State<AppState>, Json(b): Json<ops::AreaRef>) -> ApiResult {
+    let deleted = repo::delete_area(&s.pool, &b.project, &b.name).await?;
+    Ok(Json(json!({ "deleted": deleted })))
+}
+
 // --- cards ----------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -432,6 +459,11 @@ async fn update_link(
     Ok(Json(json!(
         repo::update_link(&s.pool, node_id, patch).await?
     )))
+}
+
+async fn delete_link(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
+    let deleted = repo::delete_link(&s.pool, node_id).await?;
+    Ok(Json(json!({ "deleted": deleted })))
 }
 
 // --- topics and daily planning --------------------------------------------
