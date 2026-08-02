@@ -412,6 +412,36 @@ in the covered WIs).
   (§5), and the opportunistic remainder (#846, #862, #863; 825's markers)
   living in the normal queue on their own merits.
 
+## 16. Close-out — 2026-08-02: both measurements hold, the rank drops
+
+- 041 (906) shipped #905 and deployed as `9cbf81e`. Overseer re-measured
+  against production the same day:
+  - **Measurement 1 — PASS.** The live global `~/.claude/CLAUDE.md`
+    contains no korg section.
+  - **Measurement 2 — PASS.** `get_project("korg")` returns
+    `created`/`updated` — and `updated` is demonstrably advancing
+    (06:11Z, same-day). REST carries both. The checked-in tool snapshot
+    counts **50**, so no new surface landed unaudited. The lean routing
+    row remains name + description only, per §2.
+- **Per §5, the program does not stop — it drops.** The loop moves to
+  low-rank continual improvement: a re-review recurs when a new tool lands
+  or a session hits friction, not on a schedule. Ranks 4.1–4.9 are all
+  done; nothing in the queue belongs to the program any more.
+- What remains, in the normal queue on its own merits: **#846** (one-line
+  CI scoping), **#862** (`docs_drift` extensions — §5's self-enforcement
+  work, the natural first pick-up), agent-skills **#863** (`start-sprint`
+  premise check), **825** (row-contract markers; what lets
+  `/api/work-items` go lean, 036 D-8). **#842** stays flagged for infra
+  triage (§6).
+- The exit condition, as written on day one: *the korg block in the global
+  `CLAUDE.md` becoming empty, because every trap it documents got fixed at
+  source.* Measured true three times — by T3, by the 894 re-run, and at
+  this close — each by a different session. The program ran 2026-08-01 →
+  2026-08-02: Step 0 plus nine ranked turns, two full fresh-eyes reviews
+  and a measurement re-run; T2's two traps, T3's eight findings and the
+  re-run's one all fixed or refuted; the surface went 48 → 47 → 50 tools,
+  every collection read honest about what it hides.
+
 ## 15. Rank 4.8 ran — the measurement re-run, 2026-08-02
 
 Sprint 040, findings in `sprints/review/2026-08-02-894-measurement-re-run.md`.
