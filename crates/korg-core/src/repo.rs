@@ -2026,6 +2026,18 @@ pub struct ProjectRow {
     /// Machines this project deploys to (e.g. korg → kubsdb).
     pub deploy_to: Vec<String>,
     pub category: Option<String>,
+    /// Both columns have existed since 0001 and migration 0013 has advanced
+    /// `updated` on every write since #529 — this row just never selected
+    /// them, which made projects the last kind whose recency was unreadable
+    /// (WI #905). They are `ProjectRow`-only on purpose: the lean
+    /// `list_projects` row answers *does this belong here?*, and a timestamp
+    /// does not.
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub created: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub updated: OffsetDateTime,
 }
 
 /// Canonicalize a `src_path` into the form migration 0019's
@@ -2268,9 +2280,9 @@ pub async fn update_project_by_name(
     }
 }
 
-const PROJECT_SELECT: &str =
-    "SELECT id, name, gh_repo, src_path, description, notes, status, machines, deploy_to, category \
-     FROM project";
+const PROJECT_SELECT: &str = "SELECT id, name, gh_repo, src_path, description, notes, status, \
+                              machines, deploy_to, category, created, updated \
+                              FROM project";
 
 pub async fn list_projects(pool: &PgPool) -> Result<Vec<ProjectRow>> {
     let rows = sqlx::query_as::<_, ProjectRow>(&format!("{PROJECT_SELECT} ORDER BY name"))

@@ -285,8 +285,16 @@ the saving is the field projection rather than the row filter.
 It returns an envelope rather than a bare array — a deliberate exception to the
 convention in [api.md](api.md#collection-read-shapes) — because `omitted` is
 what stops an agent concluding "there is no such project" from "you did not ask
-for archived ones". `detail:"full"` restores every column including `notes`, so
-a maintenance pass makes one call rather than one per project.
+for archived ones". `detail:"full"` restores every column including `notes` and
+the `created`/`updated` timestamps, so a maintenance pass makes one call rather
+than one per project.
+
+Those timestamps arrived late (WI #905). The columns have existed since 0001
+and migration 0013 has advanced `updated` on every write since #529, but
+`ProjectRow` never selected them — so the two reads that promise "every
+column" returned ten of twelve, and projects were the last kind whose recency
+an agent could not read. They stay out of the lean tier: a timestamp answers
+*when*, not *does this belong here?*.
 
 **`list_proposals` joined this shape in WI #852**, for the same reason and with
 the same two knobs. Over MCP it defaults to the live queue (`proposed` +

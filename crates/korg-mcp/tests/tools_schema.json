@@ -1648,12 +1648,12 @@
     "name": "update_handoff"
   },
   {
-    "description": "Answers \"which project does this work belong to?\". Returns {items, omitted:{archived}} — NOT a bare array; `omitted` is how you know rows were filtered out rather than absent. Each item is name + description (a one-line routing contract saying what belongs here and what does not) + status, the last only when it is not `active`. Defaults: active projects only, lean projection. Pass status:\"all\" to include archived (never a correct route target — their work went to a successor), detail:\"full\" for every column including machines, src_path, gh_repo, category and notes.",
+    "description": "Answers \"which project does this work belong to?\". Returns {items, omitted:{archived}} — NOT a bare array; `omitted` is how you know rows were filtered out rather than absent. Each item is name + description (a one-line routing contract saying what belongs here and what does not) + status, the last only when it is not `active`. Defaults: active projects only, lean projection. Pass status:\"all\" to include archived (never a correct route target — their work went to a successor), detail:\"full\" for every column including machines, src_path, gh_repo, category, notes and the created/updated timestamps.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "detail": {
-          "description": "How wide. Omit for the lean routing projection (name, description, and\nstatus only when it is not `active`); `\"full\"` for every column,\nincluding `notes`.",
+          "description": "How wide. Omit for the lean routing projection (name, description, and\nstatus only when it is not `active`); `\"full\"` for every column,\nincluding `notes` and the `created`/`updated` timestamps.",
           "enum": [
             "lean",
             "full"
@@ -1681,7 +1681,7 @@
     "name": "list_projects"
   },
   {
-    "description": "Fetch one project by name: every column — including `notes`, the long-form operational context the lean list omits — plus the areas under it, so a focused read needs no follow-up list_areas. isError with code `not_found` if there is none.",
+    "description": "Fetch one project by name: every column — including `notes`, the long-form operational context the lean list omits, and `created`/`updated`, which say how stale this project's routing metadata is — plus the areas under it, so a focused read needs no follow-up list_areas. isError with code `not_found` if there is none.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

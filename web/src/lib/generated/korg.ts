@@ -173,7 +173,16 @@ machines: Array<string>,
 /**
  * Machines this project deploys to (e.g. korg → kubsdb).
  */
-deploy_to: Array<string>, category: string | null, };
+deploy_to: Array<string>, category: string | null, 
+/**
+ * Both columns have existed since 0001 and migration 0013 has advanced
+ * `updated` on every write since #529 — this row just never selected
+ * them, which made projects the last kind whose recency was unreadable
+ * (WI #905). They are `ProjectRow`-only on purpose: the lean
+ * `list_projects` row answers *does this belong here?*, and a timestamp
+ * does not.
+ */
+created: string, updated: string, };
 
 /**
  * A project as the lean `list_projects` reports it: the fields that answer
@@ -239,7 +248,16 @@ machines: Array<string>,
 /**
  * Machines this project deploys to (e.g. korg → kubsdb).
  */
-deploy_to: Array<string>, category: string | null, };
+deploy_to: Array<string>, category: string | null, 
+/**
+ * Both columns have existed since 0001 and migration 0013 has advanced
+ * `updated` on every write since #529 — this row just never selected
+ * them, which made projects the last kind whose recency was unreadable
+ * (WI #905). They are `ProjectRow`-only on purpose: the lean
+ * `list_projects` row answers *does this belong here?*, and a timestamp
+ * does not.
+ */
+created: string, updated: string, };
 
 /**
  * The created proposal plus which of the requested wi_numbers resolved.
