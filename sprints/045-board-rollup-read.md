@@ -327,6 +327,54 @@ fixture. The ones pinning a decision rather than a behaviour:
   "planning-queue depth" its README actually asks for. Revisit when the
   kdeskdash infographic contract is settled, not before.
 
+## Deployed 2026-08-05
+
+**Image** `korg:8c2cc9e73fbc` (`8c2cc9e73fbcd21dc4eb11da6e94459957cae137`, the
+squash-merge of PR #48) · **rollback target** `korg:cc943137fa1d`.
+
+**No migration** — the first korg deploy in four sprints that applies none, and
+the post-deploy check says so: `migrations 23 -> 23`, every row count identical
+either side.
+
+```
+post-deploy-check   cards 30 · links 4 · projects 39 · proposals 138 · reports 26
+                    · topics 1 · work_items 674 — all unchanged; node_count 886,
+                    node_min/max and the id sequence unchanged; migrations 23 -> 23
+```
+
+The board itself, live, on the real corpus:
+
+| | |
+|---|---|
+| `GET /api/board` | 200, **15.6 KB**, keys exactly as documented |
+| panels | active **2** · queue **12** · programs **0** · awaiting **0** · depth **39** · reports **5** |
+| `proposals_omitted` | `{done: 114, declined: 4, archived: 6}` |
+| derived header figures | live **14** · shipped **114** · awaiting **0** · active projects **30** of 39 depth rows |
+| D-3 | `board.counts` **absent** |
+| D-5 | `summary` present on the rows; `notes` nowhere in the payload |
+| MCP `tools/list` | **57**, `get_board` advertised with `properties: {}` — D-1's no-arguments claim, as an agent reads it |
+| MCP `tools/call get_board` | `isError: false`, same nine keys, same panel sizes as REST |
+| `/`, `/planning`, `/programs`, `/work-items`, `/plan`, `/handoffs` | 200 |
+| `/api/proposals/rollup` | 39 rows, now carrying `status` |
+
+**The end-to-end number #976's comparison was missing**, measured over the
+tailnet from kai:
+
+```
+/api/board              200   20.4 / 21.0 / 19.2 ms
+/api/work-items/survey  200   17.6 / 16.7 / 16.5 ms
+```
+
+The whole board costs about what **one** existing list read costs — and it is
+replacing a walk that, at this corpus size, is 1 + 14 + 1 + 1 + 1 + 1 round
+trips. That is the argument for the read, and it is structural rather than a
+query-cost question; the aggregate story (D-2) was never the expensive part.
+
+Two panels render empty and should: programs and awaiting are both 0 because 044
+shipped that layer empty by design. The board being *correct* about that — a
+`programs_omitted` of all zeroes rather than a missing key — is the thing worth
+having checked.
+
 ## Coordination
 
 Two-pane protocol (`sprints/planning/2026-08-korg-agent-surface.md` §7) is in
