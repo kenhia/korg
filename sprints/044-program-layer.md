@@ -383,6 +383,45 @@ Two-pane protocol (`sprints/planning/2026-08-korg-agent-surface.md` §7) is in
 force: this session is the **worker** and owns the branch. **Explicit paths only
 on `git add`** — never `-A`, `.`, or `commit -a`.
 
+## Deployed 2026-08-05
+
+**Image** `korg:cc943137fa1d` (`cc943137fa1d186bc1e0e1d555e03344cb8b7355`, the
+squash-merge of PR #47) · **rollback target** `korg:9bd32e19254f`.
+
+Migration 0023 applied at container start. Production matched the rehearsal
+exactly — no NOTICE, because it is pure DDL with nothing to backfill:
+
+```
+post-deploy-check   every row count identical (work_items 672 · proposals 138 · cards 30
+                    · links 4 · topics 1 · reports 26 · projects 39); node_count/min/max
+                    and the id sequence unchanged; migrations 22 -> 23
+after               programs 0 · program nodes 0 · awaiting rows 0 · ranked edges 0
+                    — the layer arrives empty, as it should
+constraints         node_program_has_no_project + node_awaiting_note_needs_since present
+```
+
+Smoke-tested live on both transports. The only write was a set-then-clear of the
+marker on this sprint's own #968, which left the row exactly as found
+(`resolved`, both columns NULL); the two program creates were the cases that get
+**refused**, so nothing was written:
+
+| | result |
+|---|---|
+| `GET /api/programs` | `{"items":[],"omitted":{"archived":0,"done":0}}` — the envelope, not a bare array |
+| `GET /api/awaiting` | `[]` — a bare array, per the shape table |
+| `POST /api/programs` with `project` | `400 invalid_input`, message names the rule *and* the derived span |
+| `POST /api/programs` with a work item as a slice | `400 invalid_input` naming what #968 actually is |
+| `PUT /nodes/968/awaiting {awaiting:true}` | marker set; row appears in the lane |
+| re-set with a new note | **`awaiting_since` byte-identical**, note updated — D-8 live |
+| `{awaiting:false}` | both columns NULL, lane empty |
+| MCP `tools/list` | **56**, all six new tools present |
+| `/`, `/planning`, `/programs`, `/work-items`, `/plan` | 200 |
+
+The one worth noting is the lane row itself: #968 is `resolved`, and it appeared
+in the lane. That is **D-7 proving itself on production data** — `resolved` is
+exactly the status the "clear on terminal" reading would have hidden, and it is
+the canonical awaiting-Ken state.
+
 ---
 
 ## Log
