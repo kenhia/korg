@@ -30,6 +30,8 @@ enumerates the tools a third time. All three are drift-tested against
 | Topics | `create_topic`, `get_topic`, `update_topic`, `list_topics`, `search_topics`, `archive_topic` |
 | Daily planning | `create_daily_plan_item`, `list_daily_plan`, `move_daily_plan_item`, `reorder_daily_plan`, `set_daily_plan_completion`, `delete_daily_plan_item`, `daily_plan_history` |
 | Sprint proposals | `propose_sprint`, `list_proposals`, `get_proposal`, `update_proposal` |
+| Programs | `create_program`, `get_program`, `list_programs`, `update_program` |
+| Awaiting Ken | `set_awaiting`, `list_awaiting` |
 | Reports | `create_report`, `list_reports`, `get_report` |
 | Handoffs | `create_handoff`, `get_handoff`, `update_handoff` |
 | Projects and areas | `list_projects`, `get_project`, `create_project`, `update_project`, `list_areas`, `create_area`, `update_area`, `delete_area` |
@@ -158,8 +160,8 @@ the same envelope", which was true of four of them:
 | `{items, total, limit, offset}` | `list_work_items`, `list_cards`, `list_links`, `list_topics` |
 | `{items, total, limit, truncated}` | `neighbors` (`truncated`, not `offset` — it caps rather than pages) |
 | `{from, to, total, completed, items}` | `daily_plan_history` |
-| bare array | `list_reports`, `list_areas`, `list_comments`, `list_daily_plan` |
-| `{items, omitted}` | `list_proposals`, `list_projects` |
+| bare array | `list_reports`, `list_areas`, `list_comments`, `list_daily_plan`, `list_awaiting` |
+| `{items, omitted}` | `list_proposals`, `list_programs`, `list_projects` |
 
 (`omitted` counts the rows a read's own defaults hid. `list_work_items` carries
 it *in addition to* the paginated envelope.)
@@ -466,6 +468,7 @@ label not in it.
 | Label | Direction | Reads | Endpoints | Same project? |
 |-------|-----------|-------|-----------|---------------|
 | `covers` | directed | proposal **covers** work item | `sprint_proposal` → `workitem` | **required** |
+| `includes` | directed | program **includes** proposal as a slice | `program` → `sprint_proposal` | no — this is the layer where cross-project is legal |
 | `finding` | directed | report **reported** work item | `report` → `workitem` | no |
 | `depends_on` | directed | dependent **depends on** dependency | any → any | no |
 | `related-to` | **undirected** | the two nodes are related | any → any | no |
@@ -565,11 +568,93 @@ This was convention until #967 made it a rule, and the convention leaked: at the
 time of writing, 13 legacy proposals still cover work across projects — four of
 them live in the queue. Migration 0022 moved the four that a rule could resolve
 (unanimous covered-work-item project) and reports the residual rather than
-guessing at the rest. They are split by hand, or absorbed by the program layer
-(#968) once it exists.
+guessing at the rest. They are split by hand, or absorbed by the program layer.
 
 The refusal names both projects and the program layer, because the answer to
 "my sprint spans two repos" is a program, not a wider proposal.
+
+### Programs — the cross-project layer (#968)
+
+A **program** is what a proposal is not allowed to be: work that spans repos. It
+`includes` sprint proposals, ordered, and is the sanctioned answer to the
+question the rule above refuses.
+
+**A program carries no project at all**, enforced by the
+`node_program_has_no_project` CHECK — the exact mirror of the proposal rule, and
+for the opposite reason. A program filed under one project rebuilds the
+mis-routing #967 cured: proposal 818 is the worked example, covering one work
+item each in kagent, klams-mind and korg while filed under "korg", because the
+writer had to pick one.
+
+Instead, `span` is **derived**: the distinct projects of the included proposals,
+on every program row. The fact has one home, so it cannot drift when a slice is
+added. `create_program` refuses a `project`/`project_id` rather than dropping it
+— a caller who passed one believes the program is filed somewhere, and a silent
+drop leaves that belief intact.
+
+| | proposal | program |
+|---|---|---|
+| project | **required** | **refused** — `span` is derived from the slices |
+| bundles | work items, via `covers` | proposals, via `includes` |
+| order | queue `rank` on the node | position `rank` on the **edge** |
+| statuses | `proposed` → `active` → `done`/`declined` | `active` ⇄ `holding` → `done` |
+
+**Order lives on the edge.** Position is a property of the containment, not of
+the proposal — a proposal included by two programs has two positions, and only
+`relationship.rank` can hold both. `create_program` writes the caller's `slices`
+order directly; afterwards, `relate` with a `rank` **reorders in place**, keeping
+the edge's `created`/`origin`. Re-relating *without* a rank leaves the position
+alone, so an unrelated re-relate cannot shuffle a program.
+
+**`get_program` rolls up so nobody crawls.** It returns the program, its `span`,
+and `slices` — the included proposals in program order, each with its status,
+project, `covered_count` and per-status work-item counts — plus comments and the
+`related` block. Rendering a program takes one call, not one per slice.
+
+`holding` is deliberately its own status rather than a shade of `active`: a
+program whose current slice has shipped and whose next has not started is
+neither finished nor in flight, and collapsing the two would have a board claim
+work is underway when nobody is on it.
+
+### Awaiting Ken (#969)
+
+`node.awaiting_since` (+ `awaiting_note`) says **"this moves only when Ken
+acts"** — a decision, an ops action no agent can perform, a review. It sits on
+`node`, so a work item, a proposal and a program can all carry it, and
+`list_awaiting` returns the whole lane in one call, oldest ask first, with each
+row's own status resolved per kind.
+
+**Why a column and not a reserved tag.** The tag was the cheaper mechanism and
+it is unsound here: tags are written *wholesale* (`UPDATE node SET tags = $2`),
+so an agent editing tags for an unrelated reason silently clears the marker —
+and 76% of nodes carry tags. The corpus had already tried and failed at the tag
+approach, holding one `decision` and one `needs-decision` node: two spellings,
+one concept, neither converging.
+
+A timestamp rather than a boolean because the lane's value is "this has been
+waiting nine days". **Re-asserting the marker preserves `awaiting_since`** and
+updates only the note — otherwise every agent that touched a stale ask would
+make it look fresh.
+
+`set_awaiting` both sets and clears, and clearing is deliberately
+agent-reachable: an agent that raised a question and got its answer in-session
+retracts its own marker rather than leaving an answered ask for Ken to click
+away. The web UI's one-click clear is the same core call.
+
+**The lifecycle rule is "a state only Ken sets", not "terminal":**
+
+| transition | clears the marker? | why |
+|---|---|---|
+| work item → `closed` | **yes** | `closed` is Ken-only, so the ask is answered by definition |
+| work item → `resolved` / `done` | **no** | "implemented, may still need a user test" is *the* canonical awaiting-Ken state |
+| proposal → `done` / `declined` | **yes** | both are Ken's call on the bundle |
+| program → `done` | **yes** | same |
+| any node → `archived` | **yes** | the ask is moot |
+
+Getting that backwards — clearing on `resolved`/`done` — would empty the lane of
+precisely the rows it exists to show. `list_awaiting` additionally filters
+archived and Ken-set-status rows on read, so a marker that escaped the write
+rules still cannot haunt the board.
 
 ### Lifecycle invariants
 

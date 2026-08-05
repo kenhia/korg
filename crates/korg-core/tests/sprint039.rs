@@ -174,7 +174,7 @@ async fn deleting_a_referenced_link_refuses_instead_of_cascading() {
     let wi = create_work_item(&pool, new::work_item("something the link informs"))
         .await
         .expect("create wi");
-    relate(&pool, edged.node_id, wi.node_id, "related-to", None)
+    relate(&pool, edged.node_id, wi.node_id, "related-to", None, None)
         .await
         .expect("relate");
 

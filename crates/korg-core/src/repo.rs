@@ -17,8 +17,9 @@ pub use crate::error::RepoError;
 use crate::ops::{self, schema};
 use crate::relationships;
 use crate::vocab::{
-    self, CARD_STATUSES, LINK_DISPOSITIONS, PROJECT_STATUS_ACTIVE, PROPOSAL_LIVE_STATUSES,
-    PROPOSAL_STATUSES, REPORT_STATUSES, WI_LIVE_STATUSES,
+    self, CARD_STATUSES, LINK_DISPOSITIONS, PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES,
+    PROJECT_STATUS_ACTIVE, PROPOSAL_LIVE_STATUSES, PROPOSAL_STATUSES, REPORT_STATUSES,
+    WI_LIVE_STATUSES,
 };
 pub use crate::vocab::{PROJECT_CATEGORIES, PROJECT_STATUSES, WI_STATUSES};
 
@@ -1098,6 +1099,7 @@ pub async fn relate(
     right: i64,
     label: &str,
     origin: Option<&str>,
+    rank: Option<Decimal>,
 ) -> Result<i64> {
     // A node related to itself is meaningless under every registry label and
     // actively harmful under depends_on — it would block itself forever
@@ -1174,18 +1176,26 @@ pub async fn relate(
     }
 
     // Provenance (D-17): stamp created + self-reported origin on insert. The
-    // ON CONFLICT no-op touches only left_id, so re-relate preserves the
-    // original created/origin (what LB-1's migration comment reserved).
+    // ON CONFLICT clause preserves the original created/origin (what LB-1's
+    // migration comment reserved) — it used to be a pure no-op.
+    //
+    // Sprint 044 (D-9) gives it one job: `rank` is COALESCEd, so re-relating an
+    // existing edge **with** a rank reorders it in place, and re-relating
+    // **without** one is still a no-op. Without this there is no reorder path
+    // short of unrelate + relate, which would churn a slice's provenance just to
+    // move it up a position.
     let id: i64 = sqlx::query(
-        "INSERT INTO relationship (left_id, right_id, relationship, created, origin) \
-         VALUES ($1, $2, $3, now(), $4) \
-         ON CONFLICT (left_id, right_id, relationship) DO UPDATE SET left_id = relationship.left_id \
+        "INSERT INTO relationship (left_id, right_id, relationship, created, origin, rank) \
+         VALUES ($1, $2, $3, now(), $4, $5) \
+         ON CONFLICT (left_id, right_id, relationship) \
+         DO UPDATE SET rank = COALESCE(EXCLUDED.rank, relationship.rank) \
          RETURNING id",
     )
     .bind(left)
     .bind(right)
     .bind(label)
     .bind(origin)
+    .bind(rank)
     .fetch_one(pool)
     .await?
     .get("id");
@@ -1311,8 +1321,8 @@ pub async fn related_context(
                 other.id AS node_id, \
                 w.wi_number AS wi_number, \
                 other.kind AS kind, \
-                COALESCE(w.title, sp.title, cd.title, lk.title, lk.url, tp.name, rp.summary, \
-                         hd.title, other.kind || ' #' || other.id) AS title, \
+                COALESCE(w.title, sp.title, pg.title, cd.title, lk.title, lk.url, tp.name, \
+                         rp.summary, hd.title, other.kind || ' #' || other.id) AS title, \
                 r.relationship AS label, \
                 CASE WHEN r.left_id = $1 THEN 'out' ELSE 'in' END AS direction, \
                 count(*) OVER() AS total \
@@ -1321,6 +1331,7 @@ pub async fn related_context(
            ON other.id = CASE WHEN r.left_id = $1 THEN r.right_id ELSE r.left_id END \
          LEFT JOIN workitem w         ON w.node_id  = other.id \
          LEFT JOIN sprint_proposal sp ON sp.node_id = other.id \
+         LEFT JOIN program pg         ON pg.node_id = other.id \
          LEFT JOIN card cd            ON cd.node_id = other.id \
          LEFT JOIN link lk            ON lk.node_id = other.id \
          LEFT JOIN topic tp           ON tp.node_id = other.id \
@@ -3647,11 +3658,673 @@ pub async fn update_proposal(
             .execute(&mut *tx)
             .await?;
     }
+    // D-7: `done`/`declined` are Ken's calls on the bundle, so an awaiting
+    // marker on this proposal has been answered by the transition itself.
+    settle_awaiting(&mut *tx, node_id).await?;
     touch_node(&mut *tx, node_id).await?;
     tx.commit().await?;
     get_proposal(pool, node_id)
         .await?
         .ok_or_else(|| RepoError::NotFound(format!("no proposal with node_id {node_id}")).into())
+}
+
+// === programs: the multi-project layer (#968, sprint 044) ===================
+//
+// 0022 made a proposal single-project and enforced it. That was only half an
+// answer: work that genuinely spans repos had nowhere legal to live, and the
+// corpus showed it — 13 legacy proposals covering work across projects, 4 of
+// them live in the queue, each one filed under whichever project the writer
+// picked first. A program is where that work goes.
+//
+// A program `includes` proposals, ordered (the edge carries the order, D-2), and
+// carries NO project of its own (D-6): its span is derived from its slices, so
+// the fact has one home and cannot go stale when a slice is added.
+
+/// `create_program` / `POST /api/programs`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct NewProgram {
+    #[schemars(schema_with = "schema::non_empty")]
+    pub title: String,
+    /// The routing contract — what this program is trying to achieve, across
+    /// which repos, and how you will know it is done. Same job a proposal's
+    /// `summary` does one level down.
+    pub aim: String,
+    /// The analysis: sequencing, what each slice is waiting on, what was
+    /// considered and rejected. Unbounded.
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::rank")]
+    pub rank: Decimal,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::tags")]
+    pub tags: Vec<String>,
+    /// Proposal `node_id`s this program includes, **in the order given** — the
+    /// first is slice 1. Ids that do not resolve to a proposal are refused, not
+    /// dropped: a program's slice list is its plan, and a silently missing slice
+    /// is a plan that lies.
+    #[serde(default)]
+    #[schemars(schema_with = "schema::node_ids")]
+    pub slices: Vec<i64>,
+    /// Present **only to be refused** (D-6). A program is the cross-project
+    /// layer; filing one under a single project rebuilds exactly the mis-routing
+    /// #967 cured for proposals. Passing either selector is `invalid_input`
+    /// naming the rule, because a silent drop would leave the caller believing
+    /// the program is filed somewhere it is not.
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<i64>,
+}
+
+/// The created program plus the slice ids that were linked, in order.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProgramCreated {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub row: ProgramRow,
+    pub slices: Vec<i64>,
+}
+
+/// A program row. No `project` field — see [`NewProgram::project`] and the
+/// `node_program_has_no_project` constraint; `span` is the derived answer to
+/// "which repos does this touch".
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProgramRow {
+    pub node_id: i64,
+    pub title: String,
+    pub aim: String,
+    pub notes: Option<String>,
+    pub status: String,
+    #[ts(type = "string")]
+    pub rank: Decimal,
+    pub pinned: bool,
+    pub category: Option<String>,
+    pub tags: Vec<String>,
+    pub archived: bool,
+    pub comment_count: i64,
+    /// How many proposals this program includes.
+    pub slice_count: i64,
+    /// **Derived** (D-6): the distinct project names of the included proposals,
+    /// alphabetical. Empty until the program has slices. This is the honest
+    /// answer to "which repos does this touch" — it cannot drift from the
+    /// slices the way a stored `project_id` would.
+    pub span: Vec<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub created: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub updated: OffsetDateTime,
+}
+
+const PROGRAM_SELECT: &str =
+    "SELECT g.node_id, g.title, g.aim, g.notes, g.status, g.rank, g.pinned, \
+            n.category, n.tags, n.archived, \
+            (SELECT count(*) FROM comment cm WHERE cm.node_id = g.node_id) AS comment_count, \
+            (SELECT count(*) FROM relationship r JOIN node sn ON sn.id = r.right_id \
+              WHERE r.left_id = g.node_id AND r.relationship = 'includes' \
+                AND sn.kind = 'sprint_proposal') AS slice_count, \
+            (SELECT coalesce(array_agg(DISTINCT pj.name), '{}') \
+               FROM relationship r JOIN node sn ON sn.id = r.right_id \
+               JOIN project pj ON pj.id = sn.project_id \
+              WHERE r.left_id = g.node_id AND r.relationship = 'includes') AS span, \
+            n.created, n.updated \
+     FROM program g \
+     JOIN node n ON n.id = g.node_id";
+
+/// Create a program and its ordered `includes` edges in one transaction.
+///
+/// Slice order is written as `relationship.rank` = the index in `slices`, so the
+/// caller's order *is* the program's order without a second call (D-2).
+pub async fn create_program(pool: &PgPool, new: NewProgram) -> Result<ProgramCreated> {
+    if new.project.is_some() || new.project_id.is_some() {
+        return Err(RepoError::InvalidInput(
+            "a program does not take a project — it is the CROSS-project layer (#968). \
+             A program filed under one project rebuilds the mis-routing single-project \
+             proposals were just cured of. Its span is derived from the projects of the \
+             proposals it includes, so add the slices and the span follows."
+                .into(),
+        )
+        .into());
+    }
+    check_program_aim(&new.aim)?;
+
+    // Resolved before the transaction opens, so a bad id leaves nothing behind
+    // — same shape as create_proposal's wi_number resolution. Unlike a proposal's
+    // unresolvable wi_number (dropped and echoed via `covered`, F-06), this is a
+    // hard refusal: a program's slices are its plan.
+    for id in &new.slices {
+        let kind = node_kind(pool, *id).await?;
+        if kind != "sprint_proposal" {
+            return Err(RepoError::InvalidInput(format!(
+                "slice {id} is a {kind}, not a sprint_proposal — a program includes \
+                 proposals (each single-project), which is what makes it the layer where \
+                 cross-project work is legal"
+            ))
+            .into());
+        }
+    }
+
+    let mut tx = pool.begin().await?;
+    let node_id: i64 = sqlx::query(
+        "INSERT INTO node (kind, project_id, category, tags) \
+         VALUES ('program', NULL, $1, $2) RETURNING id",
+    )
+    .bind(&new.category)
+    .bind(&new.tags)
+    .fetch_one(&mut *tx)
+    .await?
+    .get("id");
+
+    sqlx::query(
+        "INSERT INTO program (node_id, title, aim, notes, rank, pinned) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(node_id)
+    .bind(&new.title)
+    .bind(&new.aim)
+    .bind(&new.notes)
+    .bind(new.rank)
+    .bind(new.pinned)
+    .execute(&mut *tx)
+    .await?;
+
+    for (i, &target) in new.slices.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO relationship (left_id, right_id, relationship, rank, created, origin) \
+             VALUES ($1, $2, 'includes', $3, now(), 'create_program') \
+             ON CONFLICT (left_id, right_id, relationship) \
+             DO UPDATE SET rank = EXCLUDED.rank",
+        )
+        .bind(node_id)
+        .bind(target)
+        .bind(Decimal::from(i as i64))
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    let row = get_program(pool, node_id)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no program with node_id {node_id}")))?;
+    Ok(ProgramCreated {
+        row,
+        slices: new.slices,
+    })
+}
+
+/// A program's `aim` is its routing contract, capped like a proposal's
+/// `summary` (0021/#860) and for the same reason: it is what a reader sees in a
+/// list, and an unbounded one turns the list back into the payload problem
+/// #852 measured. The analysis goes in `notes`.
+fn check_program_aim(aim: &str) -> Result<()> {
+    const CAP: usize = 500;
+    if aim.chars().count() > CAP {
+        return Err(RepoError::InvalidInput(format!(
+            "a program's `aim` is a routing contract capped at {CAP} characters (got {}). \
+             Put the analysis — sequencing, what each slice waits on, what was rejected — \
+             in `notes`, which is unbounded.",
+            aim.chars().count()
+        ))
+        .into());
+    }
+    Ok(())
+}
+
+pub async fn get_program(pool: &PgPool, node_id: i64) -> Result<Option<ProgramRow>> {
+    Ok(
+        sqlx::query_as::<_, ProgramRow>(&format!("{PROGRAM_SELECT} WHERE g.node_id = $1"))
+            .bind(node_id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+/// One slice of a program, with the rollup that stops a consumer crawling
+/// (D-5). `open`/`resolved`/`done`/`closed` count the proposal's covered work
+/// items, so a board renders progress from `get_program` alone.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProgramSlice {
+    pub node_id: i64,
+    pub title: String,
+    pub status: String,
+    /// The slice's project. Always present — a proposal is single-project since
+    /// 0022 — and the union of these is the program's `span`.
+    pub project: Option<String>,
+    /// Position within this program. `None` on a slice linked by a bare
+    /// `relate` without a rank; those sort last.
+    #[ts(type = "string | null")]
+    pub rank: Option<Decimal>,
+    pub covered_count: i64,
+    pub open: i64,
+    pub resolved: i64,
+    pub done: i64,
+    pub closed: i64,
+}
+
+/// A program, its ordered slices with per-slice rollups, its comments, and its
+/// other edges. The read a consumer makes instead of crawling
+/// program → proposals → work items.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProgramDetail {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub program: ProgramRow,
+    /// Included proposals, in program order (`rank`, then node_id).
+    pub slices: Vec<ProgramSlice>,
+    pub comments: Vec<Comment>,
+    pub comments_truncated: bool,
+    /// The program's non-`includes` edges, inlined (LB-3) — `slices` already
+    /// carries `includes`. A program is precisely the kind that accrues a
+    /// handoff, so this is where a `has_handoff` ref surfaces.
+    pub related: Vec<RelatedRef>,
+    pub related_truncated: bool,
+}
+
+/// `get_program` — the D-5 rollup read.
+pub async fn get_program_detail(pool: &PgPool, node_id: i64) -> Result<Option<ProgramDetail>> {
+    let Some(program) = get_program(pool, node_id).await? else {
+        return Ok(None);
+    };
+    // One query for every slice and its work-item rollup: the whole point is
+    // that a consumer never crawls, so this must not become N+1 either.
+    let slices = sqlx::query_as::<_, ProgramSlice>(
+        "SELECT sp.node_id, sp.title, sp.status::text AS status, pj.name AS project, r.rank, \
+                count(w.node_id)                                       AS covered_count, \
+                count(w.node_id) FILTER (WHERE w.wi_status = 'open')     AS open, \
+                count(w.node_id) FILTER (WHERE w.wi_status = 'resolved') AS resolved, \
+                count(w.node_id) FILTER (WHERE w.wi_status = 'done')     AS done, \
+                count(w.node_id) FILTER (WHERE w.wi_status = 'closed')   AS closed \
+         FROM relationship r \
+         JOIN sprint_proposal sp ON sp.node_id = r.right_id \
+         JOIN node sn ON sn.id = sp.node_id \
+         LEFT JOIN project pj ON pj.id = sn.project_id \
+         LEFT JOIN relationship cov ON cov.left_id = sp.node_id AND cov.relationship = 'covers' \
+         LEFT JOIN workitem w ON w.node_id = cov.right_id \
+         WHERE r.left_id = $1 AND r.relationship = 'includes' \
+         GROUP BY sp.node_id, sp.title, sp.status, pj.name, r.rank \
+         ORDER BY r.rank ASC NULLS LAST, sp.node_id ASC",
+    )
+    .bind(node_id)
+    .fetch_all(pool)
+    .await?;
+    let comments = sqlx::query_as::<_, Comment>(
+        "SELECT id, node_id, body, created, updated FROM comment \
+         WHERE node_id = $1 ORDER BY created LIMIT $2",
+    )
+    .bind(node_id)
+    .bind(WORKITEM_COMMENT_CAP)
+    .fetch_all(pool)
+    .await?;
+    let comments_truncated = program.comment_count > WORKITEM_COMMENT_CAP;
+    let (related, related_truncated) = related_context(pool, node_id, Some("includes")).await?;
+    Ok(Some(ProgramDetail {
+        program,
+        slices,
+        comments,
+        comments_truncated,
+        related,
+        related_truncated,
+    }))
+}
+
+/// What `list_programs`' defaults hid. Same cascade rule as [`ProposalOmitted`]:
+/// `archived` is counted first, and `done` only over the rows that passed it.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProgramOmitted {
+    pub done: i64,
+    pub archived: i64,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProgramList {
+    pub items: Vec<ProgramRow>,
+    pub omitted: ProgramOmitted,
+}
+
+/// List programs, live-by-default, pinned first then rank.
+///
+/// **No lean/full split**, unlike proposals: `list_proposals` needed one because
+/// 110 rows of plan-length prose measured ~46k tokens (#852). Programs are the
+/// layer *above* proposals — there will be single digits of them — and the
+/// `aim` is capped at 500 chars, so the full row is already the lean row. If
+/// that stops being true the split is the same three functions proposals have.
+pub async fn list_programs(
+    pool: &PgPool,
+    status: Option<&str>,
+    archived: ArchivedFilter,
+) -> Result<ProgramList> {
+    let shown = program_status_predicate(status)?;
+    let items = sqlx::query_as::<_, ProgramRow>(&format!(
+        "{PROGRAM_SELECT} WHERE ($1::text[] IS NULL OR g.status = ANY($1)) \
+            AND ($2::bool IS NULL OR n.archived = $2) \
+          ORDER BY g.pinned DESC, g.rank ASC, g.node_id ASC"
+    ))
+    .bind(shown.as_deref())
+    .bind(archived)
+    .fetch_all(pool)
+    .await?;
+
+    let (archived_hidden, done) = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT count(*) FILTER (WHERE n.archived AND $1::bool IS NOT NULL AND NOT $1), \
+                count(*) FILTER (WHERE ($1::bool IS NULL OR n.archived = $1) \
+                                   AND g.status = 'done') \
+         FROM program g JOIN node n ON n.id = g.node_id",
+    )
+    .bind(archived)
+    .fetch_one(pool)
+    .await?;
+    let done_hidden = match shown.as_deref() {
+        Some(list) if list.iter().any(|s| s == "done") => 0,
+        None => 0,
+        _ => done,
+    };
+    Ok(ProgramList {
+        items,
+        omitted: ProgramOmitted {
+            done: done_hidden,
+            archived: archived_hidden,
+        },
+    })
+}
+
+/// Absent → the live set (`active` + `holding`); `"all"` → no filter; anything
+/// else validated and returned alone. Same contract as
+/// [`proposal_status_predicate`].
+fn program_status_predicate(status: Option<&str>) -> Result<Option<Vec<String>>> {
+    match status {
+        None => Ok(Some(
+            PROGRAM_LIVE_STATUSES
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        )),
+        Some("all") => Ok(None),
+        Some(s) => {
+            validate_status(s, &PROGRAM_STATUSES, "program status")?;
+            Ok(Some(vec![s.to_string()]))
+        }
+    }
+}
+
+/// `update_program` / `PATCH /api/programs/:node_id`.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub struct ProgramPatch {
+    #[serde(default)]
+    #[schemars(schema_with = "schema::non_empty")]
+    pub title: Option<String>,
+    /// The routing contract, **≤500 characters**. Analysis goes in `notes`.
+    #[serde(default)]
+    pub aim: Option<String>,
+    #[serde(default, deserialize_with = "ops::double_option")]
+    pub notes: Option<Option<String>>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::program_status")]
+    pub status: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::rank")]
+    pub rank: Option<Decimal>,
+    #[serde(default)]
+    pub pinned: Option<bool>,
+    #[serde(default)]
+    pub archived: Option<bool>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::tags")]
+    pub tags: Option<Vec<String>>,
+}
+
+pub async fn update_program(
+    pool: &PgPool,
+    node_id: i64,
+    patch: ProgramPatch,
+) -> Result<ProgramRow> {
+    if let Some(v) = &patch.status {
+        validate_status(v, &PROGRAM_STATUSES, "program status")?;
+    }
+    if let Some(v) = &patch.aim {
+        check_program_aim(v)?;
+    }
+    let mut tx = pool.begin().await?;
+    require_kind(&mut *tx, node_id, "program", "program").await?;
+    if let Some(v) = &patch.title {
+        sqlx::query("UPDATE program SET title = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.aim {
+        sqlx::query("UPDATE program SET aim = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.notes {
+        sqlx::query("UPDATE program SET notes = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v.as_deref())
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.status {
+        sqlx::query("UPDATE program SET status = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = patch.rank {
+        sqlx::query("UPDATE program SET rank = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = patch.pinned {
+        sqlx::query("UPDATE program SET pinned = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = patch.archived {
+        sqlx::query("UPDATE node SET archived = $2 WHERE id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.tags {
+        sqlx::query("UPDATE node SET tags = $2 WHERE id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    settle_awaiting(&mut *tx, node_id).await?;
+    touch_node(&mut *tx, node_id).await?;
+    tx.commit().await?;
+    get_program(pool, node_id)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no program with node_id {node_id}")).into())
+}
+
+// === the awaiting-Ken marker (#969, sprint 044) =============================
+//
+// "This moves only when Ken acts" — the most valuable lane on the kfdc board,
+// and until now expressible only as prose in a comment.
+//
+// Deliberately not a reserved tag, which is the cheaper mechanism #969 guessed
+// at. Tags are written wholesale (`UPDATE node SET tags = $2`), so an agent
+// editing tags for an unrelated reason silently clears the marker — and 76% of
+// nodes carry tags, so that is a hot path. See 0023 §5 and D-3.
+
+/// Set or clear the awaiting-Ken marker on any node.
+///
+/// `awaiting: false` clears both columns — an agent that raised a question and
+/// got its answer mid-session **retracts its own marker**, rather than leaving
+/// an answered ask in the lane until Ken clicks it away (D-8).
+///
+/// Re-asserting on a node already awaiting **preserves `awaiting_since`** and
+/// updates only the note: the age is the whole reason the marker is a timestamp,
+/// and a re-set that restarted the clock would make a nine-day-old ask look
+/// fresh every time an agent touched it.
+pub async fn set_awaiting(
+    pool: &PgPool,
+    node_id: i64,
+    awaiting: bool,
+    note: Option<&str>,
+) -> Result<AwaitingRow> {
+    if !awaiting && note.is_some() {
+        return Err(RepoError::InvalidInput(
+            "`note` is meaningless when clearing — pass awaiting:true with a note to \
+             change what is being asked, or awaiting:false alone to clear the marker"
+                .into(),
+        )
+        .into());
+    }
+    let mut tx = pool.begin().await?;
+    // Any kind may await Ken — a work item, a proposal and a program can all be
+    // waiting on him — so this is `require_node`, not `require_kind`.
+    require_node(&mut *tx, node_id).await?;
+    if awaiting {
+        // COALESCE preserves the original timestamp on a re-set (D-8).
+        sqlx::query(
+            "UPDATE node SET awaiting_since = COALESCE(awaiting_since, now()), \
+                             awaiting_note  = $2 \
+             WHERE id = $1",
+        )
+        .bind(node_id)
+        .bind(note)
+        .execute(&mut *tx)
+        .await?;
+    } else {
+        sqlx::query("UPDATE node SET awaiting_since = NULL, awaiting_note = NULL WHERE id = $1")
+            .bind(node_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    awaiting_row(pool, node_id)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no node with id {node_id}")).into())
+}
+
+/// One row of the awaiting lane.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct AwaitingRow {
+    pub node_id: i64,
+    pub kind: String,
+    /// Present when the node is a work item — its user-facing handle.
+    pub wi_number: Option<i64>,
+    /// Resolved across kinds, the way `related_context` resolves it.
+    pub title: String,
+    pub project: Option<String>,
+    /// The node's **own** status, resolved per kind (`wi_status`, a proposal's
+    /// or program's status, a card's column). `None` for kinds that have none.
+    /// Carried so a board renders state without a follow-up read per row.
+    pub status: Option<String>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    #[ts(type = "string | null")]
+    pub awaiting_since: Option<OffsetDateTime>,
+    pub awaiting_note: Option<String>,
+    pub archived: bool,
+}
+
+const AWAITING_SELECT: &str = "SELECT n.id AS node_id, n.kind, w.wi_number, \
+            COALESCE(w.title, sp.title, g.title, cd.title, lk.title, lk.url, tp.name, \
+                     rp.summary, hd.title, n.kind || ' #' || n.id) AS title, \
+            pj.name AS project, \
+            COALESCE(w.wi_status, sp.status::text, g.status, cd.status::text) AS status, \
+            n.awaiting_since, n.awaiting_note, n.archived \
+     FROM node n \
+     LEFT JOIN workitem w         ON w.node_id  = n.id \
+     LEFT JOIN sprint_proposal sp ON sp.node_id = n.id \
+     LEFT JOIN program g          ON g.node_id  = n.id \
+     LEFT JOIN card cd            ON cd.node_id = n.id \
+     LEFT JOIN link lk            ON lk.node_id = n.id \
+     LEFT JOIN topic tp           ON tp.node_id = n.id \
+     LEFT JOIN report rp          ON rp.node_id = n.id \
+     LEFT JOIN handoff hd         ON hd.node_id = n.id \
+     LEFT JOIN project pj         ON pj.id = n.project_id";
+
+async fn awaiting_row(pool: &PgPool, node_id: i64) -> Result<Option<AwaitingRow>> {
+    Ok(
+        sqlx::query_as::<_, AwaitingRow>(&format!("{AWAITING_SELECT} WHERE n.id = $1"))
+            .bind(node_id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+/// The Commander's Call lane: everything waiting on Ken, oldest ask first.
+///
+/// **Ghost-free (D-7).** Archived nodes and nodes in a status only Ken sets
+/// (`closed` work items, `done`/`declined` proposals, `done` programs) are
+/// filtered out even if their marker somehow survived — the write rules clear
+/// it, and this is the belt to that pair of braces. A lane that accumulates
+/// answered asks is the failure the whole marker was designed to avoid, one
+/// door over.
+///
+/// Note what is *not* filtered: `resolved` and `done` work items stay. "I
+/// implemented it, it needs your user test" is the canonical awaiting-Ken state
+/// — filtering those would empty the lane of its best rows.
+pub async fn list_awaiting(pool: &PgPool) -> Result<Vec<AwaitingRow>> {
+    Ok(sqlx::query_as::<_, AwaitingRow>(&format!(
+        "{AWAITING_SELECT} WHERE n.awaiting_since IS NOT NULL \
+            AND NOT n.archived \
+            AND COALESCE(w.wi_status, 'open') <> 'closed' \
+            AND COALESCE(sp.status::text, 'proposed') NOT IN ('done', 'declined') \
+            AND COALESCE(g.status, 'active') <> 'done' \
+          ORDER BY n.awaiting_since ASC, n.id ASC"
+    ))
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Clear the awaiting marker when the node has reached a state **only Ken
+/// sets** — because if Ken set it, the ask is answered by definition (D-7).
+///
+/// The trigger is deliberately *not* "terminal". A `resolved` or `done` work
+/// item is the canonical awaiting-Ken state (`vocab` calls `resolved`
+/// "implemented; may still need a user test"), so clearing there would delete
+/// exactly the rows the lane exists to show. `closed` is different: `vocab`
+/// records it as Ken-only.
+///
+/// Called from every update path rather than a trigger — LB-2 settled that edge
+/// and lifecycle rules live in core, the one path both transports share.
+async fn settle_awaiting<'e, E>(executor: E, node_id: i64) -> Result<()>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    sqlx::query(
+        "UPDATE node n SET awaiting_since = NULL, awaiting_note = NULL \
+         WHERE n.id = $1 AND n.awaiting_since IS NOT NULL AND ( \
+               n.archived \
+            OR EXISTS (SELECT 1 FROM workitem w \
+                        WHERE w.node_id = n.id AND w.wi_status = 'closed') \
+            OR EXISTS (SELECT 1 FROM sprint_proposal sp \
+                        WHERE sp.node_id = n.id AND sp.status::text IN ('done', 'declined')) \
+            OR EXISTS (SELECT 1 FROM program g \
+                        WHERE g.node_id = n.id AND g.status = 'done'))",
+    )
+    .bind(node_id)
+    .execute(executor)
+    .await?;
+    Ok(())
 }
 
 /// Create (or return existing) an area under a project by name.
@@ -4024,6 +4697,11 @@ pub async fn update_work_item(
             .execute(&mut *tx)
             .await?;
     }
+    // D-7: `closed` is Ken-only (see `vocab::WI_STATUSES`), so reaching it means
+    // the ask this item was waiting on has been answered. `resolved`/`done`
+    // deliberately do NOT clear — "implemented, needs your user test" is the
+    // canonical awaiting-Ken state.
+    settle_awaiting(&mut *tx, node_id).await?;
     touch_node(&mut *tx, node_id).await?;
 
     tx.commit().await?;

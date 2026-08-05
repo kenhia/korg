@@ -13,7 +13,7 @@ pub mod tools;
 pub fn server_instructions() -> &'static str {
     "korg MCP server — one typed-node data model over Postgres covering work items, cards, \
      comments, reading-list links, generalized relationships, topics, daily planning, \
-     sprint proposals, reports, handoffs, and projects and areas. \
+     sprint proposals, programs, reports, handoffs, and projects and areas. \
      Mutations validate their target and return the updated entity; errors are isError \
      results carrying {message, code} where code is one of invalid_input, not_found, \
      conflict, internal. Paginated collection reads (list_work_items, list_cards, \
@@ -21,20 +21,26 @@ pub fn server_instructions() -> &'static str {
      whole filtered corpus on every page — including one whose offset overshot the last \
      row, which returns no items and the same total; \
      the unpaginated ones (list_reports, list_areas, \
-     list_comments, list_daily_plan) return a bare array and have no archived \
+     list_comments, list_daily_plan, list_awaiting) return a bare array and have no archived \
      filter; and the filtered ones \
-     (list_proposals, list_projects) return {items, omitted}, where `omitted` counts \
+     (list_proposals, list_programs, list_projects) return {items, omitted}, where `omitted` counts \
      the rows their defaults hid — so a narrowed view can never be mistaken for the \
      whole corpus. list_work_items carries `omitted` too, for the \
      same reason: it is lean by default (no content/details) and hides `closed` \
      items unless you pass wi_status \"closed\" or \"all\". \
      Every read that filters archived rows excludes them by default: pass \
      `archived: null` for both, `true` for archived only. Writes take a project or area by name \
-     (`project`/`area`) or by id (`project_id`/`area_id`), never both. \
-     A `has_handoff` edge in a focused read (get_work_item/get_proposal) is \
+     (`project`/`area`) or by id (`project_id`/`area_id`), never both — except a program, \
+     which takes NO project: it is the cross-project layer, and its span is derived from \
+     the proposals it includes. \
+     A `has_handoff` edge in a focused read (get_work_item/get_proposal/get_program) is \
      required context: get_handoff and read it before acting on the work — it \
      carries durable state another session left for you, not optional related \
-     reading."
+     reading. \
+     When something can only move once Ken acts — a decision, an ops action you cannot \
+     perform, a review — mark it Awaiting Ken with set_awaiting rather than burying it \
+     in a comment, and clear it yourself once you have the answer; list_awaiting is the \
+     whole lane in one call."
 }
 
 /// [`server_instructions`] plus the live project roster (WI #674).

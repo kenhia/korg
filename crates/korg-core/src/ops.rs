@@ -19,6 +19,7 @@
 //! nullable boolean. Those are genuinely different wire shapes; both funnel
 //! into the same `repo::*Query` type, which is where the sharing belongs.
 
+use rust_decimal::Decimal;
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Deserializer};
 
@@ -176,6 +177,17 @@ pub mod schema {
     pub fn proposal_detail(_: &mut SchemaGenerator) -> Schema {
         json_schema!({ "type": ["string", "null"], "enum": ["lean", "full"] })
     }
+    pub fn program_status(_: &mut SchemaGenerator) -> Schema {
+        enumerated(&vocab::PROGRAM_STATUSES)
+    }
+    /// The `list_programs` row filter (#968). Same shape and same reason as
+    /// `proposal_status_filter`: omitting it means the live set
+    /// (`active` + `holding`), so `"all"` is the only way to reach `done`.
+    pub fn program_status_filter(_: &mut SchemaGenerator) -> Schema {
+        let mut variants = strings(&vocab::PROGRAM_STATUSES);
+        variants.push(Value::String("all".into()));
+        json_schema!({ "type": ["string", "null"], "enum": variants })
+    }
     pub fn report_status(_: &mut SchemaGenerator) -> Schema {
         enumerated(&vocab::REPORT_STATUSES)
     }
@@ -204,6 +216,11 @@ pub mod schema {
     /// Fractional rank. Arrives as a JSON number and is stored as a `Decimal`.
     pub fn rank(_: &mut SchemaGenerator) -> Schema {
         json_schema!({ "type": "number" })
+    }
+
+    /// The same, where absent means "leave the position alone" rather than zero.
+    pub fn rank_opt(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({ "type": ["number", "null"] })
     }
 
     pub fn date(_: &mut SchemaGenerator) -> Schema {
@@ -359,6 +376,17 @@ pub struct Relate {
     /// (korg is no-auth HTTP); absent means unknown, stored NULL.
     #[serde(default)]
     pub origin: Option<String>,
+    /// Position of the right endpoint within the left one — used by `includes`
+    /// to order a program's slices (#968). Lower sorts first; unranked edges
+    /// sort last.
+    ///
+    /// Re-relating an existing edge **with** a rank moves it in place, keeping
+    /// the edge's `created`/`origin`; re-relating **without** one leaves the
+    /// position alone. That is the reorder path — `unrelate` + `relate` would
+    /// work too but throws the provenance away.
+    #[serde(default)]
+    #[schemars(schema_with = "schema::rank_opt")]
+    pub rank: Option<Decimal>,
 }
 
 /// `archive_topic` / `POST /api/topics/:node_id/archive`.
@@ -549,6 +577,42 @@ impl From<ListTopics> for topics::TopicQuery {
             },
         }
     }
+}
+
+/// `list_programs` (#968). No `project` filter and no `detail` flag, unlike
+/// `ListProposals`: a program carries no project (D-6, its span is derived), and
+/// there are single digits of them with a 500-char `aim`, so the full row is
+/// already lean.
+#[derive(Debug, Clone, Deserialize, JsonSchema, Default)]
+pub struct ListPrograms {
+    #[serde(default)]
+    #[schemars(schema_with = "schema::program_status_filter")]
+    pub status: Option<String>,
+    #[serde(default = "archived_default")]
+    #[schemars(schema_with = "schema::archived_filter")]
+    pub archived: ArchivedFilter,
+}
+
+/// A tool that takes no arguments. `list_awaiting` is deliberately one: #969
+/// asked for a lane "one read can list", and every filter it could offer is
+/// already decided by D-7 (never archived, never a state only Ken sets).
+#[derive(Debug, Clone, Deserialize, JsonSchema, Default)]
+pub struct NoArgs {}
+
+/// `set_awaiting` (#969) — the marker, settable and clearable by agents.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct SetAwaiting {
+    /// `true` raises the marker, `false` clears it. Clearing is deliberately an
+    /// agent-reachable operation (D-8): an agent that asked a question and got
+    /// its answer in-session retracts its own marker rather than leaving an
+    /// answered ask in the lane until Ken clicks it away.
+    pub awaiting: bool,
+    /// What is being asked of Ken — the thing that makes the lane actionable
+    /// without opening every row. Only valid with `awaiting: true`; re-setting
+    /// with a new note keeps the original `awaiting_since`, because the age of
+    /// the ask is the point.
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// `list_proposals` (WI #852). Row filter and projection both narrow by

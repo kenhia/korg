@@ -67,6 +67,26 @@ pub const PROPOSAL_LIVE_STATUSES: [&str; 2] = ["proposed", "active"];
 /// `list_proposals` unless asked for, and counted in its `omitted`.
 pub const PROPOSAL_TERMINAL_STATUSES: [&str; 2] = ["done", "declined"];
 
+/// Program lifecycle (#968, sprint 044); mirrors the `program.status` CHECK
+/// (0023). A program is the cross-project layer: it `includes` proposals,
+/// ordered, and outlives any one of them.
+///
+/// `holding` is the state a program spends most of its life in and the reason
+/// this is not just `active`/`done` — a program whose current slice has shipped
+/// and whose next one is not started is neither finished nor in flight, and
+/// collapsing that into `active` would make the Operations panel claim work is
+/// underway when nobody is on it.
+pub const PROGRAM_STATUSES: [&str; 3] = ["active", "holding", "done"];
+
+/// The programs a list read means by default — the ones still going. Same split
+/// as proposals and work items, and fenced by the same partition test so a
+/// fourth status cannot be added without deciding which side it falls on.
+pub const PROGRAM_LIVE_STATUSES: [&str; 2] = ["active", "holding"];
+
+/// The complement of [`PROGRAM_LIVE_STATUSES`] — excluded from a default
+/// `list_programs` and counted in its `omitted`.
+pub const PROGRAM_TERMINAL_STATUSES: [&str; 1] = ["done"];
+
 /// Daily-report statuses; mirrors the `report.status` CHECK (0010).
 pub const REPORT_STATUSES: [&str; 3] = ["ok", "attention", "problem"];
 
@@ -121,13 +141,14 @@ pub const PROJECT_CATEGORIES: [&str; 7] = [
 /// hand-kept copy that drifts (the old `api.ts` `WI_TYPES` had nine entries,
 /// six of which the server rejects).
 #[cfg(test)]
-const EXPORTED: [(&str, &str, &[&str]); 10] = [
+const EXPORTED: [(&str, &str, &[&str]); 11] = [
     ("WI_STATUSES", "WiStatus", &WI_STATUSES),
     ("WI_TYPES", "WiType", &WI_TYPES),
     ("WI_TSHIRTS", "WiTshirt", &WI_TSHIRTS),
     ("CARD_STATUSES", "CardStatus", &CARD_STATUSES),
     ("LINK_DISPOSITIONS", "Disposition", &LINK_DISPOSITIONS),
     ("PROPOSAL_STATUSES", "ProposalStatus", &PROPOSAL_STATUSES),
+    ("PROGRAM_STATUSES", "ProgramStatus", &PROGRAM_STATUSES),
     ("REPORT_STATUSES", "ReportStatus", &REPORT_STATUSES),
     ("PROJECT_STATUSES", "ProjectStatus", &PROJECT_STATUSES),
     ("PROJECT_CATEGORIES", "ProjectCategory", &PROJECT_CATEGORIES),
@@ -161,8 +182,9 @@ pub fn validate(value: &str, allowed: &[&str], what: &str) -> Result<(), RepoErr
 #[cfg(test)]
 mod partition {
     use super::{
-        PROPOSAL_LIVE_STATUSES, PROPOSAL_STATUSES, PROPOSAL_TERMINAL_STATUSES, WI_LIVE_STATUSES,
-        WI_STATUSES, WI_TERMINAL_STATUSES,
+        PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES, PROGRAM_TERMINAL_STATUSES, PROPOSAL_LIVE_STATUSES,
+        PROPOSAL_STATUSES, PROPOSAL_TERMINAL_STATUSES, WI_LIVE_STATUSES, WI_STATUSES,
+        WI_TERMINAL_STATUSES,
     };
     use std::collections::BTreeSet;
 
@@ -207,6 +229,27 @@ mod partition {
             live.union(&terminal).copied().collect::<BTreeSet<&str>>(),
             "every work-item status must be classified live or terminal — \
              list_work_items' default and its `omitted` counts both depend on it"
+        );
+    }
+
+    /// And for programs (#968, sprint 044). `holding` is the value this fence
+    /// exists for: it is neither in flight nor finished, and a fourth status
+    /// with the same ambiguity must not be able to slip in unclassified.
+    #[test]
+    fn program_statuses_partition_cleanly() {
+        let all: BTreeSet<&str> = PROGRAM_STATUSES.into_iter().collect();
+        let live: BTreeSet<&str> = PROGRAM_LIVE_STATUSES.into_iter().collect();
+        let terminal: BTreeSet<&str> = PROGRAM_TERMINAL_STATUSES.into_iter().collect();
+        assert!(
+            live.is_disjoint(&terminal),
+            "a program status is both live and terminal: {:?}",
+            live.intersection(&terminal).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            all,
+            live.union(&terminal).copied().collect::<BTreeSet<&str>>(),
+            "every program status must be classified live or terminal — \
+             list_programs' default and its `omitted` counts both depend on it"
         );
     }
 }

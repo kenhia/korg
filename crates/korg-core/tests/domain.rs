@@ -64,10 +64,10 @@ async fn domain_cross_kind_relationships_and_reading_list() {
     // Cross-kind edges. Both labels are registry entries that permit any node
     // kind on either end (depends_on, related-to); the point here is that the
     // generalized edge spans kinds, not the specific label.
-    korg_core::repo::relate(&pool, wi.node_id, card, "depends_on", None)
+    korg_core::repo::relate(&pool, wi.node_id, card, "depends_on", None, None)
         .await
         .expect("relate wi-card");
-    korg_core::repo::relate(&pool, card, link, "related-to", None)
+    korg_core::repo::relate(&pool, card, link, "related-to", None, None)
         .await
         .expect("relate card-link");
 

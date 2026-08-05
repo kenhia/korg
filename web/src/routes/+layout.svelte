@@ -20,6 +20,10 @@
     { href: "/cards", label: "Cards" },
     { href: "/work-items", label: "Work Items" },
     { href: "/planning", label: "Planning" },
+    // Programs sit next to Planning because they are the layer directly above
+    // it — a program bundles proposals the way a proposal bundles work items
+    // (sprint 044).
+    { href: "/programs", label: "Programs" },
     { href: "/daily-reports", label: "Reports" },
     { href: "/reading-list", label: "Reading" },
     { href: "/plan", label: "Plan" },

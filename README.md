@@ -32,6 +32,12 @@ any other through a single generalized `relationship` edge:
 - **link** — reading-list URL.
 - **topic** — reusable source for daily planning.
 - **daily plan item** — ordered source occurrence with a historical display snapshot.
+- **sprint proposal** — a title + summary bundled with the work items it
+  `covers`. Single-project, enforced (#967).
+- **program** — the layer above: `includes` proposals, ordered, and carries no
+  project of its own, because it is where cross-project work is legal (#968).
+- **report** — a dated daily report, with `finding` edges to work items.
+- **handoff** — durable cross-machine context attached to the work it describes.
 
 Cross-cutting attributes (project, category, tags, archived, timestamps) live on
 `node`. Projects are a unified taxonomy (kwi + kcard merged by name); areas stay
@@ -64,7 +70,7 @@ installed; point an MCP client at the URL:
 http://<host>:8090/mcp
 ```
 
-It exposes 50 tools backed directly by `korg-core`. The full list, by category,
+It exposes 56 tools backed directly by `korg-core`. The full list, by category,
 is the [tool catalogue](docs/api.md#tool-catalogue) — the one place it is
 written down, so this sentence carries only the count and a drift test keeps
 even that honest.
@@ -122,8 +128,9 @@ just snapshot
 just verify-import
 
 # 2b. Or load the data into a real korg database. --reset first TRUNCATEs
-# EVERY node kind (work items, cards, links, topics, daily plans, proposals,
-# reports) plus projects and areas, so it demands an explicit confirmation.
+# EVERY node kind — the ones listed under Model above and any added since,
+# since it truncates `node` CASCADE — plus projects and areas, so it demands
+# an explicit confirmation.
 KORG_DATABASE_URL=postgres://korg:korg@host:5432/korg \
 KORG_RESET_CONFIRM=yes just import --reset
 ```

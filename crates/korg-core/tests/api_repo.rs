@@ -109,8 +109,8 @@ async fn relate_dedup_semantics() {
     let b = create_work_item(&pool, wi("b", p)).await.unwrap().node_id;
 
     // Exact duplicate — same orientation, same label — is one edge, same id.
-    let first = relate(&pool, a, b, "related-to", None).await.unwrap();
-    let again = relate(&pool, a, b, "related-to", None).await.unwrap();
+    let first = relate(&pool, a, b, "related-to", None, None).await.unwrap();
+    let again = relate(&pool, a, b, "related-to", None, None).await.unwrap();
     assert_eq!(
         first, again,
         "exact duplicate relate returns the same edge id"
@@ -126,7 +126,7 @@ async fn relate_dedup_semantics() {
 
     // Undirected reverse (L-10): related-to is symmetric, so relating b->a
     // dedups to the existing edge instead of storing a mirror.
-    let reversed = relate(&pool, b, a, "related-to", None).await.unwrap();
+    let reversed = relate(&pool, b, a, "related-to", None, None).await.unwrap();
     assert_eq!(
         reversed, first,
         "undirected reverse dedups to the same edge"
@@ -143,8 +143,8 @@ async fn relate_dedup_semantics() {
 
     // Directed reverse: depends_on is directional, so a->b and b->a are two
     // distinct edges, each its own label between the pair.
-    relate(&pool, a, b, "depends_on", None).await.unwrap();
-    relate(&pool, b, a, "depends_on", None).await.unwrap();
+    relate(&pool, a, b, "depends_on", None, None).await.unwrap();
+    relate(&pool, b, a, "depends_on", None, None).await.unwrap();
     assert_eq!(
         neighbors(&pool, a, Default::default())
             .await
