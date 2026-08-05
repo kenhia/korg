@@ -122,12 +122,13 @@ describing a route that no longer exists.
 | `GET` | `/api/nodes/:id` | Kind-agnostic preview of any node by id (powers find-by-ID + the preview panel); 404 if none. |
 | `GET` | `/api/nodes/:id/neighbors` | A node's edges: `{items,total,limit,truncated}`, optional `label`/`kind`/`limit` (see [api.md](api.md#relationships)). |
 | `GET`, `POST` | `/api/proposals` | List sprint proposals (filters `status`, `project`), or propose one: project + title + summary + covered `work_item_numbers` in a single call. The project is required, and a `work_item_numbers` entry from another project is `invalid_input`. |
-| `GET` | `/api/proposals/rollup` | Per-project planning weather for the Planning rail: `proposals` (live), `wi_in_proposal` and `wi_total` (both live + unarchived). Every project, including one with three zeroes. |
+| `GET` | `/api/proposals/rollup` | Per-project planning weather for the Planning rail: `proposals` (live), `wi_in_proposal` and `wi_total` (both live + unarchived), plus the project's `status`. Every project, including one with three zeroes. |
 | `GET`, `PATCH` | `/api/proposals/:node_id` | Proposal detail (covered work items + comments), or update status/rank/pinned/archived. |
 | `GET`, `POST` | `/api/programs` | List programs (`{items, omitted}`, live by default), or create one. A program takes **no** project — it is the cross-project layer, and `span` is derived from its slices. |
 | `GET`, `PATCH` | `/api/programs/:node_id` | Program detail — ordered slices with per-slice work-item rollups — or update title/aim/notes/status/rank/pinned/archived. |
 | `GET` | `/api/awaiting` | Everything waiting on Ken, oldest ask first, across every node kind. |
 | `PUT` | `/api/nodes/:id/awaiting` | Set or clear the awaiting-Ken marker on any node (`{awaiting, note}`). The UI's one-click clear is this call with `awaiting: false`. |
+| `GET` | `/api/board` | The whole board in one request: active sprints with progress, the ranked queue, programs with slices, the awaiting lane, per-project depth, newest reports. No parameters — see [api.md](api.md#the-board-rollup-970). |
 | `GET` | `/api/reports` | List agent reports (filters `source`, `limit`; newest first). |
 | `GET` | `/api/reports/:node_id` | One report with its findings and comments. |
 | `POST` | `/api/handoffs` | Create a handoff and attach it to the nodes it describes (`has_handoff` edges) in one call. |

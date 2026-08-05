@@ -104,6 +104,7 @@ pub fn build_router(state: AppState) -> Router {
             get(get_program).patch(update_program),
         )
         .route("/api/awaiting", get(list_awaiting))
+        .route("/api/board", get(board))
         .route("/api/nodes/:id/awaiting", put(set_awaiting))
         .route("/api/reports", get(list_reports))
         .route("/api/reports/:node_id", get(get_report))
@@ -800,6 +801,16 @@ async fn update_program(
     Ok(Json(json!(
         repo::update_program(&s.pool, node_id, patch).await?
     )))
+}
+
+// --- the board rollup (#970) ------------------------------------------------
+
+/// The whole board in one request: active sprints with progress, the ranked
+/// queue, programs with their slices, the awaiting-Ken lane, per-project depth
+/// and the newest reports. Takes no query parameters — see `get_board`'s tool
+/// description and `repo::board_rollup` for why.
+async fn board(State(s): State<AppState>) -> ApiResult {
+    Ok(Json(json!(repo::board_rollup(&s.pool).await?)))
 }
 
 // --- the awaiting-Ken marker (#969) ----------------------------------------

@@ -1749,6 +1749,15 @@
     "name": "list_awaiting"
   },
   {
+    "description": "The whole board in ONE call (korg #970) -- what a dashboard needs, instead of the 17-call crawl the 2026-07-31 backlog review had to do. Takes NO arguments: it is one screen's state, and every filter it could offer is already decided by what the panels are. Returns {generated, active, queue, proposals_omitted, programs, programs_omitted, awaiting, depth, reports}. `active` and `queue` are the `active` and `proposed` proposals, pinned-first-then-rank, each with `summary` and a work-item rollup (covered_count + open/resolved/done/closed) so progress renders without a call per proposal; `proposals_omitted` is the usual {done, declined, archived}. `programs` are the live programs, each with its ordered `slices` exactly as get_program returns them. `awaiting` is list_awaiting's lane, `depth` is per-project queue depth (every project, with its `status`), `reports` the newest 5. There is deliberately NO counters block -- live proposals is active+queue, shipped is proposals_omitted.done, awaiting is awaiting.length, projects is depth filtered by status; a counter that can disagree with the list beside it is a bug. `generated` is Postgres's clock, the same one every timestamp here came from, so ages computed against it are right. For one proposal's covered items, one program's detail, or anything paged, use that entity's own read.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "name": "get_board"
+  },
+  {
     "description": "Create a handoff -- a durable, cross-machine context document -- and attach it to the work it describes in ONE call. `related_node_ids` are the nodes it belongs to (work items, a sprint proposal, a report, another handoff); each becomes a `has_handoff` edge. REQUIRED context, not optional related reading: the handoff surfaces automatically in those nodes' get_work_item/get_proposal `related` block. Rejects an empty `related_node_ids` unless you pass `allow_standalone` (so a forgotten link can't orphan it), and rejects the whole create if any id does not resolve (isError `not_found` -- no partial insert). Returns the handoff plus the owner ids linked.",
     "inputSchema": {
       "additionalProperties": false,

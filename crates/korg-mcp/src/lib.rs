@@ -13,7 +13,8 @@ pub mod tools;
 pub fn server_instructions() -> &'static str {
     "korg MCP server — one typed-node data model over Postgres covering work items, cards, \
      comments, reading-list links, generalized relationships, topics, daily planning, \
-     sprint proposals, programs, reports, handoffs, and projects and areas. \
+     sprint proposals, programs, reports, handoffs, projects and areas, and a one-call \
+     Board rollup. \
      Mutations validate their target and return the updated entity; errors are isError \
      results carrying {message, code} where code is one of invalid_input, not_found, \
      conflict, internal. Paginated collection reads (list_work_items, list_cards, \
@@ -40,7 +41,11 @@ pub fn server_instructions() -> &'static str {
      When something can only move once Ken acts — a decision, an ops action you cannot \
      perform, a review — mark it Awaiting Ken with set_awaiting rather than burying it \
      in a comment, and clear it yourself once you have the answer; list_awaiting is the \
-     whole lane in one call."
+     whole lane in one call. \
+     When you want the WHOLE state of the work — what is being worked, what is queued, \
+     what spans repos, what is waiting on Ken — call get_board once instead of walking \
+     the queue proposal by proposal; it takes no arguments and is the read that exists \
+     so nobody crawls."
 }
 
 /// [`server_instructions`] plus the live project roster (WI #674).

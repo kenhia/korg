@@ -27,6 +27,120 @@ title: string, project: string | null,
  */
 status: string | null, awaiting_since: string | null, awaiting_note: string | null, archived: boolean, };
 
+/**
+ * A program with its slices inlined — the Operations panel in one value.
+ *
+ * Both halves are the types `get_program` already returns (D-4), so a consumer
+ * renders a board program and a program detail page with the same code.
+ */
+export type BoardProgram = { 
+/**
+ * Included proposals in program order (`rank` on the edge, then node_id).
+ */
+slices: Array<ProgramSlice>, node_id: number, title: string, aim: string, notes: string | null, status: string, rank: string, pinned: boolean, category: string | null, tags: Array<string>, archived: boolean, comment_count: number, 
+/**
+ * How many proposals this program includes.
+ */
+slice_count: number, 
+/**
+ * **Derived** (D-6): the distinct project names of the included proposals,
+ * alphabetical. Empty until the program has slices. This is the honest
+ * answer to "which repos does this touch" — it cannot drift from the
+ * slices the way a stored `project_id` would.
+ */
+span: Array<string>, created: string, updated: string, };
+
+/**
+ * A proposal as the board renders it: the queue row, plus the work-item status
+ * rollup that makes Fire Missions' progress track, plus `summary`.
+ *
+ * **Why `summary` is here** (D-5) when `list_proposals` deliberately dropped
+ * it: Fire Missions renders it as the mission's subtitle — it is the panel, not
+ * decoration. #852 dropped it because 110 unfiltered rows of plan-length prose
+ * measured ~46k tokens; #860 then capped `summary` at 500 characters and
+ * migration 0021 moved every over-cap summary into `notes`. Production's
+ * longest is 499 and all fifteen live summaries together are 5,950 characters,
+ * so the thing that made it unaffordable no longer exists. `notes` is still
+ * unbounded and still lives behind `get_proposal`.
+ *
+ * **Why no covered work items.** The board renders *progress*; a consumer that
+ * wants the items makes the focused read the two-level contract points it at.
+ * Inlining them would put the whole open corpus on a dashboard refresh.
+ */
+export type BoardProposal = { node_id: number, title: string, 
+/**
+ * The routing contract, ≤500 chars (#860).
+ */
+summary: string, status: string, project: string | null, rank: string, pinned: boolean, comment_count: number, 
+/**
+ * The work items this proposal covers, and their statuses. The four
+ * counts sum to `covered_count` — `WI_STATUSES` is exactly these four.
+ */
+covered_count: number, open: number, resolved: number, done: number, closed: number, 
+/**
+ * When the proposal row last changed. korg's only staleness signal: it is
+ * *last touched*, not last progressed, which is why the board does not
+ * build an event feed out of it (D-7).
+ */
+updated: string, };
+
+/**
+ * Everything a board renders, in one read (WI #970).
+ *
+ * The 2026-07-31 backlog review assembled a fraction of this with 17
+ * `get_proposal` calls and a script. Consumers: kfdc (the widescreen overseer
+ * board — `kai:~/src/tools/kfdc`, `docs/design/kfdc-concept.html`) and
+ * korg-dash (the kdeskdash Pi feed, which derives its panel counts from the
+ * same read rather than growing its own queries).
+ *
+ * **There is no counters block** (D-3). Every figure the concept's header
+ * statline shows is derivable from what is here — live proposals is
+ * `active.len() + queue.len()`, shipped is `proposals_omitted.done`, awaiting
+ * is `awaiting.len()`, projects is `depth` filtered by `status`. A counter that
+ * can disagree with the list printed beside it is a bug generator, and it is
+ * precisely the aggregate creep #976 filed a warning about.
+ */
+export type BoardRollup = { 
+/**
+ * When this board was assembled, from **Postgres's** clock — the same one
+ * every other timestamp here came from. A consumer computes "waiting 9
+ * days" as `generated - awaiting_since`, and reading the two from different
+ * clocks is how that goes subtly wrong on a cached or proxied board.
+ */
+generated: string, 
+/**
+ * Fire Missions: proposals in `active`, pinned first then rank.
+ */
+active: Array<BoardProposal>, 
+/**
+ * On Deck: proposals in `proposed`, same order.
+ */
+queue: Array<BoardProposal>, 
+/**
+ * What the live-and-unarchived default hid across `active` + `queue` —
+ * the same envelope, meaning the same thing, as `list_proposals`.
+ */
+proposals_omitted: ProposalOmitted, 
+/**
+ * Operations: live programs with their ordered slices.
+ */
+programs: Array<BoardProgram>, programs_omitted: ProgramOmitted, 
+/**
+ * Commander's Call: everything waiting on Ken, oldest ask first.
+ */
+awaiting: Array<AwaitingRow>, 
+/**
+ * Queue depth per project — every project, with its `status`, so the board
+ * can count the active ones and dim the rest.
+ */
+depth: Array<PlanningRollupRow>, 
+/**
+ * Sensor Net: the newest [`BOARD_REPORT_CAP`] reports. `report_date` is the
+ * only date in korg that records when something *happened*, which is why
+ * this is the whole of the board's event story (D-7).
+ */
+reports: Array<ReportRow>, };
+
 export type CardRow = { node_id: number, status: string, title: string, description: string, rank: string, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
 /**
  * Comments on this card (WI #535).
@@ -172,6 +286,14 @@ export type Page<T> = { items: Array<T>, total: number, limit: number, offset: n
  * that vanishes when its counts are zero is a rail you cannot click.
  */
 export type PlanningRollupRow = { project: string, 
+/**
+ * The project's lifecycle status (see `PROJECT_STATUSES`). Added in sprint
+ * 045: this read returns *every* project, so without it a consumer cannot
+ * tell the 30 active ones from the 39 rows. The board (D-3) counts and dims
+ * by it rather than carrying a parallel project counter that could disagree
+ * with these rows; the Planning rail simply ignores it.
+ */
+status: string, 
 /**
  * Live proposals filed against this project.
  */

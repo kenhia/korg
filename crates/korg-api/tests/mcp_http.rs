@@ -77,8 +77,9 @@ async fn mcp_http_end_to_end() {
     // 48 once #828 added get_project; 47 since #871 deleted the
     // `survey_work_items` alias; 50 since #888/#889 added the three disposal
     // tools (delete_link, update_area, delete_area); 56 since #968/#969 added
-    // the four program tools plus set_awaiting/list_awaiting.
-    assert_eq!(tools.len(), 56, "expected 56 tools, got {}", tools.len());
+    // the four program tools plus set_awaiting/list_awaiting; 57 since #970
+    // added get_board.
+    assert_eq!(tools.len(), 57, "expected 57 tools, got {}", tools.len());
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     assert!(names.contains(&"create_work_item"));
     assert!(names.contains(&"list_work_items"));
