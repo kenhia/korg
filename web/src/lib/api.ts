@@ -10,6 +10,7 @@
 
 import type {
   AreaRow,
+  AwaitingRow,
   CardRow,
   Comment,
   DailyPlanItem,
@@ -21,6 +22,9 @@ import type {
   NodePreview,
   Page,
   PlanningRollupRow,
+  ProgramDetail,
+  ProgramList,
+  ProgramRow,
   ProjectRow,
   ProposalDetail,
   ProposalRow,
@@ -35,6 +39,7 @@ import type {
   CardStatus,
   Disposition,
   ErrorCode,
+  ProgramStatus,
   ProposalStatus,
 } from "./generated/vocab";
 import { ERROR_CODES } from "./generated/vocab";
@@ -494,4 +499,37 @@ export const api = {
   // generic one. Read-only from the web; authoring is API/skill-driven.
   handoff: (node_id: number) =>
     httpMaybe<HandoffFull>("GET", `/api/handoffs/${node_id}`),
+
+  // programs — the cross-project layer (#968). Note there is no project filter:
+  // a program has no project of its own, and each row carries the `span`
+  // derived from its slices instead.
+  programs: (status?: ProgramStatus | "all") =>
+    http<ProgramList>("GET", `/api/programs${listQuery({ status })}`),
+  // One call renders the whole page: slices in order, each with its work-item
+  // rollup. No per-slice fetch — that is the point of the read.
+  program: (node_id: number) =>
+    httpMaybe<ProgramDetail>("GET", `/api/programs/${node_id}`),
+  updateProgram: (
+    node_id: number,
+    patch: Patch<{
+      title: string;
+      aim: string;
+      notes: string | null;
+      status: ProgramStatus;
+      rank: number;
+      pinned: boolean;
+      archived: boolean;
+      tags: string[];
+    }>,
+  ) => http<ProgramRow>("PATCH", `/api/programs/${node_id}`, patch),
+
+  // the awaiting-Ken lane (#969). `setAwaiting(id, false)` is the one-click
+  // clear — the same core path an agent uses, not a second one that could
+  // drift from it.
+  awaiting: () => http<AwaitingRow[]>("GET", "/api/awaiting"),
+  setAwaiting: (node_id: number, awaiting: boolean, note?: string) =>
+    http<AwaitingRow>("PUT", `/api/nodes/${node_id}/awaiting`, {
+      awaiting,
+      ...(awaiting && note ? { note } : {}),
+    }),
 };

@@ -14,6 +14,7 @@
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
   import ConfirmButton from "$lib/components/ConfirmButton.svelte";
   import NodePreview from "$lib/components/NodePreview.svelte";
+  import AwaitingLane from "$lib/components/AwaitingLane.svelte";
   import {
     addDays,
     isoDate,
@@ -293,6 +294,12 @@
       </div>
     </div>
   </header>
+  <!-- The Commander's Call lane (#969). Above the planner because it is the
+       one thing on this page that cannot move without Ken — the plan below can
+       wait, an unanswered decision blocks an agent. Renders nothing at all when
+       the lane is empty, so it stays a signal rather than furniture. -->
+  <AwaitingLane />
+
   {#if loadError}
     <ErrorNotice error={loadError} what="the planner" retry={load} />
   {/if}

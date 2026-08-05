@@ -27,7 +27,7 @@ use serde_json::json;
 use time::macros::date;
 
 mod common;
-use common::{app, app_with_pool, req};
+use common::{app, app_with_pool, req, PROJECT};
 
 /// The clock `common::app` pins, so plan dates are not in the past.
 const TODAY: &str = "2026-07-11";
@@ -491,4 +491,161 @@ async fn previewing_a_missing_node_is_not_found() {
     let (st, body) = req(&router, "GET", "/api/nodes/999999", None).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
     assert_eq!(body["code"], "not_found");
+}
+
+// --- programs and the awaiting lane (#968, #969) ----------------------------
+//
+// Both surfaces are what the web UI calls, and both are new routes: without
+// these the `/programs` pages and the Today lane are typed against a contract
+// nothing exercises.
+
+/// The full program round-trip over REST, ending at the rollup the detail page
+/// renders from a single call.
+#[tokio::test]
+async fn a_program_is_created_listed_and_rolled_up_over_rest() {
+    let (_pg, router) = app().await;
+
+    // Two proposals in two projects — the case a proposal is not allowed to be.
+    let (st, _) = req(
+        &router,
+        "POST",
+        "/api/projects",
+        Some(json!({"name": "elsewhere"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (wi, _) = work_item(&router, "work in the first slice", Some(PROJECT)).await;
+    let (st, first) = req(
+        &router,
+        "POST",
+        "/api/proposals",
+        Some(
+            json!({"title": "first slice", "summary": "s", "project": PROJECT,
+                    "work_item_numbers": [wi]}),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "first proposal: {first:?}");
+    let (st, second) = req(
+        &router,
+        "POST",
+        "/api/proposals",
+        Some(json!({"title": "second slice", "summary": "s", "project": "elsewhere"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "second proposal: {second:?}");
+
+    let (st, program) = req(
+        &router,
+        "POST",
+        "/api/programs",
+        Some(json!({
+            "title": "spans two repos",
+            "aim": "the thing a proposal may not be",
+            "slices": [second["node_id"], first["node_id"]],
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "create program: {program:?}");
+    let id = program["node_id"].as_i64().expect("node_id");
+    assert_eq!(
+        program["span"],
+        json!(["elsewhere", PROJECT]),
+        "span is derived from the slices, alphabetical"
+    );
+
+    // The list is the `{items, omitted}` envelope, not a bare array.
+    let (st, list) = req(&router, "GET", "/api/programs", None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(list["items"].as_array().expect("items").len(), 1);
+    assert_eq!(list["omitted"]["done"], 0);
+
+    // The detail read: slices in the order given, each with its own rollup.
+    let (st, detail) = req(&router, "GET", &format!("/api/programs/{id}"), None).await;
+    assert_eq!(st, StatusCode::OK, "get program: {detail:?}");
+    let slices = detail["slices"].as_array().expect("slices");
+    assert_eq!(slices.len(), 2);
+    assert_eq!(
+        slices[0]["title"], "second slice",
+        "caller's order, not node_id order"
+    );
+    assert_eq!(slices[1]["covered_count"], 1);
+    assert_eq!(slices[1]["open"], 1);
+
+    // Status transition, and the list narrows once it is done.
+    let (st, _) = req(
+        &router,
+        "PATCH",
+        &format!("/api/programs/{id}"),
+        Some(json!({"status": "done"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (_, list) = req(&router, "GET", "/api/programs", None).await;
+    assert!(list["items"].as_array().expect("items").is_empty());
+    assert_eq!(list["omitted"]["done"], 1, "hidden, and counted");
+}
+
+/// D-6 over the wire: the refusal is a 400 that names the rule, not a silent
+/// drop that leaves the caller believing the program is filed somewhere.
+#[tokio::test]
+async fn rest_refuses_a_program_with_a_project() {
+    let (_pg, router) = app().await;
+    let (st, body) = req(
+        &router,
+        "POST",
+        "/api/programs",
+        Some(json!({"title": "t", "aim": "a", "project": PROJECT})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body:?}");
+    assert_eq!(body["code"], "invalid_input");
+    assert!(
+        body["error"].as_str().unwrap().contains("CROSS-project"),
+        "the refusal teaches the rule: {body:?}"
+    );
+}
+
+/// The lane and its one-click clear — the two calls the Today page makes.
+#[tokio::test]
+async fn the_awaiting_lane_is_readable_and_clearable_over_rest() {
+    let (_pg, router) = app().await;
+    let (wi_number, node) = work_item(&router, "needs a decision", Some(PROJECT)).await;
+
+    let (st, marked) = req(
+        &router,
+        "PUT",
+        &format!("/api/nodes/{node}/awaiting"),
+        Some(json!({"awaiting": true, "note": "which approach?"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "set: {marked:?}");
+    assert!(marked["awaiting_since"].is_string());
+
+    let (st, lane) = req(&router, "GET", "/api/awaiting", None).await;
+    assert_eq!(st, StatusCode::OK);
+    let rows = lane.as_array().expect("a bare array, per the shape table");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["title"], "needs a decision");
+    assert_eq!(rows[0]["kind"], "workitem");
+    assert_eq!(rows[0]["wi_number"], wi_number);
+    assert_eq!(
+        rows[0]["status"], "open",
+        "the node's own status, for the board"
+    );
+    assert_eq!(rows[0]["awaiting_note"], "which approach?");
+
+    // The UI's clear button.
+    let (st, cleared) = req(
+        &router,
+        "PUT",
+        &format!("/api/nodes/{node}/awaiting"),
+        Some(json!({"awaiting": false})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "clear: {cleared:?}");
+    assert!(cleared["awaiting_since"].is_null());
+
+    let (_, lane) = req(&router, "GET", "/api/awaiting", None).await;
+    assert!(lane.as_array().expect("array").is_empty());
 }
