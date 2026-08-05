@@ -7,3 +7,6 @@
 # Playwright writes here if it is ever run from the repo root instead of web/.
 /test-results
 /playwright-report
+
+# graphify (kai tooling) writes its stat cache here; never part of a build.
+graphify-out/
