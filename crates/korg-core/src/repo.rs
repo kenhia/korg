@@ -1570,6 +1570,12 @@ pub struct WorkItemRow {
     /// Number of comments on this work item (WI #392) — the hint that tells an
     /// agent "this row has discussion; fetch it".
     pub comment_count: i64,
+    /// True when a `has_handoff` edge leaves this item (WI #813) — durable
+    /// context another session left, waiting to be read.
+    pub has_handoff: bool,
+    /// The live proposal covering this item, or `None` when nothing does
+    /// (WI #824). See `membership_select!` for why "live" and why one id.
+    pub proposal_node_id: Option<i64>,
     #[serde(with = "time::serde::rfc3339")]
     #[ts(type = "string")]
     pub created: OffsetDateTime,
@@ -1578,17 +1584,78 @@ pub struct WorkItemRow {
     pub updated: OffsetDateTime,
 }
 
-const WORKITEM_SELECT: &str = "SELECT w.wi_number, w.node_id, \
+/// The two membership markers (sprint 042), spliced into both row tiers — the
+/// full REST row and the lean MCP summary. Written once because the whole
+/// point of bundling #813/#824/#823 was to pay the contract cost *once*; two
+/// copies of this SQL is how the tiers drift on what "spoken for" means.
+///
+/// Both read the `relationship` table, and the two labels point **opposite
+/// ways** — the trap #813 flagged and both drafts still got wrong:
+///
+/// - `covers` is proposal -> work item, so the item is the edge's **right**
+///   end. Drafts wrote `left_node_id`/`label`; the columns are
+///   `left_id`/`right_id`/`relationship`.
+/// - `has_handoff` is node -> handoff, so the item is the **left** end.
+///
+/// **Why only live proposals.** The question the rows are answering is "is
+/// this already spoken for?" — the one that cost 17 `get_proposal` calls in
+/// the 2026-07-31 backlog review. A `declined` proposal speaks for nothing,
+/// and a `done` one has already had its say; either would paint an open item
+/// in the "claimed" colour and answer that question wrong. `min` picks a
+/// single id when more than one live proposal covers an item — rare, and a
+/// stable pick beats an arbitrary one.
+///
+/// **Why joins and not the correlated subqueries the WIs sketched.** Both WIs
+/// proposed `EXISTS (SELECT 1 FROM relationship …)` per row, and #813 asked
+/// for a measurement rather than an assumption. The measurement
+/// (`tests/sprint042_measure.rs`, 1000 items / 100 proposals / 60 handoffs)
+/// said the assumption was wrong: correlated subqueries cost **+324%** on the
+/// REST read and **+448%** on the lean one, because a 500-row page does 500
+/// index lookups plus 500 joins to `sprint_proposal`.
+///
+/// These pre-aggregate instead. Both edge sets are *small* — coverage is
+/// hundreds of rows, handoffs dozens — so Postgres scans each once behind
+/// `relationship_label_idx` and hash-joins the result, turning per-row work
+/// into per-*query* work. Same answers, and the cost drops to noise. Grouping
+/// in the subquery (rather than `DISTINCT` on the join) keeps the join
+/// one-to-one, so no row can be duplicated by a second covering edge.
+macro_rules! membership_columns {
+    () => {
+        "(ho.left_id IS NOT NULL) AS has_handoff, cov.proposal_node_id"
+    };
+}
+
+/// The `FROM` half of [`membership_columns!`] — kept adjacent because the two
+/// are meaningless apart, and a select list referencing a join that is not
+/// there fails at runtime rather than compile time.
+macro_rules! membership_joins {
+    () => {
+        "LEFT JOIN (SELECT r.right_id AS node_id, min(r.left_id) AS proposal_node_id \
+                      FROM relationship r \
+                      JOIN sprint_proposal sp ON sp.node_id = r.left_id \
+                     WHERE r.relationship = 'covers' \
+                       AND sp.status::text IN ('proposed', 'active') \
+                     GROUP BY r.right_id) cov ON cov.node_id = w.node_id \
+         LEFT JOIN (SELECT DISTINCT r.left_id FROM relationship r \
+                     WHERE r.relationship = 'has_handoff') ho ON ho.left_id = w.node_id"
+    };
+}
+
+const WORKITEM_SELECT: &str = concat!(
+    "SELECT w.wi_number, w.node_id, \
         pj.name AS project, a.name AS area, \
         w.wi_type, w.wi_status, w.wi_tshirt, w.sprint, w.title, w.content, w.details, \
         n.category, n.tags, pw.wi_number AS parent, n.archived, \
-        (SELECT count(*) FROM comment c WHERE c.node_id = w.node_id) AS comment_count, \
-        n.created, n.updated \
+        (SELECT count(*) FROM comment c WHERE c.node_id = w.node_id) AS comment_count, ",
+    membership_columns!(),
+    ", n.created, n.updated \
      FROM workitem w \
      JOIN node n ON n.id = w.node_id \
      LEFT JOIN project pj ON pj.id = n.project_id \
      LEFT JOIN area a ON a.id = w.area_id \
-     LEFT JOIN workitem pw ON pw.node_id = w.parent_node_id";
+     LEFT JOIN workitem pw ON pw.node_id = w.parent_node_id ",
+    membership_joins!()
+);
 
 /// Filters for a work-item listing. `project` is a name, matching the other
 /// project-keyed surfaces.
@@ -1731,6 +1798,18 @@ pub struct WorkItemSummary {
     pub wi_tshirt: String,
     /// Comment count (WI #392) — signals which rows carry discussion worth fetching.
     pub comment_count: i64,
+    /// True when this item has a non-empty `details` section (WI #813). The
+    /// projection carries no bodies by design, so the Review page had to show
+    /// no 📝 rather than a false negative; a boolean is the honest fix and
+    /// costs no join.
+    pub has_details: bool,
+    /// True when a `has_handoff` edge leaves this item (WI #813) — "which of
+    /// these already has durable context waiting", which is precisely what the
+    /// survey could not answer without N follow-up `neighbors` calls.
+    pub has_handoff: bool,
+    /// The live proposal covering this item (WI #824) — "which of these is
+    /// already spoken for", the other question that cost N follow-up calls.
+    pub proposal_node_id: Option<i64>,
 }
 
 /// What the lean list's defaults hid (WI #851, extended by #861), computed as a
@@ -1808,20 +1887,26 @@ pub async fn list_work_items_lean(
         wi_status: String,
         wi_tshirt: String,
         comment_count: i64,
+        has_details: bool,
+        has_handoff: bool,
+        proposal_node_id: Option<i64>,
     }
-    let rows = sqlx::query_as::<_, Row>(
+    let rows = sqlx::query_as::<_, Row>(concat!(
         "SELECT w.wi_number, w.node_id, pj.name AS project, w.title, \
                 w.wi_type, w.wi_status, w.wi_tshirt, \
-                (SELECT count(*) FROM comment c WHERE c.node_id = w.node_id) AS comment_count \
-         FROM workitem w \
+                (SELECT count(*) FROM comment c WHERE c.node_id = w.node_id) AS comment_count, \
+                (w.details IS NOT NULL AND w.details <> '') AS has_details, ",
+        membership_columns!(),
+        " FROM workitem w \
          JOIN node n ON n.id = w.node_id \
-         LEFT JOIN project pj ON pj.id = n.project_id \
-         WHERE ($1::text IS NULL OR pj.name = $1) \
+         LEFT JOIN project pj ON pj.id = n.project_id ",
+        membership_joins!(),
+        " WHERE ($1::text IS NULL OR pj.name = $1) \
            AND ($2::text[] IS NULL OR w.wi_status = ANY($2)) \
            AND ($3::bool IS NULL OR n.archived = $3) \
          ORDER BY w.wi_number \
          LIMIT $4 OFFSET $5",
-    )
+    ))
     .bind(project)
     .bind(shown.as_deref())
     .bind(archived)
@@ -1841,6 +1926,9 @@ pub async fn list_work_items_lean(
             wi_status: r.wi_status,
             wi_tshirt: r.wi_tshirt,
             comment_count: r.comment_count,
+            has_details: r.has_details,
+            has_handoff: r.has_handoff,
+            proposal_node_id: r.proposal_node_id,
         })
         .collect();
 
@@ -3474,6 +3562,97 @@ pub async fn node_id_for_wi(pool: &PgPool, wi_number: i64) -> Result<Option<i64>
         .fetch_optional(pool)
         .await?;
     Ok(id)
+}
+
+// --- the planning rail rollup (WI #823) -------------------------------------
+
+/// One project's planning weather, for the Planning page's project rail
+/// (WI #823): `<proposals> | <wi_in_proposal> / <wi_total>`.
+///
+/// The same aggregate `membership_select!` evaluates per row, grouped by
+/// project instead — which is why #823 belongs in this sprint rather than near
+/// it. Ken's instruction was *"the right SQL query makes the first one quick
+/// enough, but timing the op beats guessing"*, so all three figures ship and
+/// the measurement is in the sprint record rather than a pre-emptive
+/// degradation to fewer numbers.
+///
+/// **What each figure counts, and why it is not the obvious thing.**
+///
+/// - `proposals` — *live* proposals (`proposed` + `active`), matching the
+///   queue the Planning page renders. A done proposal is off the queue.
+/// - `wi_total` — *live, unarchived* work items. Not every item: `closed` is
+///   78% of the corpus (the #861 measurement), and a denominator that counts
+///   years of finished work makes the ratio unreadable. This is "how much
+///   open work is here", which is the question a planning rail is asked.
+/// - `wi_in_proposal` — that same set, narrowed to items a live proposal
+///   covers. Deliberately the *same* liveness rule the row marker uses: the
+///   rail and the rows sit on one screen, and two definitions of "spoken for"
+///   on one screen is a bug report waiting to happen.
+///
+/// Every project is returned, including one with three zeroes — a rail entry
+/// that vanishes when its counts are zero is a rail you cannot click.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct PlanningRollupRow {
+    pub project: String,
+    /// Live proposals filed against this project.
+    pub proposals: i64,
+    /// Live, unarchived work items a live proposal covers.
+    pub wi_in_proposal: i64,
+    /// Live, unarchived work items in the project — the denominator.
+    pub wi_total: i64,
+}
+
+/// Every project's [`PlanningRollupRow`], in one round trip, ordered by name.
+///
+/// One statement rather than three-per-project: the rail renders ~30 projects,
+/// and a per-project read is the N+1 this sprint exists to delete.
+///
+/// Built from two grouped CTEs left-joined onto `project`, for the reason
+/// `membership_columns!` documents at length: the first draft was three
+/// correlated subqueries per project row and measured 7.1ms, which is a lot
+/// for three numbers. Aggregating once and joining is the same answer without
+/// the per-row multiplier — and it reuses the *same* liveness predicates, so
+/// the rail cannot disagree with the rows it sits beside.
+///
+/// `coalesce` on both counts is what keeps a project with nothing in it in the
+/// result with three zeroes rather than three nulls.
+pub async fn planning_rollup(pool: &PgPool) -> Result<Vec<PlanningRollupRow>> {
+    Ok(sqlx::query_as::<_, PlanningRollupRow>(
+        "WITH live_covers AS ( \
+             SELECT DISTINCT r.right_id AS node_id \
+               FROM relationship r \
+               JOIN sprint_proposal sp ON sp.node_id = r.left_id \
+              WHERE r.relationship = 'covers' \
+                AND sp.status::text IN ('proposed', 'active') \
+         ), wi AS ( \
+             SELECT n.project_id, \
+                    count(*) AS wi_total, \
+                    count(lc.node_id) AS wi_in_proposal \
+               FROM workitem w \
+               JOIN node n ON n.id = w.node_id \
+               LEFT JOIN live_covers lc ON lc.node_id = w.node_id \
+              WHERE NOT n.archived AND w.wi_status <> 'closed' \
+              GROUP BY n.project_id \
+         ), props AS ( \
+             SELECT sn.project_id, count(*) AS proposals \
+               FROM sprint_proposal sp \
+               JOIN node sn ON sn.id = sp.node_id \
+              WHERE NOT sn.archived \
+                AND sp.status::text IN ('proposed', 'active') \
+              GROUP BY sn.project_id \
+         ) \
+         SELECT pj.name AS project, \
+                coalesce(props.proposals, 0) AS proposals, \
+                coalesce(wi.wi_in_proposal, 0) AS wi_in_proposal, \
+                coalesce(wi.wi_total, 0) AS wi_total \
+           FROM project pj \
+           LEFT JOIN wi ON wi.project_id = pj.id \
+           LEFT JOIN props ON props.project_id = pj.id \
+          ORDER BY pj.name",
+    )
+    .fetch_all(pool)
+    .await?)
 }
 
 // --- work item update (Edit + Archive) ------------------------------------

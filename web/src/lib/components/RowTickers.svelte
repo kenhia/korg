@@ -14,13 +14,24 @@
   //
   // Glyphs are chosen for font coverage, not just meaning: 🗒️ (U+1F5D2) was the
   // first pick for details and rendered as a missing-glyph box in Chromium here,
-  // so it is 📝 (U+1F4DD), which is old enough to be everywhere. Same caution
-  // applies to 🫱 for handoff — Unicode 14, and the least portable of the three.
+  // so it is 📝 (U+1F4DD), which is old enough to be everywhere.
+  //
+  // Sprint 042 landed the handoff ticker, once `has_handoff` was on both row
+  // contracts. The glyph is 📄 (U+1F4C4), NOT the 🫱 the WI proposed: 🫱 is
+  // Unicode 14 and was flagged as the least portable of the three, and korg
+  // already renders a handoff as 📄 on the Planning card's related-edge chips.
+  // Matching the page that already exists beats introducing a second symbol
+  // for the same thing — and it sidesteps the font question entirely.
+  //
+  // `details` on the Review page is honest now too: `WorkItemSummary` carries
+  // `has_details` rather than the page inferring it from a body it never
+  // fetched, so a missing 📝 there means "no details", not "cannot tell".
 
   let {
     comments = 0,
     details = false,
-  }: { comments?: number; details?: boolean } = $props();
+    handoff = false,
+  }: { comments?: number; details?: boolean; handoff?: boolean } = $props();
 </script>
 
 {#if comments > 0}<span
@@ -31,4 +42,8 @@
     class="ml-1.5 whitespace-nowrap text-xs"
     title="Has a details section"
     aria-label="Has a details section">📝</span
+  >{/if}{#if handoff}<span
+    class="ml-1.5 whitespace-nowrap text-xs"
+    title="Has a handoff — durable context waiting; read it before acting"
+    aria-label="Has a handoff">📄</span
   >{/if}

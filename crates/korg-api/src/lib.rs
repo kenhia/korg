@@ -97,6 +97,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/projects/:name/plan", get(project_plan))
         .route("/api/projects/:name", patch(update_project))
         .route("/api/proposals", get(list_proposals).post(create_proposal))
+        .route("/api/proposals/rollup", get(planning_rollup))
         .route("/api/reports", get(list_reports))
         .route("/api/reports/:node_id", get(get_report))
         .route("/api/handoffs", post(create_handoff))
@@ -719,6 +720,18 @@ async fn list_proposals(
     Query(q): Query<ops::ListProposals>,
 ) -> ApiResult {
     Ok(Json(json!(repo::list_proposals(&s.pool, q.into()).await?)))
+}
+
+/// Per-project planning weather for the Planning rail (WI #823) — one row per
+/// project, `<proposals> | <wi_in_proposal> / <wi_total>`.
+///
+/// REST-only on purpose. This is a rail-rendering read, and the MCP catalogue
+/// is a surface every agent pays to read; the same numbers are already
+/// reachable there per row, via the `proposal_node_id` this sprint put on
+/// `list_work_items`. Registered before `/api/proposals/:node_id` — static
+/// segments win in matchit, but the ordering makes that intent visible.
+async fn planning_rollup(State(s): State<AppState>) -> ApiResult {
+    Ok(Json(json!(repo::planning_rollup(&s.pool).await?)))
 }
 
 /// The authoritative "what is this sprint" read (WI #536).

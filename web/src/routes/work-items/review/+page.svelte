@@ -24,7 +24,7 @@
     type WorkItemDetail,
     type WorkItemSummary,
   } from "$lib/api";
-  import { chip, projectRailColor } from "$lib/domain";
+  import { IN_PROPOSAL_COLOR, chip, projectRailColor } from "$lib/domain";
   import { renderMarkdown } from "$lib/markdown";
   import BackTo from "$lib/components/BackTo.svelte";
   import Comments from "$lib/components/Comments.svelte";
@@ -312,17 +312,28 @@
                         >{row.wi_status}</span
                       >
                     </td>
-                    <td class="px-3 py-1.5 font-medium">
+                    <td class="px-3 py-1.5">
                       <button
-                        class="w-full cursor-pointer text-left font-medium"
+                        class="w-full cursor-pointer text-left"
+                        style={row.proposal_node_id != null
+                          ? `color: ${IN_PROPOSAL_COLOR}`
+                          : ""}
                         onclick={(e) => {
                           e.stopPropagation();
                           select(row.wi_number);
                         }}
-                        ><!-- No details ticker here: the survey projection does
-                             not carry `details`, and inventing a `false` would
-                             read as "this item has none". Absent is honest. -->
-                        {row.title}<RowTickers comments={row.comment_count} /></button
+                        ><!-- The details ticker is honest here as of sprint 042:
+                             `WorkItemSummary` carries `has_details`, so a
+                             missing 📝 means "no details" rather than "this
+                             projection cannot tell you". Same for the handoff
+                             marker — which matters most on *this* page, since
+                             closing an item whose handoff nobody read is
+                             exactly the mistake it prevents. -->
+                        {row.title}<RowTickers
+                          comments={row.comment_count}
+                          details={row.has_details}
+                          handoff={row.has_handoff}
+                        /></button
                       >
                     </td>
                     <!-- The button this page is for. One click, one destination,
