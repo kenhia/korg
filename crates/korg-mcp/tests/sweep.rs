@@ -559,3 +559,91 @@ async fn an_empty_link_url_is_invalid_input() {
         assert!(rejected, "an empty link url ({url:?}) was accepted");
     }
 }
+
+// --- the board rollup (#970) ------------------------------------------------
+
+/// `get_board` over MCP: one call, every panel, and no arguments to get wrong.
+///
+/// The claim under test is the one an agent reads in the tool description — that
+/// this replaces walking the queue proposal by proposal. So this asserts the
+/// *keys* a consumer types against, and that a schema with no properties is
+/// exactly what the tool advertises.
+#[tokio::test]
+async fn get_board_returns_every_panel_and_takes_no_arguments() {
+    let (_pg, pool) = fresh_korg().await;
+    repo::create_project(&pool, "korg").await.unwrap();
+    let wi = repo::create_work_item(
+        &pool,
+        korg_core::repo::NewWorkItem {
+            project: Some("korg".into()),
+            ..new::work_item("in flight")
+        },
+    )
+    .await
+    .unwrap();
+    let proposal = repo::create_proposal(
+        &pool,
+        korg_core::repo::NewProposal {
+            summary: "the mission".into(),
+            covers: vec![wi.wi_number],
+            ..new::proposal_in("korg", "firing")
+        },
+    )
+    .await
+    .unwrap()
+    .row
+    .node_id;
+    repo::update_proposal(
+        &pool,
+        proposal,
+        korg_core::repo::ProposalPatch {
+            status: Some("active".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    repo::set_awaiting(&pool, wi.node_id, true, Some("your call"))
+        .await
+        .unwrap();
+
+    let server = server(pool);
+    let board = body(&server.call("get_board", args(json!({}))).await.unwrap());
+
+    for key in [
+        "generated",
+        "active",
+        "queue",
+        "proposals_omitted",
+        "programs",
+        "programs_omitted",
+        "awaiting",
+        "depth",
+        "reports",
+    ] {
+        assert!(board.get(key).is_some(), "the board is missing `{key}`");
+    }
+    assert_eq!(board["active"][0]["title"], "firing");
+    assert_eq!(board["active"][0]["covered_count"], 1);
+    assert_eq!(board["active"][0]["open"], 1);
+    assert_eq!(board["awaiting"][0]["awaiting_note"], "your call");
+    assert!(
+        board.get("counts").is_none(),
+        "D-3: no counters block — every header figure is derivable from these lists"
+    );
+
+    // D-1, as the schema an agent actually reads: nothing to pass, nothing to
+    // get wrong. A filter here would produce a board of one repo, which is the
+    // opposite of the question it answers.
+    let schema = korg_mcp::tools::tools()
+        .into_iter()
+        .find(|t| t.name == "get_board")
+        .expect("get_board is advertised")
+        .input_schema
+        .clone();
+    assert_eq!(
+        schema.get("properties"),
+        Some(&json!({})),
+        "get_board takes no arguments"
+    );
+}

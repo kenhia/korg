@@ -32,6 +32,7 @@ enumerates the tools a third time. All three are drift-tested against
 | Sprint proposals | `propose_sprint`, `list_proposals`, `get_proposal`, `update_proposal` |
 | Programs | `create_program`, `get_program`, `list_programs`, `update_program` |
 | Awaiting Ken | `set_awaiting`, `list_awaiting` |
+| Board | `get_board` |
 | Reports | `create_report`, `list_reports`, `get_report` |
 | Handoffs | `create_handoff`, `get_handoff`, `update_handoff` |
 | Projects and areas | `list_projects`, `get_project`, `create_project`, `update_project`, `list_areas`, `create_area`, `update_area`, `delete_area` |
@@ -451,6 +452,55 @@ no status, size, or lifecycle to leak into backlog, survey, or planning.
   (titled, so the reader learns *what* was handed off without a fetch). Once a
   ref points you at one, `get_handoff(node_id)` returns the full `body` plus the
   nodes it is attached to. Relationship changes go through `relate`/`unrelate`.
+
+## The board rollup (#970)
+
+`get_board` / `GET /api/board` returns **the whole state of the work in one
+call** — the read that exists so nobody crawls. The 2026-07-31 backlog review
+assembled a fraction of it with 17 `get_proposal` calls plus a script.
+
+It is **not a collection read** and is deliberately absent from the shape table
+above: it is one composite object, not `{items, …}`.
+
+| Field | What it is |
+|---|---|
+| `generated` | when the board was assembled, from **Postgres's** clock — the same one every timestamp here came from, so `generated - awaiting_since` is a correct age |
+| `active` | proposals in `active`, pinned first then rank — each with `summary` and the work-item rollup `covered_count` + `open`/`resolved`/`done`/`closed` |
+| `queue` | proposals in `proposed`, same row type, same order |
+| `proposals_omitted` | `{done, declined, archived}` — the same envelope, meaning the same thing, as `list_proposals` |
+| `programs` | live programs, each carrying `slices` exactly as `get_program` returns them |
+| `programs_omitted` | `{done, archived}` |
+| `awaiting` | `list_awaiting`'s lane, unchanged |
+| `depth` | per-project queue depth — every project, with its `status` |
+| `reports` | the newest 5 |
+
+**It takes no arguments**, for the reason `list_awaiting` takes none: it is one
+screen's state, and every filter it could offer is already decided by what the
+consumer renders. A `project` filter would produce a board of one repo, which is
+the opposite of the question it answers. Caps are fixed policy; a consumer that
+wants more of one corpus calls that corpus's own read, and one proposal's covered
+items or one program's detail are still `get_proposal` / `get_program`.
+
+**There is no counters block, deliberately.** Every summary figure a header bar
+wants is derivable from what is already here — live proposals is
+`active.length + queue.length`, shipped is `proposals_omitted.done`, awaiting is
+`awaiting.length`, active projects is `depth` filtered by `status`. A counter
+that can disagree with the list printed beside it is a bug generator, and adding
+one per panel is the aggregate creep #976 filed a warning about. `depth` carries
+`status` (sprint 045) precisely so the one non-derivable figure became derivable
+instead of becoming a counter.
+
+**The board has no event feed.** #970 asked for "recent events/reports";
+`reports` is the reports half, and `report_date` is the only date in korg that
+records when something *happened*. There is no transition log, and the available
+substitute — `node.updated` — advances on any edit, so a "recently shipped" list
+built from it would date a proposal by its last tag edit. On a surface whose
+promise is that it renders korg deterministically, a plausible wrong date is
+worse than an absent panel.
+
+Consumers: **kfdc** (`kai:~/src/tools/kfdc`, the widescreen overseer board) and
+**korg-dash** (the kdeskdash Pi feed, which derives its panel counts from this
+read rather than growing its own queries).
 
 ## Relationships
 

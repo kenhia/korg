@@ -4389,10 +4389,16 @@ pub async fn node_id_for_wi(pool: &PgPool, wi_number: i64) -> Result<Option<i64>
 ///
 /// Every project is returned, including one with three zeroes — a rail entry
 /// that vanishes when its counts are zero is a rail you cannot click.
-#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq, TS)]
 #[ts(export, export_to = "korg.ts")]
 pub struct PlanningRollupRow {
     pub project: String,
+    /// The project's lifecycle status (see `PROJECT_STATUSES`). Added in sprint
+    /// 045: this read returns *every* project, so without it a consumer cannot
+    /// tell the 30 active ones from the 39 rows. The board (D-3) counts and dims
+    /// by it rather than carrying a parallel project counter that could disagree
+    /// with these rows; the Planning rail simply ignores it.
+    pub status: String,
     /// Live proposals filed against this project.
     pub proposals: i64,
     /// Live, unarchived work items a live proposal covers.
@@ -4440,7 +4446,7 @@ pub async fn planning_rollup(pool: &PgPool) -> Result<Vec<PlanningRollupRow>> {
                 AND sp.status::text IN ('proposed', 'active') \
               GROUP BY sn.project_id \
          ) \
-         SELECT pj.name AS project, \
+         SELECT pj.name AS project, pj.status, \
                 coalesce(props.proposals, 0) AS proposals, \
                 coalesce(wi.wi_in_proposal, 0) AS wi_in_proposal, \
                 coalesce(wi.wi_total, 0) AS wi_total \
@@ -4451,6 +4457,308 @@ pub async fn planning_rollup(pool: &PgPool) -> Result<Vec<PlanningRollupRow>> {
     )
     .fetch_all(pool)
     .await?)
+}
+
+// --- the board rollup (WI #970) ---------------------------------------------
+
+/// How many reports the board carries. The read takes no arguments (D-1), so
+/// this is a fixed policy rather than a parameter: Sensor Net renders a handful
+/// of health lines, and a consumer that wants the series calls `list_reports`.
+pub const BOARD_REPORT_CAP: i64 = 5;
+
+/// A proposal as the board renders it: the queue row, plus the work-item status
+/// rollup that makes Fire Missions' progress track, plus `summary`.
+///
+/// **Why `summary` is here** (D-5) when `list_proposals` deliberately dropped
+/// it: Fire Missions renders it as the mission's subtitle — it is the panel, not
+/// decoration. #852 dropped it because 110 unfiltered rows of plan-length prose
+/// measured ~46k tokens; #860 then capped `summary` at 500 characters and
+/// migration 0021 moved every over-cap summary into `notes`. Production's
+/// longest is 499 and all fifteen live summaries together are 5,950 characters,
+/// so the thing that made it unaffordable no longer exists. `notes` is still
+/// unbounded and still lives behind `get_proposal`.
+///
+/// **Why no covered work items.** The board renders *progress*; a consumer that
+/// wants the items makes the focused read the two-level contract points it at.
+/// Inlining them would put the whole open corpus on a dashboard refresh.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct BoardProposal {
+    pub node_id: i64,
+    pub title: String,
+    /// The routing contract, ≤500 chars (#860).
+    pub summary: String,
+    pub status: String,
+    pub project: Option<String>,
+    #[ts(type = "string")]
+    pub rank: Decimal,
+    pub pinned: bool,
+    pub comment_count: i64,
+    /// The work items this proposal covers, and their statuses. The four
+    /// counts sum to `covered_count` — `WI_STATUSES` is exactly these four.
+    pub covered_count: i64,
+    pub open: i64,
+    pub resolved: i64,
+    pub done: i64,
+    pub closed: i64,
+    /// When the proposal row last changed. korg's only staleness signal: it is
+    /// *last touched*, not last progressed, which is why the board does not
+    /// build an event feed out of it (D-7).
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub updated: OffsetDateTime,
+}
+
+/// A program with its slices inlined — the Operations panel in one value.
+///
+/// Both halves are the types `get_program` already returns (D-4), so a consumer
+/// renders a board program and a program detail page with the same code.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct BoardProgram {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub program: ProgramRow,
+    /// Included proposals in program order (`rank` on the edge, then node_id).
+    pub slices: Vec<ProgramSlice>,
+}
+
+/// Everything a board renders, in one read (WI #970).
+///
+/// The 2026-07-31 backlog review assembled a fraction of this with 17
+/// `get_proposal` calls and a script. Consumers: kfdc (the widescreen overseer
+/// board — `kai:~/src/tools/kfdc`, `docs/design/kfdc-concept.html`) and
+/// korg-dash (the kdeskdash Pi feed, which derives its panel counts from the
+/// same read rather than growing its own queries).
+///
+/// **There is no counters block** (D-3). Every figure the concept's header
+/// statline shows is derivable from what is here — live proposals is
+/// `active.len() + queue.len()`, shipped is `proposals_omitted.done`, awaiting
+/// is `awaiting.len()`, projects is `depth` filtered by `status`. A counter that
+/// can disagree with the list printed beside it is a bug generator, and it is
+/// precisely the aggregate creep #976 filed a warning about.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct BoardRollup {
+    /// When this board was assembled, from **Postgres's** clock — the same one
+    /// every other timestamp here came from. A consumer computes "waiting 9
+    /// days" as `generated - awaiting_since`, and reading the two from different
+    /// clocks is how that goes subtly wrong on a cached or proxied board.
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub generated: OffsetDateTime,
+    /// Fire Missions: proposals in `active`, pinned first then rank.
+    pub active: Vec<BoardProposal>,
+    /// On Deck: proposals in `proposed`, same order.
+    pub queue: Vec<BoardProposal>,
+    /// What the live-and-unarchived default hid across `active` + `queue` —
+    /// the same envelope, meaning the same thing, as `list_proposals`.
+    pub proposals_omitted: ProposalOmitted,
+    /// Operations: live programs with their ordered slices.
+    pub programs: Vec<BoardProgram>,
+    pub programs_omitted: ProgramOmitted,
+    /// Commander's Call: everything waiting on Ken, oldest ask first.
+    pub awaiting: Vec<AwaitingRow>,
+    /// Queue depth per project — every project, with its `status`, so the board
+    /// can count the active ones and dim the rest.
+    pub depth: Vec<PlanningRollupRow>,
+    /// Sensor Net: the newest [`BOARD_REPORT_CAP`] reports. `report_date` is the
+    /// only date in korg that records when something *happened*, which is why
+    /// this is the whole of the board's event story (D-7).
+    pub reports: Vec<ReportRow>,
+}
+
+/// One row of the board's proposal pass, before it is split by panel.
+///
+/// `archived` is carried only to make that split honest: a proposal fetched
+/// because it is a *slice* of a live program is returned whatever its state, and
+/// an archived one must not leak into the queue on its way past.
+#[derive(sqlx::FromRow)]
+struct BoardProposalRow {
+    node_id: i64,
+    title: String,
+    summary: String,
+    status: String,
+    project: Option<String>,
+    rank: Decimal,
+    pinned: bool,
+    archived: bool,
+    comment_count: i64,
+    covered_count: i64,
+    open: i64,
+    resolved: i64,
+    done: i64,
+    closed: i64,
+    updated: OffsetDateTime,
+}
+
+impl BoardProposalRow {
+    fn into_proposal(self) -> BoardProposal {
+        BoardProposal {
+            node_id: self.node_id,
+            title: self.title,
+            summary: self.summary,
+            status: self.status,
+            project: self.project,
+            rank: self.rank,
+            pinned: self.pinned,
+            comment_count: self.comment_count,
+            covered_count: self.covered_count,
+            open: self.open,
+            resolved: self.resolved,
+            done: self.done,
+            closed: self.closed,
+            updated: self.updated,
+        }
+    }
+
+    fn as_slice(&self, rank: Option<Decimal>) -> ProgramSlice {
+        ProgramSlice {
+            node_id: self.node_id,
+            title: self.title.clone(),
+            status: self.status.clone(),
+            project: self.project.clone(),
+            rank,
+            covered_count: self.covered_count,
+            open: self.open,
+            resolved: self.resolved,
+            done: self.done,
+            closed: self.closed,
+        }
+    }
+}
+
+/// `get_board` / `GET /api/board` — the whole board, one call.
+///
+/// **The aggregate story, decided rather than inherited (D-2, #976).** #976
+/// recorded that `wi_counts` dominates both list reads and warned that a board's
+/// worth of new aggregates on the same surface could multiply that shape per
+/// panel. Two things stop it here:
+///
+/// - This read never calls the list reads, so it never pays `wi_counts` — that
+///   aggregate belongs to `list_work_items`' paging envelope, and the board does
+///   not page work items.
+/// - Fire Missions' progress and Operations' per-slice rollups are the *same*
+///   counts one level apart, so they are **one pass** over the `covers` edges
+///   (450 rows in production), not two. Slices are then bucketed in Rust from
+///   the `includes` edge list — a handful of rows — rather than by re-running
+///   the aggregate per program the way `get_program_detail` must.
+///
+/// The proposal pass fetches every proposal that is either live *or* a slice of
+/// a live program, so a `done` slice in a finished program is rolled up by that
+/// same pass. Fetching the programs first and keying the slice pass off *their*
+/// node ids is what makes `programs` and `slices` unable to disagree.
+pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
+    let generated: OffsetDateTime = sqlx::query_scalar("SELECT now()").fetch_one(pool).await?;
+
+    // Live, unarchived programs — the same defaults `list_programs` applies, via
+    // the same function, so the board's Operations panel and `/api/programs`
+    // cannot show different programs.
+    let ProgramList {
+        items: program_rows,
+        omitted: programs_omitted,
+    } = list_programs(pool, None, archived_default()).await?;
+    let program_ids: Vec<i64> = program_rows.iter().map(|p| p.node_id).collect();
+
+    // The `includes` edges of exactly those programs, in program order.
+    let slice_edges = sqlx::query_as::<_, (i64, i64, Option<Decimal>)>(
+        "SELECT r.left_id, r.right_id, r.rank \
+           FROM relationship r \
+           JOIN sprint_proposal sp ON sp.node_id = r.right_id \
+          WHERE r.relationship = 'includes' AND r.left_id = ANY($1) \
+          ORDER BY r.rank ASC NULLS LAST, r.right_id ASC",
+    )
+    .bind(&program_ids)
+    .fetch_all(pool)
+    .await?;
+    let slice_ids: Vec<i64> = slice_edges.iter().map(|(_, right, _)| *right).collect();
+
+    // The one aggregate pass. `cov` groups the whole `covers` corpus once; the
+    // outer query keeps the live queue and anything a live program includes.
+    let live_statuses: Vec<String> = PROPOSAL_LIVE_STATUSES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let rows = sqlx::query_as::<_, BoardProposalRow>(
+        "WITH cov AS ( \
+             SELECT r.left_id AS proposal_id, \
+                    count(*)                                                AS covered_count, \
+                    count(*) FILTER (WHERE w.wi_status = 'open')            AS open, \
+                    count(*) FILTER (WHERE w.wi_status = 'resolved')        AS resolved, \
+                    count(*) FILTER (WHERE w.wi_status = 'done')            AS done, \
+                    count(*) FILTER (WHERE w.wi_status = 'closed')          AS closed \
+               FROM relationship r \
+               JOIN workitem w ON w.node_id = r.right_id \
+              WHERE r.relationship = 'covers' \
+              GROUP BY r.left_id \
+         ) \
+         SELECT sp.node_id, sp.title, sp.summary, sp.status::text AS status, \
+                pj.name AS project, sp.rank, sp.pinned, n.archived, \
+                (SELECT count(*) FROM comment cm WHERE cm.node_id = sp.node_id) \
+                                                              AS comment_count, \
+                coalesce(cov.covered_count, 0) AS covered_count, \
+                coalesce(cov.open, 0)          AS open, \
+                coalesce(cov.resolved, 0)      AS resolved, \
+                coalesce(cov.done, 0)          AS done, \
+                coalesce(cov.closed, 0)        AS closed, \
+                n.updated \
+           FROM sprint_proposal sp \
+           JOIN node n ON n.id = sp.node_id \
+           LEFT JOIN project pj ON pj.id = n.project_id \
+           LEFT JOIN cov ON cov.proposal_id = sp.node_id \
+          WHERE (sp.status::text = ANY($1) AND NOT n.archived) \
+             OR sp.node_id = ANY($2) \
+          ORDER BY sp.pinned DESC, sp.rank ASC, sp.node_id ASC",
+    )
+    .bind(&live_statuses)
+    .bind(&slice_ids)
+    .fetch_all(pool)
+    .await?;
+
+    // Slices first: `as_slice` borrows, so this runs before the rows are
+    // consumed into the two panels.
+    let programs = program_rows
+        .into_iter()
+        .map(|program| {
+            let slices = slice_edges
+                .iter()
+                .filter(|(left, _, _)| *left == program.node_id)
+                .filter_map(|(_, right, rank)| {
+                    rows.iter()
+                        .find(|r| r.node_id == *right)
+                        .map(|r| r.as_slice(*rank))
+                })
+                .collect();
+            BoardProgram { program, slices }
+        })
+        .collect();
+
+    // A slice-only row is not part of the queue: it was fetched for Operations,
+    // and its own status (or its archived flag) is what decides.
+    let (mut active, mut queue) = (Vec::new(), Vec::new());
+    for row in rows {
+        if row.archived {
+            continue;
+        }
+        match row.status.as_str() {
+            "active" => active.push(row.into_proposal()),
+            "proposed" => queue.push(row.into_proposal()),
+            _ => {}
+        }
+    }
+
+    Ok(BoardRollup {
+        generated,
+        active,
+        queue,
+        proposals_omitted: proposal_omitted(pool, None, archived_default(), Some(&live_statuses))
+            .await?,
+        programs,
+        programs_omitted,
+        awaiting: list_awaiting(pool).await?,
+        depth: planning_rollup(pool).await?,
+        reports: list_reports(pool, None, BOARD_REPORT_CAP).await?,
+    })
 }
 
 // --- work item update (Edit + Archive) ------------------------------------

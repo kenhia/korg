@@ -312,6 +312,8 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
             json!({"node_id": wi.node_id, "awaiting": true, "note": "raised by the fence"}),
         ),
         ("list_awaiting", json!({})),
+        // --- the board rollup (#970) ---
+        ("get_board", json!({})),
         // --- handoffs ---
         (
             "create_handoff",

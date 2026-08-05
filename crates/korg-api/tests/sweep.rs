@@ -649,3 +649,109 @@ async fn the_awaiting_lane_is_readable_and_clearable_over_rest() {
     let (_, lane) = req(&router, "GET", "/api/awaiting", None).await;
     assert!(lane.as_array().expect("array").is_empty());
 }
+
+// --- the board rollup (#970) ------------------------------------------------
+
+/// The whole board over REST, in one GET. The assertion that matters is the
+/// *shape*: kfdc and korg-dash type against these keys, and it is one composite
+/// object rather than any of the collection envelopes.
+#[tokio::test]
+async fn the_board_is_one_request_with_every_panel_on_it() {
+    let (_pg, router) = app().await;
+
+    let (wi, _) = work_item(&router, "in flight", Some(PROJECT)).await;
+    let (st, firing) = req(
+        &router,
+        "POST",
+        "/api/proposals",
+        Some(json!({"title": "firing", "summary": "the mission",
+                    "project": PROJECT, "work_item_numbers": [wi]})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{firing:?}");
+    let firing_id = firing["node_id"].as_i64().expect("node_id");
+    let (st, _) = req(
+        &router,
+        "PATCH",
+        &format!("/api/proposals/{firing_id}"),
+        Some(json!({"status": "active"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (_, queued) = req(
+        &router,
+        "POST",
+        "/api/proposals",
+        Some(json!({"title": "on deck", "summary": "next", "project": PROJECT})),
+    )
+    .await;
+    let (st, program) = req(
+        &router,
+        "POST",
+        "/api/programs",
+        Some(json!({"title": "operation", "aim": "a",
+                    "slices": [firing_id, queued["node_id"]]})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{program:?}");
+
+    let (blocked_wi, blocked) = work_item(&router, "your ops action", Some(PROJECT)).await;
+    let (st, _) = req(
+        &router,
+        "PUT",
+        &format!("/api/nodes/{blocked}/awaiting"),
+        Some(json!({"awaiting": true, "note": "rotate the password"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, board) = req(&router, "GET", "/api/board", None).await;
+    assert_eq!(st, StatusCode::OK, "{board:?}");
+    assert!(board["generated"].is_string(), "Postgres's clock, stamped");
+
+    let active = board["active"].as_array().expect("active");
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0]["title"], "firing");
+    assert_eq!(
+        active[0]["summary"], "the mission",
+        "Fire Missions' subtitle"
+    );
+    assert_eq!(
+        (
+            active[0]["covered_count"].as_i64(),
+            active[0]["open"].as_i64()
+        ),
+        (Some(1), Some(1))
+    );
+
+    assert_eq!(board["queue"].as_array().expect("queue").len(), 1);
+    assert_eq!(board["proposals_omitted"]["done"], 0);
+
+    let programs = board["programs"].as_array().expect("programs");
+    assert_eq!(programs.len(), 1);
+    assert_eq!(
+        programs[0]["slices"].as_array().expect("slices").len(),
+        2,
+        "Operations renders from this alone — no follow-up per program"
+    );
+    assert_eq!(programs[0]["span"], json!([PROJECT]));
+    assert_eq!(board["programs_omitted"]["archived"], 0);
+
+    let awaiting = board["awaiting"].as_array().expect("awaiting");
+    assert_eq!(awaiting.len(), 1);
+    assert_eq!(awaiting[0]["wi_number"], blocked_wi);
+    assert_eq!(awaiting[0]["awaiting_note"], "rotate the password");
+
+    let depth = board["depth"].as_array().expect("depth");
+    assert!(depth
+        .iter()
+        .any(|d| d["project"] == PROJECT && d["status"] == "active"));
+    assert!(board["reports"].is_array());
+
+    // D-3, over the wire: there is no counters block, and there must not be —
+    // every figure a header bar wants comes out of the lists above.
+    assert!(
+        board.get("counts").is_none(),
+        "a counter that can disagree with the list beside it is a bug"
+    );
+}
