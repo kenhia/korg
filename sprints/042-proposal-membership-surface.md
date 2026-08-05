@@ -129,3 +129,29 @@ the strength of the measurement.
   call path, untouched by this sprint). Worth its own look.
 - #810 (parked status) and #582 (screen captures) stayed out, as the proposal
   intended.
+
+## Deployed 2026-08-05
+
+**Image:** `korg:6e21f95479c7` (`6e21f95479c7792ec93e9a9a5503db15d241c96b`) —
+main at the squash-merge of PR #45 plus the `graphify-out/` gitignore chore.
+**Rollback target:** `korg:9cbf81e5efac` (sprint 041), present on kubsdb.
+
+`post-deploy-check.sh --compare` clean: every row count unchanged
+(work_items 671, proposals 138, projects 39, nodes 883), migrations still 21 —
+this sprint changed queries, not schema. The running container's
+`org.opencontainers.image.revision` label matches the built commit exactly.
+
+Verified live, beyond the fixed check:
+
+- `GET /api/proposals/rollup` answers for all 39 projects — korg reads
+  `5 | 6/19`, and no project is missing from the list.
+- Both row tiers carry `proposal_node_id` / `has_handoff`, and the lean tier
+  `has_details`. Across 139 live rows: 41 covered, 4 with a handoff waiting,
+  37 with a details section — the question that cost 17 `get_proposal` calls
+  on 2026-07-31, now one read.
+- `/`, `/planning`, `/work-items`, `/work-items/review` all 200.
+
+The live-only rule demonstrated itself on real data: #813, #823 and #824 were
+marked `resolved` and proposal 825 `done` minutes earlier, and all three now
+report `proposal_node_id: null` — a finished proposal correctly stops speaking
+for its items.
