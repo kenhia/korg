@@ -649,7 +649,15 @@ async fn daily_plan_history(State(s): State<AppState>, Query(q): Query<HistoryQu
 // --- relationships --------------------------------------------------------
 
 async fn create_relationship(State(s): State<AppState>, Json(b): Json<ops::Relate>) -> ApiResult {
-    let id = repo::relate(&s.pool, b.left, b.right, &b.label, b.origin.as_deref(), b.rank).await?;
+    let id = repo::relate(
+        &s.pool,
+        b.left,
+        b.right,
+        &b.label,
+        b.origin.as_deref(),
+        b.rank,
+    )
+    .await?;
     Ok(Json(json!({ "id": id })))
 }
 

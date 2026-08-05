@@ -4045,7 +4045,10 @@ pub async fn list_programs(
 fn program_status_predicate(status: Option<&str>) -> Result<Option<Vec<String>>> {
     match status {
         None => Ok(Some(
-            PROGRAM_LIVE_STATUSES.iter().map(|s| s.to_string()).collect(),
+            PROGRAM_LIVE_STATUSES
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
         )),
         Some("all") => Ok(None),
         Some(s) => {
@@ -4241,8 +4244,7 @@ pub struct AwaitingRow {
     pub archived: bool,
 }
 
-const AWAITING_SELECT: &str =
-    "SELECT n.id AS node_id, n.kind, w.wi_number, \
+const AWAITING_SELECT: &str = "SELECT n.id AS node_id, n.kind, w.wi_number, \
             COALESCE(w.title, sp.title, g.title, cd.title, lk.title, lk.url, tp.name, \
                      rp.summary, hd.title, n.kind || ' #' || n.id) AS title, \
             pj.name AS project, \

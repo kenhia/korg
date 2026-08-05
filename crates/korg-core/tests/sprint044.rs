@@ -139,7 +139,9 @@ async fn span_is_derived_from_the_slices_and_spans_projects() {
 #[tokio::test]
 async fn a_program_with_no_slices_has_an_empty_span() {
     let (_c, pool) = fresh_korg().await;
-    let created = create_program(&pool, new::program("not started")).await.unwrap();
+    let created = create_program(&pool, new::program("not started"))
+        .await
+        .unwrap();
     assert!(created.row.span.is_empty());
     assert_eq!(created.row.slice_count, 0);
 }
@@ -189,8 +191,12 @@ async fn includes_may_cross_projects() {
     let a = proposal_in(&pool, TEST_PROJECT, "korg half").await;
     let b = proposal_in(&pool, "kvllm", "kvllm half").await;
 
-    relate(&pool, program, a, "includes", None, None).await.unwrap();
-    relate(&pool, program, b, "includes", None, None).await.unwrap();
+    relate(&pool, program, a, "includes", None, None)
+        .await
+        .unwrap();
+    relate(&pool, program, b, "includes", None, None)
+        .await
+        .unwrap();
 
     let detail = get_program_detail(&pool, program).await.unwrap().unwrap();
     assert_eq!(detail.slices.len(), 2);
@@ -201,7 +207,11 @@ async fn includes_may_cross_projects() {
 async fn includes_validates_both_endpoints() {
     let (_c, pool) = fresh_korg().await;
     test_project(&pool).await;
-    let program = create_program(&pool, new::program("p")).await.unwrap().row.node_id;
+    let program = create_program(&pool, new::program("p"))
+        .await
+        .unwrap()
+        .row
+        .node_id;
     let proposal = proposal_in(&pool, TEST_PROJECT, "slice").await;
     let (_, wi_node) = wi_in(&pool, TEST_PROJECT, "wi", "open").await;
 
@@ -313,7 +323,10 @@ async fn re_relating_with_a_rank_reorders_in_place_and_keeps_provenance() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(created_before, created_after, "provenance survives a reorder");
+    assert_eq!(
+        created_before, created_after,
+        "provenance survives a reorder"
+    );
     assert_eq!(
         origin.as_deref(),
         Some("create_program"),
@@ -341,7 +354,9 @@ async fn re_relating_without_a_rank_leaves_the_position_alone() {
     .row
     .node_id;
 
-    relate(&pool, program, b, "includes", None, None).await.unwrap();
+    relate(&pool, program, b, "includes", None, None)
+        .await
+        .unwrap();
 
     let detail = get_program_detail(&pool, program).await.unwrap().unwrap();
     assert_eq!(
@@ -370,7 +385,9 @@ async fn an_unranked_slice_sorts_last() {
     .unwrap()
     .row
     .node_id;
-    relate(&pool, program, bare, "includes", None, None).await.unwrap();
+    relate(&pool, program, bare, "includes", None, None)
+        .await
+        .unwrap();
 
     let detail = get_program_detail(&pool, program).await.unwrap().unwrap();
     assert_eq!(
@@ -419,12 +436,18 @@ async fn get_program_rolls_up_work_item_status_per_slice() {
     let detail = get_program_detail(&pool, program).await.unwrap().unwrap();
     let first = &detail.slices[0];
     assert_eq!(first.covered_count, 3);
-    assert_eq!((first.open, first.resolved, first.done, first.closed), (1, 1, 1, 0));
+    assert_eq!(
+        (first.open, first.resolved, first.done, first.closed),
+        (1, 1, 1, 0)
+    );
     assert_eq!(first.status, "proposed");
     assert_eq!(first.project.as_deref(), Some(TEST_PROJECT));
 
     let second = &detail.slices[1];
-    assert_eq!(second.covered_count, 0, "a slice with no work items counts 0");
+    assert_eq!(
+        second.covered_count, 0,
+        "a slice with no work items counts 0"
+    );
     assert_eq!((second.open, second.resolved, second.done), (0, 0, 0));
 }
 
@@ -457,7 +480,11 @@ async fn get_program_carries_the_related_block_but_not_its_own_slices() {
     .unwrap();
 
     let detail = get_program_detail(&pool, program).await.unwrap().unwrap();
-    assert_eq!(detail.related.len(), 1, "includes is excluded — it is `slices`");
+    assert_eq!(
+        detail.related.len(),
+        1,
+        "includes is excluded — it is `slices`"
+    );
     assert_eq!(detail.related[0].label, "has_handoff");
     assert_eq!(detail.related[0].node_id, handoff.handoff.node_id);
     assert_eq!(
@@ -471,9 +498,21 @@ async fn get_program_carries_the_related_block_but_not_its_own_slices() {
 #[tokio::test]
 async fn list_programs_hides_done_and_counts_what_it_hid() {
     let (_c, pool) = fresh_korg().await;
-    let live = create_program(&pool, new::program("in flight")).await.unwrap().row.node_id;
-    let holding = create_program(&pool, new::program("paused")).await.unwrap().row.node_id;
-    let finished = create_program(&pool, new::program("shipped")).await.unwrap().row.node_id;
+    let live = create_program(&pool, new::program("in flight"))
+        .await
+        .unwrap()
+        .row
+        .node_id;
+    let holding = create_program(&pool, new::program("paused"))
+        .await
+        .unwrap()
+        .row
+        .node_id;
+    let finished = create_program(&pool, new::program("shipped"))
+        .await
+        .unwrap()
+        .row
+        .node_id;
 
     update_program(
         &pool,
@@ -496,12 +535,20 @@ async fn list_programs_hides_done_and_counts_what_it_hid() {
     .await
     .unwrap();
 
-    let listed = list_programs(&pool, None, ArchivedFilter::default()).await.unwrap();
+    let listed = list_programs(&pool, None, ArchivedFilter::default())
+        .await
+        .unwrap();
     let ids: Vec<i64> = listed.items.iter().map(|p| p.node_id).collect();
-    assert_eq!(ids, vec![live, holding], "holding is live — it is still a program in play");
+    assert_eq!(
+        ids,
+        vec![live, holding],
+        "holding is live — it is still a program in play"
+    );
     assert_eq!(listed.omitted.done, 1);
 
-    let all = list_programs(&pool, Some("all"), ArchivedFilter::default()).await.unwrap();
+    let all = list_programs(&pool, Some("all"), ArchivedFilter::default())
+        .await
+        .unwrap();
     assert_eq!(all.items.len(), 3);
     assert_eq!(all.omitted.done, 0, "a status you asked for is not omitted");
 }
@@ -517,7 +564,9 @@ async fn an_unrelated_tag_write_does_not_clear_the_marker() {
     test_project(&pool).await;
     let (wi, node) = wi_in(&pool, TEST_PROJECT, "needs a call", "open").await;
 
-    set_awaiting(&pool, node, true, Some("pick an approach")).await.unwrap();
+    set_awaiting(&pool, node, true, Some("pick an approach"))
+        .await
+        .unwrap();
     update_work_item(
         &pool,
         wi,
@@ -541,8 +590,12 @@ async fn re_marking_keeps_the_original_timestamp_and_updates_the_note() {
     test_project(&pool).await;
     let (_, node) = wi_in(&pool, TEST_PROJECT, "old ask", "open").await;
 
-    let first = set_awaiting(&pool, node, true, Some("original")).await.unwrap();
-    let again = set_awaiting(&pool, node, true, Some("sharpened")).await.unwrap();
+    let first = set_awaiting(&pool, node, true, Some("original"))
+        .await
+        .unwrap();
+    let again = set_awaiting(&pool, node, true, Some("sharpened"))
+        .await
+        .unwrap();
 
     assert_eq!(
         first.awaiting_since, again.awaiting_since,
@@ -558,7 +611,9 @@ async fn an_agent_can_clear_its_own_marker() {
     test_project(&pool).await;
     let (_, node) = wi_in(&pool, TEST_PROJECT, "answered", "open").await;
 
-    set_awaiting(&pool, node, true, Some("which way?")).await.unwrap();
+    set_awaiting(&pool, node, true, Some("which way?"))
+        .await
+        .unwrap();
     let cleared = set_awaiting(&pool, node, false, None).await.unwrap();
 
     assert!(cleared.awaiting_since.is_none());
@@ -587,7 +642,9 @@ async fn resolved_and_done_keep_the_marker_but_closed_clears_it() {
     let (_c, pool) = fresh_korg().await;
     test_project(&pool).await;
     let (wi, node) = wi_in(&pool, TEST_PROJECT, "needs a user test", "open").await;
-    set_awaiting(&pool, node, true, Some("does this work for you?")).await.unwrap();
+    set_awaiting(&pool, node, true, Some("does this work for you?"))
+        .await
+        .unwrap();
 
     for status in ["resolved", "done"] {
         update_work_item(
@@ -628,7 +685,10 @@ async fn resolved_and_done_keep_the_marker_but_closed_clears_it() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert!(since.is_none(), "cleared in the data, not just filtered in the read");
+    assert!(
+        since.is_none(),
+        "cleared in the data, not just filtered in the read"
+    );
 }
 
 #[tokio::test]
@@ -636,9 +696,17 @@ async fn a_decided_proposal_and_a_finished_program_clear_their_markers() {
     let (_c, pool) = fresh_korg().await;
     test_project(&pool).await;
     let proposal = proposal_in(&pool, TEST_PROJECT, "waiting on a call").await;
-    let program = create_program(&pool, new::program("waiting too")).await.unwrap().row.node_id;
-    set_awaiting(&pool, proposal, true, Some("ship it?")).await.unwrap();
-    set_awaiting(&pool, program, true, Some("which slice first?")).await.unwrap();
+    let program = create_program(&pool, new::program("waiting too"))
+        .await
+        .unwrap()
+        .row
+        .node_id;
+    set_awaiting(&pool, proposal, true, Some("ship it?"))
+        .await
+        .unwrap();
+    set_awaiting(&pool, program, true, Some("which slice first?"))
+        .await
+        .unwrap();
     assert_eq!(list_awaiting(&pool).await.unwrap().len(), 2);
 
     update_proposal(
@@ -670,7 +738,9 @@ async fn archiving_clears_the_marker() {
     let (_c, pool) = fresh_korg().await;
     test_project(&pool).await;
     let (wi, node) = wi_in(&pool, TEST_PROJECT, "shelved", "open").await;
-    set_awaiting(&pool, node, true, Some("still relevant?")).await.unwrap();
+    set_awaiting(&pool, node, true, Some("still relevant?"))
+        .await
+        .unwrap();
 
     update_work_item(
         &pool,
@@ -693,16 +763,25 @@ async fn the_lane_is_oldest_first_and_carries_each_kind_status() {
     test_project(&pool).await;
     let (_, wi_node) = wi_in(&pool, TEST_PROJECT, "the work item", "resolved").await;
     let proposal = proposal_in(&pool, TEST_PROJECT, "the proposal").await;
-    let program = create_program(&pool, new::program("the program")).await.unwrap().row.node_id;
+    let program = create_program(&pool, new::program("the program"))
+        .await
+        .unwrap()
+        .row
+        .node_id;
 
-    set_awaiting(&pool, wi_node, true, Some("user test")).await.unwrap();
+    set_awaiting(&pool, wi_node, true, Some("user test"))
+        .await
+        .unwrap();
     set_awaiting(&pool, proposal, true, None).await.unwrap();
-    set_awaiting(&pool, program, true, Some("sequence?")).await.unwrap();
+    set_awaiting(&pool, program, true, Some("sequence?"))
+        .await
+        .unwrap();
 
     let lane = list_awaiting(&pool).await.unwrap();
     assert_eq!(lane.len(), 3);
     assert!(
-        lane.windows(2).all(|w| w[0].awaiting_since <= w[1].awaiting_since),
+        lane.windows(2)
+            .all(|w| w[0].awaiting_since <= w[1].awaiting_since),
         "oldest ask first"
     );
 
@@ -741,11 +820,13 @@ async fn the_lane_filters_ghosts_the_write_rules_missed() {
         .unwrap();
 
     for id in [closed, archived] {
-        sqlx::query("UPDATE node SET awaiting_since = now(), awaiting_note = 'ghost' WHERE id = $1")
-            .bind(id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "UPDATE node SET awaiting_since = now(), awaiting_note = 'ghost' WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
     }
 
     assert!(
