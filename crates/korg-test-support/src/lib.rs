@@ -142,7 +142,9 @@ pub async fn count(pool: &PgPool, table: &str) -> i64 {
 /// would produce.
 pub mod new {
     use super::Decimal;
-    use korg_core::repo::{NewCard, NewHandoff, NewLink, NewProposal, NewReport, NewWorkItem};
+    use korg_core::repo::{
+        NewCard, NewHandoff, NewLink, NewProgram, NewProposal, NewReport, NewWorkItem,
+    };
 
     pub fn work_item(title: &str) -> NewWorkItem {
         NewWorkItem {
@@ -209,6 +211,25 @@ pub mod new {
             rank: Decimal::ZERO,
             pinned: false,
             covers: Vec::new(),
+        }
+    }
+
+    /// A program (#968). Note the absence of any project selector in the
+    /// defaults: a program carries none by construction (D-6), and the two
+    /// fields that exist on `NewProgram` are there only so passing one can be
+    /// *refused*. `slices` are proposal node_ids, in order.
+    pub fn program(title: &str) -> NewProgram {
+        NewProgram {
+            title: title.into(),
+            aim: format!("{title} aim"),
+            notes: None,
+            rank: Decimal::ZERO,
+            pinned: false,
+            category: None,
+            tags: Vec::new(),
+            slices: Vec::new(),
+            project: None,
+            project_id: None,
         }
     }
 

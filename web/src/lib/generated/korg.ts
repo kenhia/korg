@@ -8,6 +8,25 @@ export type AreaRow = { id: number, name: string,
  */
 description: string | null, };
 
+/**
+ * One row of the awaiting lane.
+ */
+export type AwaitingRow = { node_id: number, kind: string, 
+/**
+ * Present when the node is a work item — its user-facing handle.
+ */
+wi_number: number | null, 
+/**
+ * Resolved across kinds, the way `related_context` resolves it.
+ */
+title: string, project: string | null, 
+/**
+ * The node's **own** status, resolved per kind (`wi_status`, a proposal's
+ * or program's status, a card's column). `None` for kinds that have none.
+ * Carried so a board renders state without a follow-up read per row.
+ */
+status: string | null, awaiting_since: string | null, awaiting_note: string | null, archived: boolean, };
+
 export type CardRow = { node_id: number, status: string, title: string, description: string, rank: string, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
 /**
  * Comments on this card (WI #535).
@@ -165,6 +184,93 @@ wi_in_proposal: number,
  * Live, unarchived work items in the project — the denominator.
  */
 wi_total: number, };
+
+/**
+ * The created program plus the slice ids that were linked, in order.
+ */
+export type ProgramCreated = { slices: Array<number>, node_id: number, title: string, aim: string, notes: string | null, status: string, rank: string, pinned: boolean, category: string | null, tags: Array<string>, archived: boolean, comment_count: number, 
+/**
+ * How many proposals this program includes.
+ */
+slice_count: number, 
+/**
+ * **Derived** (D-6): the distinct project names of the included proposals,
+ * alphabetical. Empty until the program has slices. This is the honest
+ * answer to "which repos does this touch" — it cannot drift from the
+ * slices the way a stored `project_id` would.
+ */
+span: Array<string>, created: string, updated: string, };
+
+/**
+ * A program, its ordered slices with per-slice rollups, its comments, and its
+ * other edges. The read a consumer makes instead of crawling
+ * program → proposals → work items.
+ */
+export type ProgramDetail = { 
+/**
+ * Included proposals, in program order (`rank`, then node_id).
+ */
+slices: Array<ProgramSlice>, comments: Array<Comment>, comments_truncated: boolean, 
+/**
+ * The program's non-`includes` edges, inlined (LB-3) — `slices` already
+ * carries `includes`. A program is precisely the kind that accrues a
+ * handoff, so this is where a `has_handoff` ref surfaces.
+ */
+related: Array<RelatedRef>, related_truncated: boolean, node_id: number, title: string, aim: string, notes: string | null, status: string, rank: string, pinned: boolean, category: string | null, tags: Array<string>, archived: boolean, comment_count: number, 
+/**
+ * How many proposals this program includes.
+ */
+slice_count: number, 
+/**
+ * **Derived** (D-6): the distinct project names of the included proposals,
+ * alphabetical. Empty until the program has slices. This is the honest
+ * answer to "which repos does this touch" — it cannot drift from the
+ * slices the way a stored `project_id` would.
+ */
+span: Array<string>, created: string, updated: string, };
+
+export type ProgramList = { items: Array<ProgramRow>, omitted: ProgramOmitted, };
+
+/**
+ * What `list_programs`' defaults hid. Same cascade rule as [`ProposalOmitted`]:
+ * `archived` is counted first, and `done` only over the rows that passed it.
+ */
+export type ProgramOmitted = { done: number, archived: number, };
+
+/**
+ * A program row. No `project` field — see [`NewProgram::project`] and the
+ * `node_program_has_no_project` constraint; `span` is the derived answer to
+ * "which repos does this touch".
+ */
+export type ProgramRow = { node_id: number, title: string, aim: string, notes: string | null, status: string, rank: string, pinned: boolean, category: string | null, tags: Array<string>, archived: boolean, comment_count: number, 
+/**
+ * How many proposals this program includes.
+ */
+slice_count: number, 
+/**
+ * **Derived** (D-6): the distinct project names of the included proposals,
+ * alphabetical. Empty until the program has slices. This is the honest
+ * answer to "which repos does this touch" — it cannot drift from the
+ * slices the way a stored `project_id` would.
+ */
+span: Array<string>, created: string, updated: string, };
+
+/**
+ * One slice of a program, with the rollup that stops a consumer crawling
+ * (D-5). `open`/`resolved`/`done`/`closed` count the proposal's covered work
+ * items, so a board renders progress from `get_program` alone.
+ */
+export type ProgramSlice = { node_id: number, title: string, status: string, 
+/**
+ * The slice's project. Always present — a proposal is single-project since
+ * 0022 — and the union of these is the program's `span`.
+ */
+project: string | null, 
+/**
+ * Position within this program. `None` on a slice linked by a bare
+ * `relate` without a rank; those sort last.
+ */
+rank: string | null, covered_count: number, open: number, resolved: number, done: number, closed: number, };
 
 /**
  * One project plus the areas under it (WI #828).

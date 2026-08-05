@@ -161,7 +161,7 @@ async fn relate_refuses_a_cross_project_covers_edge() {
         .unwrap();
     let theirs = wi_node(&pool, "beta", "theirs").await;
 
-    let err = relate(&pool, p.row.node_id, theirs, "covers", None)
+    let err = relate(&pool, p.row.node_id, theirs, "covers", None, None)
         .await
         .expect_err("relate must apply the same rule as propose_sprint");
     let msg = err.to_string();
@@ -192,7 +192,7 @@ async fn same_project_covers_is_unaffected() {
     // And the later relate() path, the one a skill uses to add a WI to a
     // proposal that already exists.
     let b = wi_node(&pool, "alpha", "b").await;
-    relate(&pool, p.row.node_id, b, "covers", Some("test"))
+    relate(&pool, p.row.node_id, b, "covers", Some("test"), None)
         .await
         .expect("same-project covers still relates");
 }
@@ -236,10 +236,10 @@ async fn only_covers_carries_the_project_rule() {
 
     // depends_on across projects is the normal case — the homelab-ai plan is
     // built out of them — and related-to is deliberately unconstrained.
-    relate(&pool, a, b, "depends_on", None)
+    relate(&pool, a, b, "depends_on", None, None)
         .await
         .expect("cross-project depends_on stays legal");
-    relate(&pool, a, b, "related-to", None)
+    relate(&pool, a, b, "related-to", None, None)
         .await
         .expect("cross-project related-to stays legal");
 }

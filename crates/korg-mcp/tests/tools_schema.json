@@ -759,7 +759,7 @@
     "name": "mark_link_read"
   },
   {
-    "description": "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these five labels and no others: `covers` (proposal -> work item), `finding` (report -> work item), `depends_on` (dependent -> dependency), and `has_handoff` (node -> handoff; normally written by create_handoff, but relate attaches an existing handoff to another node) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. An unregistered label is invalid_input naming the registry and the near-miss; `covers`, `finding`, and `has_handoff` also validate endpoint kinds (`has_handoff`'s right end must be a handoff), and `covers` additionally requires BOTH ENDS IN THE SAME PROJECT -- a proposal bundles work from one project, and cross-project work belongs to a program, the layer above proposals (korg #968). `depends_on` across projects stays legal and is the normal case. Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected).",
+    "description": "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these six labels and no others: `covers` (proposal -> work item), `includes` (program -> proposal), `finding` (report -> work item), `depends_on` (dependent -> dependency), and `has_handoff` (node -> handoff; normally written by create_handoff, but relate attaches an existing handoff to another node) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. An unregistered label is invalid_input naming the registry and the near-miss; `covers`, `includes`, `finding`, and `has_handoff` also validate endpoint kinds (`has_handoff`'s right end must be a handoff), and `covers` additionally requires BOTH ENDS IN THE SAME PROJECT -- a proposal bundles work from one project, and cross-project work belongs to a program, the layer above proposals (korg #968). `includes` is the layer where cross-project work is legal, so it has NO same-project rule; `depends_on` across projects likewise stays legal and is the normal case. Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `rank` -- the position of the right endpoint within the left one, which is how a program's slices are ordered; re-relating an existing edge WITH a rank moves it in place and keeps its provenance, and re-relating without one leaves the position alone (so reordering never needs unrelate + relate). Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected).",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -775,6 +775,13 @@
           "description": "Self-reported provenance (D-17): who is writing this edge — the web\nclient sends `\"web\"`, a skill sends its name. Optional and unverified\n(korg is no-auth HTTP); absent means unknown, stored NULL.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "rank": {
+          "description": "Position of the right endpoint within the left one — used by `includes`\nto order a program's slices (#968). Lower sorts first; unranked edges\nsort last.\n\nRe-relating an existing edge **with** a rank moves it in place, keeping\nthe edge's `created`/`origin`; re-relating **without** one leaves the\nposition alone. That is the reorder path — `unrelate` + `relate` would\nwork too but throws the provenance away.",
+          "type": [
+            "number",
             "null"
           ]
         },
@@ -1517,6 +1524,229 @@
       "type": "object"
     },
     "name": "update_proposal"
+  },
+  {
+    "description": "Create a program -- the CROSS-project layer (korg #968). A program bundles sprint PROPOSALS, ordered, and is the sanctioned home for work that spans repos; a proposal itself is strictly single-project. It takes NO project: passing `project`/`project_id` is invalid_input, because a program filed under one repo rebuilds exactly the mis-routing that rule cured. Its `span` -- which repos it touches -- is DERIVED from the projects of the proposals it includes, so it cannot go stale when you add a slice. `slices` are proposal node_ids IN ORDER (first = slice 1), written as ranked `includes` edges; an id that is not a proposal is refused outright rather than dropped, because a program's slice list is its plan. `aim` is the routing contract capped at 500 characters -- analysis goes in `notes`, which is unbounded.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "aim": {
+          "description": "The routing contract — what this program is trying to achieve, across\nwhich repos, and how you will know it is done. Same job a proposal's\n`summary` does one level down.",
+          "type": "string"
+        },
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notes": {
+          "description": "The analysis: sequencing, what each slice is waiting on, what was\nconsidered and rejected. Unbounded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pinned": {
+          "default": false,
+          "type": "boolean"
+        },
+        "project": {
+          "description": "Present **only to be refused** (D-6). A program is the cross-project\nlayer; filing one under a single project rebuilds exactly the mis-routing\n#967 cured for proposals. Passing either selector is `invalid_input`\nnaming the rule, because a silent drop would leave the caller believing\nthe program is filed somewhere it is not.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project_id": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "rank": {
+          "default": 0,
+          "type": "number"
+        },
+        "slices": {
+          "default": [],
+          "description": "Proposal `node_id`s this program includes, **in the order given** — the\nfirst is slice 1. Ids that do not resolve to a proposal are refused, not\ndropped: a program's slice list is its plan, and a silently missing slice\nis a plan that lies.",
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "tags": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "aim",
+        "title"
+      ],
+      "type": "object"
+    },
+    "name": "create_program"
+  },
+  {
+    "description": "Fetch one program by node_id with the whole rollup, so a consumer NEVER crawls program -> proposals -> work items: the program fields, `span` (its derived projects), and `slices` -- the included proposals in program order, each with node_id, title, status, project, its position `rank`, `covered_count`, and per-status work-item counts (open/resolved/done/closed). Also carries inlined comments and the `related` block, where a `has_handoff` edge surfaces -- a program is precisely the kind that accrues one, and it is required context. isError with code `not_found` if there is none.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_program"
+  },
+  {
+    "description": "List programs, pinned first then rank then node_id. Returns {items, omitted} -- NOT a bare array; `omitted` is {done, archived}, the rows the defaults hid. Defaults: live programs only (`active` + `holding`), unarchived. Pass status:\"all\" (or one status) for the rest. There is no detail flag and no project filter: a program has no project of its own (its `span` is derived and is on every row), and with a 500-character `aim` the full row is already the lean one. `holding` means started but nothing currently in flight -- it is the state a program spends most of its life in, and it is deliberately not collapsed into `active`.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "default": false,
+          "description": "Omit for unarchived only (the default); true for archived only; null for both.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "active",
+            "holding",
+            "done",
+            "all"
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_programs"
+  },
+  {
+    "description": "Partially update a program by its node_id; returns the updated program (isError `not_found` if that node is missing or is not a program). Only the fields you pass change: title, aim, notes, status (active -> holding -> done), rank, pinned, archived, tags. `aim` is capped at 500 characters. Slice membership and ORDER are not here -- use relate/unrelate with the `includes` label, passing `rank` to position a slice.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "aim": {
+          "description": "The routing contract, **≤500 characters**. Analysis goes in `notes`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "archived": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pinned": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "rank": {
+          "type": "number"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "holding",
+            "done"
+          ],
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "update_program"
+  },
+  {
+    "description": "Mark a node -- ANY kind: work item, proposal, program, card -- as awaiting Ken, or clear that marker. This is how an agent says \"this moves only when Ken acts\": a decision, an ops action no agent can perform, a review. Pass awaiting:true with a `note` saying what is being asked; pass awaiting:false to clear it, which you SHOULD do yourself once you have the answer rather than leaving an answered ask in the lane. Re-marking a node that is already awaiting KEEPS the original timestamp and only updates the note -- the age of an ask is what makes the lane useful, so it is not restarted. The marker is a real column, not a tag: tags are written wholesale and an unrelated tag edit would silently clear it. Clearing also happens automatically when Ken himself acts (a work item reaching `closed`, a proposal reaching `done`/`declined`, anything archived).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "awaiting": {
+          "description": "`true` raises the marker, `false` clears it. Clearing is deliberately an\nagent-reachable operation (D-8): an agent that asked a question and got\nits answer in-session retracts its own marker rather than leaving an\nanswered ask in the lane until Ken clicks it away.",
+          "type": "boolean"
+        },
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "note": {
+          "description": "What is being asked of Ken — the thing that makes the lane actionable\nwithout opening every row. Only valid with `awaiting: true`; re-setting\nwith a new note keeps the original `awaiting_since`, because the age of\nthe ask is the point.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "awaiting",
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "set_awaiting"
+  },
+  {
+    "description": "Everything currently waiting on Ken, oldest ask first -- one call, every node kind. Each row carries node_id, kind, wi_number (work items), a resolved title, project, the node's OWN status, `awaiting_since` and `awaiting_note`, so a board renders the lane without a follow-up read per row. Archived nodes and ones in a state only Ken sets (closed work items, done/declined proposals, done programs) are excluded -- the lane holds live asks, never answered ones. Note that `resolved` and `done` work items DO appear: \"implemented, needs your user test\" is the canonical awaiting-Ken state.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "name": "list_awaiting"
   },
   {
     "description": "Create a handoff -- a durable, cross-machine context document -- and attach it to the work it describes in ONE call. `related_node_ids` are the nodes it belongs to (work items, a sprint proposal, a report, another handoff); each becomes a `has_handoff` edge. REQUIRED context, not optional related reading: the handoff surfaces automatically in those nodes' get_work_item/get_proposal `related` block. Rejects an empty `related_node_ids` unless you pass `allow_standalone` (so a forgotten link can't orphan it), and rejects the whole create if any id does not resolve (isError `not_found` -- no partial insert). Returns the handoff plus the owner ids linked.",

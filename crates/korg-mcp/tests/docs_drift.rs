@@ -69,6 +69,8 @@ const CATEGORIES: &[&str] = &[
     "Topics",
     "Daily planning",
     "Sprint proposals",
+    "Programs",
+    "Awaiting Ken",
     "Reports",
     "Handoffs",
     "Projects and areas",

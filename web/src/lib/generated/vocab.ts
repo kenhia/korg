@@ -18,6 +18,9 @@ export type Disposition = (typeof LINK_DISPOSITIONS)[number];
 export const PROPOSAL_STATUSES = ["proposed", "active", "done", "declined"] as const;
 export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 
+export const PROGRAM_STATUSES = ["active", "holding", "done"] as const;
+export type ProgramStatus = (typeof PROGRAM_STATUSES)[number];
+
 export const REPORT_STATUSES = ["ok", "attention", "problem"] as const;
 export type ReportStatus = (typeof REPORT_STATUSES)[number];
 
@@ -39,5 +42,6 @@ export const RELATIONSHIP_LABELS = [
   { label: "depends_on", directed: true, reads: "dependent depends on dependency" },
   { label: "related-to", directed: false, reads: "the two nodes are related (no direction)" },
   { label: "has_handoff", directed: true, reads: "node has handoff" },
+  { label: "includes", directed: true, reads: "program includes proposal as a slice" },
 ] as const;
 export type RelationshipLabel = (typeof RELATIONSHIP_LABELS)[number]["label"];

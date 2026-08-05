@@ -204,7 +204,7 @@ async fn self_edges_are_rejected_by_the_app_and_the_schema() {
     let (_c, pool) = fresh_korg().await;
     let a = create_work_item(&pool, wi("lonely")).await.unwrap();
 
-    let err = relate(&pool, a.node_id, a.node_id, "depends_on", None)
+    let err = relate(&pool, a.node_id, a.node_id, "depends_on", None, None)
         .await
         .unwrap_err();
     assert!(
@@ -249,10 +249,10 @@ async fn neighbors_filters_bounds_and_orders_stably() {
     )
     .await
     .unwrap();
-    relate(&pool, hub.node_id, dep.node_id, "depends_on", None)
+    relate(&pool, hub.node_id, dep.node_id, "depends_on", None, None)
         .await
         .unwrap();
-    relate(&pool, hub.node_id, dep.node_id, "related-to", None)
+    relate(&pool, hub.node_id, dep.node_id, "related-to", None, None)
         .await
         .unwrap();
 
@@ -337,7 +337,7 @@ async fn unknown_label_is_rejected_naming_the_vocabulary_and_near_miss() {
     let a = create_work_item(&pool, wi("a")).await.unwrap();
     let b = create_work_item(&pool, wi("b")).await.unwrap();
 
-    let err = relate(&pool, a.node_id, b.node_id, "related", None)
+    let err = relate(&pool, a.node_id, b.node_id, "related", None, None)
         .await
         .unwrap_err();
     let msg = match err.downcast_ref::<RepoError>() {
@@ -373,7 +373,7 @@ async fn a_separator_near_miss_suggests_the_registered_spelling() {
     let message = |label: &'static str| {
         let pool = &pool;
         async move {
-            let err = relate(pool, a.node_id, b.node_id, label, None)
+            let err = relate(pool, a.node_id, b.node_id, label, None, None)
                 .await
                 .unwrap_err();
             match err.downcast_ref::<RepoError>() {
@@ -421,7 +421,7 @@ async fn covers_via_relate_validates_endpoint_kinds() {
     let a = create_work_item(&pool, wi("a")).await.unwrap();
     let b = create_work_item(&pool, wi("b")).await.unwrap();
 
-    let err = relate(&pool, a.node_id, b.node_id, "covers", None)
+    let err = relate(&pool, a.node_id, b.node_id, "covers", None, None)
         .await
         .unwrap_err();
     let msg = match err.downcast_ref::<RepoError>() {
@@ -442,7 +442,7 @@ async fn relate_stamps_provenance_and_preserves_it_on_rerelate() {
     let a = create_work_item(&pool, wi("a")).await.unwrap();
     let b = create_work_item(&pool, wi("b")).await.unwrap();
 
-    let id = relate(&pool, a.node_id, b.node_id, "related-to", Some("web"))
+    let id = relate(&pool, a.node_id, b.node_id, "related-to", Some("web"), None)
         .await
         .unwrap();
     let created1: String =
@@ -461,12 +461,15 @@ async fn relate_stamps_provenance_and_preserves_it_on_rerelate() {
     assert_eq!(origin1.as_deref(), Some("web"), "origin recorded as sent");
 
     // Re-relate with a different origin: the no-op must keep the originals.
+    // Sprint 044 gave the ON CONFLICT clause one job (`rank`), so this pins that
+    // it stayed a no-op for everything else.
     let id2 = relate(
         &pool,
         a.node_id,
         b.node_id,
         "related-to",
         Some("sprint-ship"),
+        None,
     )
     .await
     .unwrap();
@@ -537,7 +540,7 @@ async fn focused_reads_inline_related_context() {
     let dep = create_work_item(&pool, wi("a dependency")).await.unwrap();
 
     // `a` depends on `dep`; a proposal covers `a`.
-    relate(&pool, a.node_id, dep.node_id, "depends_on", None)
+    relate(&pool, a.node_id, dep.node_id, "depends_on", None, None)
         .await
         .unwrap();
     let p = create_proposal(
@@ -586,7 +589,7 @@ async fn focused_reads_inline_related_context() {
     assert_eq!(dp.title, "a dependency");
 
     // get_proposal(p) excludes covers (already in `covered`) but inlines others.
-    relate(&pool, p.row.node_id, dep.node_id, "related-to", None)
+    relate(&pool, p.row.node_id, dep.node_id, "related-to", None, None)
         .await
         .unwrap();
     let pd = repo::get_proposal_detail(&pool, p.row.node_id)

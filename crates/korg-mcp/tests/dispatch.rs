@@ -124,13 +124,25 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
 
     // A relationship to delete, and a label from the registry so `relate`'s
     // fixture cannot drift out of the vocabulary.
-    let doomed_rel = repo::relate(pool, wi.node_id, card.node_id, "related-to", None)
+    let doomed_rel = repo::relate(pool, wi.node_id, card.node_id, "related-to", None, None)
         .await
         .expect("relationship");
 
     let proposal = repo::create_proposal(pool, new::proposal("a proposal"))
         .await
         .expect("proposal");
+
+    // A program with one slice, so `get_program`'s rollup has something to roll
+    // up and `update_program` has a target (#968).
+    let program = repo::create_program(
+        pool,
+        korg_core::repo::NewProgram {
+            slices: vec![proposal.row.node_id],
+            ..new::program("a program")
+        },
+    )
+    .await
+    .expect("program");
 
     let report = repo::upsert_report(
         pool,
@@ -284,6 +296,22 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
             "update_proposal",
             json!({"node_id": proposal.row.node_id, "status": "active"}),
         ),
+        // --- programs and the awaiting-Ken marker (#968, #969) ---
+        (
+            "create_program",
+            json!({"title": "created by the fence", "aim": "a"}),
+        ),
+        ("list_programs", json!({})),
+        ("get_program", json!({"node_id": program.row.node_id})),
+        (
+            "update_program",
+            json!({"node_id": program.row.node_id, "status": "holding"}),
+        ),
+        (
+            "set_awaiting",
+            json!({"node_id": wi.node_id, "awaiting": true, "note": "raised by the fence"}),
+        ),
+        ("list_awaiting", json!({})),
         // --- handoffs ---
         (
             "create_handoff",
