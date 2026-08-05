@@ -158,24 +158,114 @@ entry per covered proposal, each carrying the proposal's `node_id`, `title`,
 (open/resolved/done/closed counts). A consumer renders a program without a
 second call. This is the shape #970 was blocked on.
 
+### D-6 — A program carries **no** project; its span is derived from its slices
+
+*(Raised by Fable's design review on korg:972, 2026-08-05. It is the decision the
+first draft of this plan silently skipped, and skipping it would have rebuilt the
+exact lie the layer exists to kill.)*
+
+`node.project_id` is nullable (0001), so a program *could* be filed under a
+project — and the 818 case shows what that produces: work in kagent, klams-mind
+and korg, filed "korg", because the writer had to pick one. A program whose
+project is a single name is a proposal that got promoted without fixing
+anything.
+
+So programs carry `project_id IS NULL`, **enforced**, symmetric with 0022's
+`node_sprint_proposal_has_project`:
+
+```sql
+CONSTRAINT node_program_has_no_project CHECK (kind <> 'program' OR project_id IS NULL)
+```
+
+- `create_program` **does not accept** a project or `project_id` — passing one is
+  `invalid_input` naming this rule, not a silent drop.
+- `get_program` and `list_programs` return a derived **`span`**: the distinct
+  project names of the covered proposals, ordered, with a count. That is the
+  honest answer to "which repos does this touch", and it stays correct when a
+  slice is added.
+- Any project-scoped view finds a program through its slices, never through its
+  own row.
+
+A single-project program stays legal (this repo's own agent-surface program is
+one) — its `span` is simply one name. The constraint is about where the fact
+*lives*, not about how wide a program may be.
+
+### D-7 — The marker's lifecycle: cleared by Ken acting, and never haunting the lane
+
+An `awaiting_since` that outlives its node turns the Commander's Call lane into a
+graveyard — D-3's failure mode one door over. Two layers:
+
+**The read never shows ghosts.** `list_awaiting` filters to unarchived nodes
+whose own status is non-terminal, so even a marker that escaped the write rules
+cannot haunt the board.
+
+**The write rules clear it when Ken has, by definition, acted.** The trigger is
+*not* "terminal" — it is **"a state only Ken sets"**:
+
+| transition | clears? | why |
+|---|---|---|
+| work item → `closed` | **yes** | `vocab.rs` says `closed` is "Ken only" — if Ken closed it, the ask is answered |
+| work item → `resolved` / `done` | **no** | "implemented, may still need a user test" is *the* canonical awaiting-Ken state; clearing here would delete the lane's best rows |
+| proposal → `done` / `declined` | **yes** | both are Ken's calls on the bundle |
+| any node → `archived` | **yes** | the ask is moot |
+
+Getting this backwards — clearing on `resolved`/`done` — would have emptied the
+lane of exactly the items it exists to show.
+
+### D-8 — `set_awaiting` sets *and* clears, and re-setting does not reset the clock
+
+`set_awaiting(node_id, awaiting: bool, note?)`, any node kind:
+
+- `awaiting: false` clears both columns. An agent that raised a question and got
+  its answer mid-session **retracts its own marker** — without this, every
+  resolved ask waits on a click from Ken, and the lane fills with questions that
+  are already answered.
+- `awaiting: true` on a node already awaiting **preserves the original
+  `awaiting_since`** and updates only the note. The age is the entire point of
+  D-3's timestamp; a re-set that restarts the clock would make a nine-day-old
+  ask look fresh every time an agent touched it.
+- The web UI's one-click clear is the same core call, not a second path.
+
+### D-9 — Re-relating with a rank reorders in place
+
+`relate()` dedups an exact duplicate via `ON CONFLICT … DO UPDATE SET left_id =
+relationship.left_id` — a deliberate no-op that preserves `created`/`origin`
+(D-17). With a rank in play that leaves no reorder path short of
+`unrelate` + `relate`, which churns provenance to move a slice up one position.
+
+So the conflict clause becomes `SET rank = COALESCE(EXCLUDED.rank,
+relationship.rank)`:
+
+- re-relate **with** a rank → reorders in place, provenance intact;
+- re-relate **without** one → still a no-op, so an unrelated re-relate cannot
+  silently wipe a slice's position.
+
+Documented in `relate`'s tool description, since it is behaviour an agent has to
+be able to predict.
+
 ## What 973 (#970, board rollup read) can rely on
 
 Written down here because 973's shape depends on it and it is the coordination
 surface between the two sprints:
 
 - `list_awaiting()` — the lane, one call, any node kind, ordered oldest-first,
-  each row carrying `node_id`, `kind`, a resolved display title, `project`,
-  `awaiting_since` and `awaiting_note`.
+  each row carrying `node_id`, `kind`, a resolved display title, `project`, the
+  node's own **`status`** (resolved per kind, so a consumer renders state without
+  a follow-up read), `awaiting_since` and `awaiting_note`. Ghost-free by D-7.
 - `list_programs()` — `{items, omitted}`, live-by-default, same shape rule as
-  `list_proposals`.
-- `get_program()` — as D-5.
-- The `includes` label is stable and directed program → sprint_proposal.
+  `list_proposals`; each row carries the derived `span` (D-6).
+- `get_program()` — the D-5 rollup, plus a `related` block like the other focused
+  reads. A program is precisely the kind that accrues a handoff, and LB-3 says a
+  `has_handoff` ref must surface where the reader already is.
+- The `includes` label is stable and directed program → sprint_proposal, and
+  re-relating with a rank reorders in place (D-9).
 
 ## Build order
 
 1. **Migration 0023** — `program` in `node_kind_check`; `program` detail table;
-   `relationship.rank`; `node.awaiting_since` / `node.awaiting_note` + CHECK.
-   Purely additive, so a re-tag reverts it; header states that.
+   `node_program_has_no_project` CHECK (D-6); `relationship.rank`;
+   `node.awaiting_since` / `node.awaiting_note` + CHECK. Purely additive, so a
+   re-tag reverts it; header states that.
 2. **`vocab.rs`** — `PROGRAM_STATUSES` + live/terminal split + partition test.
 3. **`relationships.rs`** — the `includes` entry + registry tests.
 4. **`repo.rs`** — program CRUD, the D-5 rollup, `set_awaiting` / `list_awaiting`,
@@ -191,6 +281,89 @@ surface between the two sprints:
    the awaiting contract) + README tool count 50 → 56. `docs_drift` fails
    otherwise, including its `CATEGORIES` const, which needs "Programs".
 10. **Tests** — `crates/korg-core/tests/sprint044.rs`.
+
+## What shipped
+
+### Migration 0023 — additive, five things
+
+`program` in `node_kind_check`; the `program` detail table (`title`, `aim`,
+`notes`, `status`, `rank`, `pinned`, CHECK-based status like 0010 rather than
+0008's enum); `node_program_has_no_project`; `relationship.rank` (nullable,
+no default, so all 450 `covers` edges read identically); `node.awaiting_since` /
+`awaiting_note` + their CHECK and a partial index.
+
+**Rehearsed on kubsdb, 2026-08-05** — and the first thing the rehearsal found
+was that **the nightly dump was the wrong starting state**. `korg-20260805-031756.sql.gz`
+was taken at 03:17, *before* the 043 deploy applied 0022; it contains no
+`node_sprint_proposal_has_project`. Rehearsing 0023 on it would have exercised a
+v21 corpus and told us nothing about the one production actually has. A fresh
+`pg_dump` of live (migrations 22, constraint present) was taken instead.
+
+```
+baseline    nodes 884 · workitems 672 · proposals 138 · cards 30 · reports 26
+            · handoffs 7 · links 4 · topics 1 · projects 39 · edges 608
+            · covers 450 · comments 393 · node 1..976 · migrations 22
+apply       clean, no NOTICE — it is pure DDL, there is nothing to backfill
+after       every count above identical, node_min/node_max unchanged
+new         program table · relationship.rank · node.awaiting_since/_note
+            · both CHECKs · node_awaiting_idx · 'program' in node_kind_check
+            0 programs, 0 ranked edges, 0 awaiting rows — nothing invented
+re-apply    every guard fired (IF NOT EXISTS / pg_constraint probe), counts
+            unchanged, still exactly 2 new constraints
+```
+
+Both new constraints were then made to bite on the live corpus, not just
+asserted to exist: an `INSERT` of a program **with** a project raised
+`check_violation`; one **without** was accepted (and rolled back); an
+`awaiting_note` with no `awaiting_since` raised `check_violation`.
+
+### The write rules (`korg-core`)
+
+- `create_program` refuses `project`/`project_id` with an error naming the rule
+  and pointing at the derived `span` — a refusal, not a drop, because a caller
+  who passed one believes the program is filed somewhere.
+- A slice that is not a proposal is refused outright, resolved **before** the
+  transaction opens so a refusal leaves nothing behind.
+- `relate()` grew a `rank`, and its `ON CONFLICT` clause — a deliberate no-op
+  since LB-1 — now does exactly one thing: `rank = COALESCE(EXCLUDED.rank,
+  relationship.rank)`. Reorder in place with a rank; no-op without one.
+- `settle_awaiting()` runs at the end of `update_work_item`, `update_proposal`
+  and `update_program`. Centralised there rather than at each status branch, so
+  it is correct regardless of *which* field triggered the transition, and in
+  core rather than a trigger (LB-2).
+
+### The surfaces
+
+Six MCP tools (`create_program`, `get_program`, `list_programs`,
+`update_program`, `set_awaiting`, `list_awaiting`) — 50 → **56**. Matching REST
+routes. `related_context` learned the `program` kind so a program's title
+resolves in anyone else's `related` block.
+
+Web: `/programs` list + `/programs/[node_id]` detail, and `AwaitingLane` on
+Today. The detail page renders from **one** call — that is the D-5 rollup
+justifying itself, since the pre-044 way would have been program → neighbors →
+`get_proposal` per slice → work items per proposal. The lane renders **nothing**
+when empty: an "awaiting you" panel that shows an empty state every day is one
+Ken learns to skip, and this one has to be read on the days it has rows.
+
+### Tests
+
+`crates/korg-core/tests/sprint044.rs`, 24 tests. The ones that pin a decision
+rather than a behaviour:
+
+- `an_unrelated_tag_write_does_not_clear_the_marker` — the D-3 argument, executable.
+  If the marker were the reserved tag #969 guessed at, this fails.
+- `resolved_and_done_keep_the_marker_but_closed_clears_it` — D-7, the one that is
+  easy to get backwards. Clearing on `resolved`/`done` would empty the lane of
+  its best rows.
+- `re_relating_with_a_rank_reorders_in_place_and_keeps_provenance` and its
+  no-rank twin — both halves of D-9, asserting `created`/`origin` survive.
+- `includes_is_deliberately_cross_project` (in `relationships.rs`) — a guard
+  against a future tidy-up giving `includes` `same_project: true` "for symmetry
+  with `covers`", which would leave no way to express a multi-repo program at all.
+
+Plus REST sweep coverage for both new surfaces, and fixture/count updates in the
+drift guards. The `relate` signature change touched 28 test call sites.
 
 ## Not in this sprint
 
@@ -217,3 +390,12 @@ on `git add`** — never `-A`, `.`, or `commit -a`.
 *(written as the sprint runs)*
 
 - **2026-08-05** — Branched, measured production, decisions D-1…D-5 recorded above.
+- **2026-08-05** — Design review from Fable on korg:972 (comment 410). Four gaps
+  closed as **D-6** (a program carries no project — the decision the draft
+  skipped), **D-7** (marker lifecycle vs terminal/archived), **D-8** (`set_awaiting`
+  clears too, and re-setting preserves the clock) and **D-9** (re-relate with a
+  rank reorders in place). Both minors taken: `get_program` carries `related`,
+  `list_awaiting` rows carry the node's own status.
+- **2026-08-05** — Built in the order above. `just check` green. Migration
+  rehearsed against a **fresh** dump after the nightly turned out to predate the
+  043 deploy; see "What shipped".
