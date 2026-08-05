@@ -112,6 +112,23 @@ export function activeCardStatuses(): CardStatus[] {
  * until its hue is chosen, which is the whole "one registry edit plus its
  * color" contract.
  */
+/**
+ * "A live proposal already covers this" (WI #824), as one exported constant so
+ * the row title, the Prop column and the Planning rail cannot drift apart.
+ *
+ * It is the Ops hue, which is what Ken meant by "the colour `claude-cleo` is
+ * in": a name-hash accident when he first described it, and the Ops category
+ * colour since #678 — so reusing it here is stable rather than arbitrary. The
+ * Planning page already paints an *active* proposal's card border the same
+ * hue (#671), which makes warm consistently mean "this is spoken for" across
+ * both pages rather than two unrelated warm things.
+ *
+ * Written out rather than `CATEGORY_HUE.Ops` interpolated, because this is not
+ * a claim about the Ops *category* — a work item in an Ops project is not what
+ * is being marked. If the two ever need to diverge, they can.
+ */
+export const IN_PROPOSAL_COLOR = "hsl(42 55% 62%)";
+
 const CATEGORY_HUE: Record<ProjectCategory, number> = {
   Ops: 42,
   Infrastructure: 64,

@@ -20,6 +20,7 @@ import type {
   NeighborPage,
   NodePreview,
   Page,
+  PlanningRollupRow,
   ProjectRow,
   ProposalDetail,
   ProposalRow,
@@ -469,6 +470,11 @@ export const api = {
     http<ProposalRow[]>("GET", `/api/proposals${listQuery({ status, project })}`),
   proposal: (node_id: number) =>
     httpMaybe<ProposalDetail>("GET", `/api/proposals/${node_id}`),
+  // Per-project planning weather for the Planning rail (WI #823). One call for
+  // every project — the rail renders ~30 of them, and a per-project read is
+  // the N+1 this sprint exists to delete.
+  planningRollup: () =>
+    http<PlanningRollupRow[]>("GET", "/api/proposals/rollup"),
   updateProposal: (
     node_id: number,
     patch: Patch<{

@@ -126,6 +126,47 @@ export type NodePreview = { node_id: number, kind: string, wi_number: number | n
 export type Page<T> = { items: Array<T>, total: number, limit: number, offset: number, };
 
 /**
+ * One project's planning weather, for the Planning page's project rail
+ * (WI #823): `<proposals> | <wi_in_proposal> / <wi_total>`.
+ *
+ * The same aggregate `membership_select!` evaluates per row, grouped by
+ * project instead — which is why #823 belongs in this sprint rather than near
+ * it. Ken's instruction was *"the right SQL query makes the first one quick
+ * enough, but timing the op beats guessing"*, so all three figures ship and
+ * the measurement is in the sprint record rather than a pre-emptive
+ * degradation to fewer numbers.
+ *
+ * **What each figure counts, and why it is not the obvious thing.**
+ *
+ * - `proposals` — *live* proposals (`proposed` + `active`), matching the
+ *   queue the Planning page renders. A done proposal is off the queue.
+ * - `wi_total` — *live, unarchived* work items. Not every item: `closed` is
+ *   78% of the corpus (the #861 measurement), and a denominator that counts
+ *   years of finished work makes the ratio unreadable. This is "how much
+ *   open work is here", which is the question a planning rail is asked.
+ * - `wi_in_proposal` — that same set, narrowed to items a live proposal
+ *   covers. Deliberately the *same* liveness rule the row marker uses: the
+ *   rail and the rows sit on one screen, and two definitions of "spoken for"
+ *   on one screen is a bug report waiting to happen.
+ *
+ * Every project is returned, including one with three zeroes — a rail entry
+ * that vanishes when its counts are zero is a rail you cannot click.
+ */
+export type PlanningRollupRow = { project: string, 
+/**
+ * Live proposals filed against this project.
+ */
+proposals: number, 
+/**
+ * Live, unarchived work items a live proposal covers.
+ */
+wi_in_proposal: number, 
+/**
+ * Live, unarchived work items in the project — the denominator.
+ */
+wi_total: number, };
+
+/**
  * One project plus the areas under it (WI #828).
  *
  * The field review specified "full row + inline comments, the `get_work_item`
@@ -449,7 +490,17 @@ related_truncated: boolean, wi_number: number, node_id: number, project: string 
  * Number of comments on this work item (WI #392) — the hint that tells an
  * agent "this row has discussion; fetch it".
  */
-comment_count: number, created: string, updated: string, };
+comment_count: number, 
+/**
+ * True when a `has_handoff` edge leaves this item (WI #813) — durable
+ * context another session left, waiting to be read.
+ */
+has_handoff: boolean, 
+/**
+ * The live proposal covering this item, or `None` when nothing does
+ * (WI #824). See `membership_select!` for why "live" and why one id.
+ */
+proposal_node_id: number | null, created: string, updated: string, };
 
 export type WorkItemListLean = { items: Array<WorkItemSummary>, total: number, limit: number, offset: number, 
 /**
@@ -478,10 +529,38 @@ export type WorkItemRow = { wi_number: number, node_id: number, project: string 
  * Number of comments on this work item (WI #392) — the hint that tells an
  * agent "this row has discussion; fetch it".
  */
-comment_count: number, created: string, updated: string, };
+comment_count: number, 
+/**
+ * True when a `has_handoff` edge leaves this item (WI #813) — durable
+ * context another session left, waiting to be read.
+ */
+has_handoff: boolean, 
+/**
+ * The live proposal covering this item, or `None` when nothing does
+ * (WI #824). See `membership_select!` for why "live" and why one id.
+ */
+proposal_node_id: number | null, created: string, updated: string, };
 
 export type WorkItemSummary = { wi_number: number, node_id: number, project: string | null, title: string, wi_type: string, wi_status: string, wi_tshirt: string, 
 /**
  * Comment count (WI #392) — signals which rows carry discussion worth fetching.
  */
-comment_count: number, };
+comment_count: number, 
+/**
+ * True when this item has a non-empty `details` section (WI #813). The
+ * projection carries no bodies by design, so the Review page had to show
+ * no 📝 rather than a false negative; a boolean is the honest fix and
+ * costs no join.
+ */
+has_details: boolean, 
+/**
+ * True when a `has_handoff` edge leaves this item (WI #813) — "which of
+ * these already has durable context waiting", which is precisely what the
+ * survey could not answer without N follow-up `neighbors` calls.
+ */
+has_handoff: boolean, 
+/**
+ * The live proposal covering this item (WI #824) — "which of these is
+ * already spoken for", the other question that cost N follow-up calls.
+ */
+proposal_node_id: number | null, };

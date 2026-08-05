@@ -304,6 +304,39 @@ REST keeps the full rows at `GET /api/work-items` — the Work Items page walks
 that read to completion and then searches `content` and tickers `details` in
 memory.
 
+### A work-item row says whether anything covers it (sprint 042)
+
+`covers` only ever read one direction: a proposal could name its work items, a
+work item could not name the proposal that had claimed it. Answering "which of
+the 135 open items are already in a live proposal?" during the 2026-07-31
+backlog review took 17 `get_proposal` calls and a script. Both row tiers now
+carry the answer:
+
+| field | on | means |
+|---|---|---|
+| `proposal_node_id` | both | node id of the **live** proposal covering this item, else `null` |
+| `has_handoff` | both | a `has_handoff` edge leaves this item — durable context is waiting |
+| `has_details` | lean only | non-empty `details`; the full row carries `details` itself |
+
+**`proposal_node_id` is null for `done` and `declined` proposals**, by design.
+The question it answers is "is this already spoken for", and a declined
+proposal speaks for nothing. Pass the id to `get_proposal` for the bundle.
+
+`has_handoff` is the cheap one to care about: it is the same "read the handoff
+before acting" contract the focused reads enforce, hoisted onto a list so you
+can see which of fifty rows has context waiting without fifty `neighbors`
+calls.
+
+Two things worth knowing if you extend this. The `relationship` table's columns
+are `left_id` / `right_id` / `relationship` — not `left_node_id` / `label`. And
+the two labels point opposite ways: `covers` is proposal → work item (the item
+is the **right** end), `has_handoff` is node → handoff (the item is the
+**left** end).
+
+The per-project rollup of the same aggregate is REST-only, at
+`GET /api/proposals/rollup` — it renders the Planning rail and is not something
+an agent needs a tool for.
+
 ### The proposal queue narrows by default (WI #852)
 
 `list_proposals` measured 110 rows / ~185,500 chars / **~46k tokens** unfiltered,

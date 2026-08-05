@@ -4,6 +4,12 @@ import { test, expect } from "@playwright/test";
 // proposal's project and can scope the queue to one. WI #536 — the covered
 // work items now come from a single get_proposal read instead of a
 // neighbors call per proposal plus a client-side join.
+//
+// WI #823 (sprint 042) — the `<select>` became a project rail matching Work
+// Items', so the scoping interaction is now a click on a named rail entry
+// rather than `selectOption`. Each entry carries the planning count, which is
+// asserted below: a rail that lists projects but cannot say how much of each
+// is spoken for is the dropdown again with extra steps.
 
 test("planning page chips and filters proposals by project, stickily", async ({
   page,
@@ -54,9 +60,15 @@ test("planning page chips and filters proposals by project, stickily", async ({
     page.getByRole("button", { name: new RegExp(`#${wi} ${wiTitle}`) }),
   ).toBeVisible();
 
-  // Filtering scopes the queue server-side.
-  const filter = page.getByTestId("planning-project-filter");
-  await filter.selectOption(zeta);
+  // The rail carries each project's planning count (WI #823). alpha has one
+  // live proposal covering its single work item, so it reads "1 | 1/1"; zeta
+  // has a proposal that covers nothing and no items, so "1 | 0/0".
+  const rail = page.getByTestId("planning-project-rail");
+  await expect(rail.getByRole("button", { name: new RegExp(`^${alpha}\\s*1 \\| 1/1`) })).toBeVisible();
+  await expect(rail.getByRole("button", { name: new RegExp(`^${zeta}\\s*1 \\| 0/0`) })).toBeVisible();
+
+  // Clicking a rail entry scopes the queue.
+  await rail.getByRole("button", { name: new RegExp(`^${zeta}`) }).click();
   await expect(page.getByText(zetaTitle)).toBeVisible();
   await expect(page.getByText(alphaTitle)).toHaveCount(0);
 
@@ -66,6 +78,9 @@ test("planning page chips and filters proposals by project, stickily", async ({
   await expect(page.getByText(alphaTitle)).toHaveCount(0);
 
   // Reset so the shared instance isn't left filtered for other specs.
-  await page.getByTestId("planning-project-filter").selectOption("");
+  await page
+    .getByTestId("planning-project-rail")
+    .getByRole("button", { name: /^All Projects/ })
+    .click();
   await expect(page.getByText(alphaTitle)).toBeVisible();
 });

@@ -18,6 +18,7 @@
   import {
     CATEGORY_ORDER,
     DEFAULT_RELATIONSHIP_LABEL,
+    IN_PROPOSAL_COLOR,
     KNOWN_RELATIONSHIP_LABELS,
     chip,
     isHiddenByDefault,
@@ -1092,6 +1093,12 @@
         <thead class="sticky top-0 bg-[var(--color-surface)] text-left text-xs text-[var(--color-muted)]">
           <tr>
             <th class="px-3 py-2">ID</th>
+            <!-- WI #824 — the proposal covering this item, as its own column
+                 rather than "<id>/<proposal_id>" in the ID cell. Both were on
+                 the table; a separate column keeps the ID cell scannable as a
+                 single number (it is what you type into the find-by-ID jump)
+                 and gives the header somewhere to say what the number is. -->
+            <th class="px-3 py-2">Prop</th>
             {#if current === ALL}<th class="px-3 py-2">Project</th>{/if}
             <th class="px-3 py-2">Area</th>
             <th class="px-3 py-2">Type</th>
@@ -1115,6 +1122,18 @@
               onclick={() => open(item)}
             >
               <td class="px-3 py-1.5 font-mono text-xs text-[var(--color-muted)]">{item.wi_number}</td>
+              <td class="px-3 py-1.5 font-mono text-xs">
+                {#if item.proposal_node_id != null}
+                  <a
+                    class="hover:underline"
+                    style={`color: ${IN_PROPOSAL_COLOR}`}
+                    href="/planning"
+                    title={`Covered by proposal ${item.proposal_node_id} — open Planning`}
+                    onclick={(e) => e.stopPropagation()}>{item.proposal_node_id}</a>
+                {:else}
+                  <span class="text-[var(--color-muted)]">—</span>
+                {/if}
+              </td>
               {#if current === ALL}<td class="px-3 py-1.5 text-xs text-[var(--color-muted)]">{item.project ?? "—"}</td>{/if}
               <td class="px-3 py-1.5">
                 {#if quickEdit && current !== ALL}
@@ -1181,21 +1200,27 @@
                    A focusable control inside the cell keeps the table a table
                    AND gives keyboard users Enter/Space for free, because it is
                    an actual button. The row keeps its click for mouse users. -->
-              <td class="px-3 py-1.5 font-medium">
+              <!-- WI #824 — bold is gone from list titles (Ken), which frees
+                   weight as a signal and leaves colour to carry "this one is
+                   already spoken for". -->
+              <td class="px-3 py-1.5">
                 <button
-                  class="w-full cursor-pointer text-left font-medium"
+                  class="w-full cursor-pointer text-left"
+                  style={item.proposal_node_id != null ? `color: ${IN_PROPOSAL_COLOR}` : ""}
                   onclick={(e) => {
                     e.stopPropagation();
                     open(item);
                   }}>{item.title}<RowTickers
                     comments={item.comment_count}
                     details={item.details != null && item.details !== ""}
+                    handoff={item.has_handoff}
                   /></button
                 >
               </td>
             </tr>
           {:else}
-            <tr><td class="px-3 py-3 text-sm text-[var(--color-muted)]" colspan={current === ALL ? 8 : 7}>No work items found.</td></tr>
+            <!-- +1 on both arms for the Prop column (WI #824). -->
+            <tr><td class="px-3 py-3 text-sm text-[var(--color-muted)]" colspan={current === ALL ? 9 : 8}>No work items found.</td></tr>
           {/each}
         </tbody>
       </table>

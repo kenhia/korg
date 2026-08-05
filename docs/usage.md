@@ -110,6 +110,7 @@ describing a route that no longer exists.
 | `GET` | `/api/nodes/:id` | Kind-agnostic preview of any node by id (powers find-by-ID + the preview panel); 404 if none. |
 | `GET` | `/api/nodes/:id/neighbors` | A node's edges: `{items,total,limit,truncated}`, optional `label`/`kind`/`limit` (see [api.md](api.md#relationships)). |
 | `GET`, `POST` | `/api/proposals` | List sprint proposals (filters `status`, `project`), or propose one: title + summary + covered `work_item_numbers` in a single call. |
+| `GET` | `/api/proposals/rollup` | Per-project planning weather for the Planning rail: `proposals` (live), `wi_in_proposal` and `wi_total` (both live + unarchived). Every project, including one with three zeroes. |
 | `GET`, `PATCH` | `/api/proposals/:node_id` | Proposal detail (covered work items + comments), or update status/rank/pinned/archived. |
 | `GET` | `/api/reports` | List agent reports (filters `source`, `limit`; newest first). |
 | `GET` | `/api/reports/:node_id` | One report with its findings and comments. |

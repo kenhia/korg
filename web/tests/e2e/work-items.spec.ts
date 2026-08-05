@@ -80,3 +80,65 @@ test("list rows ticker their comments and details", async ({ page, request }) =>
   await expect(plainRow).not.toContainText("📝");
   expect(plain.wi_number).toBeLessThan(rich.wi_number);
 });
+
+// Sprint 042 (#824, #813) — the two markers that needed the row contract
+// extended, on the list that renders them. Both are server-sourced booleans,
+// so a page that renders them from stale client state passes the unit tests
+// and fails here.
+//
+// Project-scoped for the same #762 reason as the ticker test above.
+test("list rows mark proposal membership and waiting handoffs", async ({
+  page,
+  request,
+}) => {
+  const project = `e2e-membership-${Date.now()}`;
+  await request.post("/api/projects", { data: { name: project } });
+  const projects = await (await request.get("/api/projects")).json();
+  const project_id = projects.find((p: { name: string }) => p.name === project).id;
+
+  const covered = await (
+    await request.post("/api/work-items", {
+      data: { title: "spoken for", content: "x", project_id },
+    })
+  ).json();
+  const loose = await (
+    await request.post("/api/work-items", {
+      data: { title: "unclaimed", content: "x", project_id },
+    })
+  ).json();
+
+  const proposal = await (
+    await request.post("/api/proposals", {
+      data: {
+        title: `membership sprint ${Date.now()}`,
+        summary: "covers one item",
+        project_id,
+        work_item_numbers: [covered.wi_number],
+      },
+    })
+  ).json();
+  await request.post("/api/handoffs", {
+    data: {
+      title: "context for the covered item",
+      summary: "state",
+      body: "# read me first",
+      related_node_ids: [covered.node_id],
+    },
+  });
+
+  await page.goto("/work-items");
+  await page.getByRole("button", { name: project, exact: true }).click();
+
+  // The Prop column names the covering proposal, and the handoff ticker says
+  // durable context is waiting.
+  const coveredRow = page.getByRole("row", { name: /spoken for/ });
+  await expect(coveredRow).toContainText(String(proposal.node_id));
+  await expect(coveredRow).toContainText("📄");
+
+  // An unclaimed item shows the em-dash placeholder and no handoff marker —
+  // otherwise the colour and the column would mean nothing.
+  const looseRow = page.getByRole("row", { name: /unclaimed/ });
+  await expect(looseRow).not.toContainText(String(proposal.node_id));
+  await expect(looseRow).not.toContainText("📄");
+  expect(loose.wi_number).toBeGreaterThan(covered.wi_number);
+});
