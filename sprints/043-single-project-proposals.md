@@ -160,3 +160,35 @@ the program layer — which is proposal **korg:972**, the next slice of kfdc Pha
   if that changes, the same rule tightens by one condition.
 - The agent-skills repo still says `cn_path` where korg's field is `src_path`
   (noted in handoff korg:974, not this repo's to fix).
+
+## Deployed 2026-08-05
+
+**Image** `korg:9bd32e19254f` (`9bd32e19254f1333801b106cb8a42e3d6c3def46`, the
+squash-merge of PR #46) · **rollback target** `korg:6e21f95479c7`.
+
+Migration 0022 applied at container start and logged its NOTICE verbatim — *13
+legacy proposal(s) still cover work across projects, 4 of them live in the
+queue*. Production matched the rehearsal exactly:
+
+```
+post-deploy-check   every row count identical (work_items 672 · proposals 138 · cards 30
+                    · links 4 · topics 1 · reports 26 · projects 39); node_count/min/max
+                    and the id sequence unchanged; migrations 21 -> 22
+migration effect    cross-project covers 52 -> 38 · projectless proposals 0
+                    599/601/602/747 -> korg/kapollo/hv-simulator/kprojects
+                    node_sprint_proposal_has_project present
+provenance          `updated` unchanged on all four moved rows (2026-07-04 / 2026-08-02)
+```
+
+Enforcement smoke-tested live on both transports:
+
+| | result |
+|---|---|
+| `POST /api/proposals` with no project | `400 invalid_input`, message names both selectors |
+| `POST /api/proposals` covering #967, #968, #46 (kapollo) | `400 invalid_input` naming korg **and** kapollo, #46 by number and title, and the program layer (korg #968) |
+| `propose_sprint` over MCP with no project | `isError: true`, same `invalid_input` payload |
+| after all three refusals | proposals still 138, covers still 450 — **nothing written** |
+| `/`, `/plan`, `/work-items` | 200 |
+
+The cross-project case is the one worth noting: it accepted #967 and #968 (both
+korg) and refused on #46 alone, which is the behaviour the rule is for.
