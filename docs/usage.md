@@ -13,7 +13,11 @@ covers:
 - **Today** — the daily plan for the week, and the page to start from. Clicking
   a day makes it the target for the Proposals and Cards trays below; dragging
   into one works too. Carries the latest daily report's status, and buttons
-  through to History and Topics.
+  through to History and Topics. Above the planner sits the **Awaiting you**
+  lane (#969): everything an agent has marked as moving only when Ken acts,
+  oldest ask first, each clearable in one click. It renders **nothing** when the
+  lane is empty — a panel that shows an empty state every day is one you learn
+  to skip, and this one has to be read on the days it has rows.
 - **Work Items** — create, edit, archive, set parent/area, and manage
   relationships and comments. Project selection is sticky across navigation.
   Filters include tags (AND-combined, collapsed by default) and `Only Prop`,
@@ -41,8 +45,16 @@ covers:
   summary bundled with the work items they cover), drag-orderable by rank,
   with pin-to-top. Start/Decline/Done buttons drive the status lifecycle; a
   copy icon copies a `/start-sprint korg:<node_id>` prompt.
-- **Handoff pages** (`/handoffs/:node_id`) — korg's one per-node detail route
-  (WI #621). A handoff's `has_handoff` ref opens the slide-over preview
+- **Programs** (`/programs`, `/programs/:node_id`) — the layer above Planning
+  (#968). A program `includes` sprint proposals, ordered, and is where
+  cross-project work is legal; a proposal itself stays single-project. The list
+  shows each program's derived `span` — the repos its slices touch — since a
+  program has no project of its own. The detail page renders slices in program
+  order with each one's work-item rollup, from a **single** call: that read is
+  what replaces walking program → proposals → work items. Deliberately minimal
+  — kfdc's Operations panel is the real consumer.
+- **Handoff pages** (`/handoffs/:node_id`) — the first per-node detail route
+  (WI #621), and until sprint 044 the only one. A handoff's `has_handoff` ref opens the slide-over preview
   anywhere it appears; "Open full page ↗" on that preview navigates here, where
   the Markdown body gets a real reading width and a comment thread. The body is
   **read-only** — handoffs are authored through the API and the `handoff` skill
