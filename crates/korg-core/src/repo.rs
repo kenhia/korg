@@ -79,6 +79,64 @@ where
         .ok_or_else(|| RepoError::NotFound(format!("no node with id {node_id}")).into())
 }
 
+/// The work item that carries the program layer — the sanctioned way to bundle
+/// work across projects. Quoted by [`cross_project_covers`] so a refused edge
+/// teaches the workflow instead of only blocking it (proposal korg:971).
+const PROGRAM_LAYER_WI: i64 = 968;
+
+/// The refusal for a `covers` edge whose two ends are in different projects
+/// (sprint 043, #967).
+///
+/// Named projects on both sides, the offending work item by its `wi_number`
+/// (the handle the caller passed, not a node id), and the program layer as the
+/// alternative. Shared by [`relate`] and [`create_proposal`], which insert
+/// `covers` by two different paths and must refuse identically.
+fn cross_project_covers(
+    proposal_project: &str,
+    wi_number: i64,
+    wi_project: &str,
+    wi_title: &str,
+) -> anyhow::Error {
+    RepoError::InvalidInput(format!(
+        "a sprint proposal covers work in one project only: this proposal is in \
+         '{proposal_project}' but #{wi_number} ({wi_title}) is in '{wi_project}'. \
+         Either move #{wi_number} into '{proposal_project}', or propose it separately \
+         in '{wi_project}' — cross-project work is bundled by a program, the layer \
+         above proposals (korg #{PROGRAM_LAYER_WI}), never by widening one proposal."
+    ))
+    .into()
+}
+
+/// The project name of a node, and whether the node exists at all.
+///
+/// `Ok(None)` means the node has no project — unfiled, which is not the same as
+/// filed elsewhere and is deliberately not a `covers` violation.
+async fn node_project<'e, E>(executor: E, node_id: i64) -> Result<Option<String>>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let row: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT p.name FROM node n LEFT JOIN project p ON p.id = n.project_id WHERE n.id = $1",
+    )
+    .bind(node_id)
+    .fetch_optional(executor)
+    .await?;
+    row.ok_or_else(|| RepoError::NotFound(format!("no node with id {node_id}")).into())
+}
+
+/// A work item's user-facing handle — `wi_number` and title — for an error
+/// message. Only called once the caller knows the node *is* a work item.
+async fn wi_handle<'e, E>(executor: E, node_id: i64) -> Result<(i64, String)>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    sqlx::query_as::<_, (i64, String)>("SELECT wi_number, title FROM workitem WHERE node_id = $1")
+        .bind(node_id)
+        .fetch_optional(executor)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no work item with node_id {node_id}")).into())
+}
+
 /// The kind of a node, or `not_found` — existence and kind in one fetch, which
 /// keeps `relate`'s endpoint checks a `not_found` on a typo'd id rather than a
 /// raw FK violation surfaced as `internal` (WI #524).
@@ -316,6 +374,17 @@ pub(crate) async fn resolve_project_patch(
         },
         (None, None) => Ok(None),
     }
+}
+
+/// A project's name from its id. The inverse of [`project_id_for_name`], for
+/// the paths that resolved an id but have to *quote* the project — sprint 043's
+/// cross-project refusal names both projects, and an id would name neither.
+async fn project_name_for_id(pool: &PgPool, id: i64) -> Result<String> {
+    sqlx::query_scalar::<_, String>("SELECT name FROM project WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no project with id {id}")).into())
 }
 
 /// Look an area up by name within its project. Areas are unique per
@@ -1064,6 +1133,25 @@ pub async fn relate(
                 "label '{label}' requires a {expected} on the right, but node {right} is a {right_kind}"
             ))
             .into());
+        }
+    }
+
+    // Single-project labels (sprint 043, #967): `covers` may not join two
+    // projects. Same reasoning as the kind check above — enforced in core, the
+    // one write path both transports share, not in a DB trigger. A node with no
+    // project is unfiled rather than filed elsewhere, so it passes; the corpus
+    // holds no unfiled work items (measured 2026-08-05) and `create_work_item`
+    // still allows one.
+    if spec.same_project {
+        let (left_project, right_project) = (
+            node_project(pool, left).await?,
+            node_project(pool, right).await?,
+        );
+        if let (Some(lp), Some(rp)) = (&left_project, &right_project) {
+            if lp != rp {
+                let (wi_number, title) = wi_handle(pool, right).await?;
+                return Err(cross_project_covers(lp, wi_number, rp, &title));
+            }
         }
     }
 
@@ -2952,14 +3040,17 @@ fn check_proposal_summary(summary: &str) -> Result<()> {
 /// `propose_sprint` / `POST /api/proposals`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct NewProposal {
+    /// **Required** — as either this or `project`, never both. A proposal is a
+    /// single-project bundle (#967): it is what tells a session which repo to
+    /// branch in, and what `covers` is validated against.
     #[serde(default)]
     pub project_id: Option<i64>,
     /// Project name, e.g. `klams` — the alternative to `project_id`; never pass
-    /// both. Resolved by exact name, and an unknown name returns `not_found`
-    /// rather than mis-filing, so pass a name you are confident in directly.
-    /// Call `list_projects` only when the name is genuinely unknown or
-    /// ambiguous — the roster in this server's instructions already names
-    /// every active project.
+    /// both, and **one of them is required**. Resolved by exact name, and an
+    /// unknown name returns `not_found` rather than mis-filing, so pass a name
+    /// you are confident in directly. Call `list_projects` only when the name is
+    /// genuinely unknown or ambiguous — the roster in this server's
+    /// instructions already names every active project.
     #[serde(default)]
     pub project: Option<String>,
     #[serde(default)]
@@ -2986,6 +3077,10 @@ pub struct NewProposal {
     #[serde(default)]
     pub pinned: bool,
     /// wi_numbers this proposal covers; numbers that don't resolve are dropped.
+    /// A number that resolves to a work item in a **different project** is not
+    /// dropped — it is `invalid_input` naming both projects (#967), because
+    /// silently omitting the item you meant to include is the failure this rule
+    /// exists to stop.
     #[serde(default, rename = "work_item_numbers")]
     #[schemars(rename = "work_item_numbers", schema_with = "schema::wi_numbers")]
     pub covers: Vec<i64>,
@@ -3009,12 +3104,42 @@ pub struct ProposalCreated {
 /// `update_work_item`'s handling of `parent`.
 pub async fn create_proposal(pool: &PgPool, new: NewProposal) -> Result<ProposalCreated> {
     check_proposal_summary(&new.summary)?;
-    let project_id = resolve_project(pool, new.project_id, new.project.as_deref()).await?;
+    // Sprint 043 (#967): a proposal without a project is what produced almost
+    // every cross-project `covers` edge in the corpus — the edges had nothing
+    // to be validated against. `resolve_project` returns None for "neither
+    // selector given"; for a proposal that is now invalid_input rather than a
+    // row nobody can route.
+    let project_id = resolve_project(pool, new.project_id, new.project.as_deref())
+        .await?
+        .ok_or_else(|| {
+            RepoError::InvalidInput(
+                "a sprint proposal needs a project — pass `project` (the name, e.g. \
+                 \"korg\") or `project_id`. A proposal is a single-project bundle: it is \
+                 what tells a session which repo to branch in, and what the covered work \
+                 items are checked against. list_projects has the roster."
+                    .into(),
+            )
+        })?;
+    let project_name = project_name_for_id(pool, project_id).await?;
+
     let mut covered = Vec::with_capacity(new.covers.len());
     for wi in &new.covers {
-        if let Some(n) = node_id_for_wi(pool, *wi).await? {
-            covered.push(n);
+        let Some(n) = node_id_for_wi(pool, *wi).await? else {
+            continue;
+        };
+        // The bundled insert below does not go through `relate`, so the
+        // single-project rule is applied here too — and before the transaction
+        // opens, so a refusal leaves nothing behind. Unlike an unresolvable
+        // wi_number (dropped and reported via `covered`, F-06), this is a hard
+        // refusal: silently dropping the work item Ken meant to include is the
+        // exact failure #967 exists to stop.
+        if let Some(wp) = node_project(pool, n).await? {
+            if wp != project_name {
+                let (_, title) = wi_handle(pool, n).await?;
+                return Err(cross_project_covers(&project_name, *wi, &wp, &title));
+            }
         }
+        covered.push(n);
     }
 
     let mut tx = pool.begin().await?;

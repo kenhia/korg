@@ -109,7 +109,7 @@ describing a route that no longer exists.
 | `DELETE` | `/api/relationships/:id` | Delete a relationship. |
 | `GET` | `/api/nodes/:id` | Kind-agnostic preview of any node by id (powers find-by-ID + the preview panel); 404 if none. |
 | `GET` | `/api/nodes/:id/neighbors` | A node's edges: `{items,total,limit,truncated}`, optional `label`/`kind`/`limit` (see [api.md](api.md#relationships)). |
-| `GET`, `POST` | `/api/proposals` | List sprint proposals (filters `status`, `project`), or propose one: title + summary + covered `work_item_numbers` in a single call. |
+| `GET`, `POST` | `/api/proposals` | List sprint proposals (filters `status`, `project`), or propose one: project + title + summary + covered `work_item_numbers` in a single call. The project is required, and a `work_item_numbers` entry from another project is `invalid_input`. |
 | `GET` | `/api/proposals/rollup` | Per-project planning weather for the Planning rail: `proposals` (live), `wi_in_proposal` and `wi_total` (both live + unarchived). Every project, including one with three zeroes. |
 | `GET`, `PATCH` | `/api/proposals/:node_id` | Proposal detail (covered work items + comments), or update status/rank/pinned/archived. |
 | `GET` | `/api/reports` | List agent reports (filters `source`, `limit`; newest first). |
@@ -379,7 +379,9 @@ any other through a single generalized `relationship` edge:
 - **sprint_proposal** — an agent-planning proposal (title, a ≤500-char `summary`
   routing contract, unbounded `notes` for the analysis, status, drag-orderable
   `rank`, `pinned`); covers work items via the same `relationship` mechanism,
-  label `covers`, rather than a dedicated join table.
+  label `covers`, rather than a dedicated join table. **Single-project** since
+  sprint 043: a project is required, and every covered work item is in it —
+  cross-project work is bundled by a program, the layer above proposals.
 
 Cross-cutting attributes (project, category, tags, archived, timestamps) live on
 `node`. Projects are a unified taxonomy; areas stay project-scoped; tags and

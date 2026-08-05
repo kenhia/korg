@@ -27,7 +27,7 @@ use korg_core::repo::{
     get_work_item, list_work_items, list_work_items_lean, node_id_for_wi, planning_rollup,
     update_proposal, NewHandoff, NewProposal, NewWorkItem, ProposalPatch, WorkItemQuery,
 };
-use korg_test_support::{fresh_korg, new};
+use korg_test_support::{fresh_korg, new, test_project, TEST_PROJECT};
 use rust_decimal::Decimal;
 use sqlx::PgPool;
 
@@ -41,7 +41,7 @@ fn wi(title: &str) -> NewWorkItem {
 fn proposal(title: &str, covers: Vec<i64>) -> NewProposal {
     NewProposal {
         project_id: None,
-        project: None,
+        project: Some(TEST_PROJECT.into()),
         category: None,
         tags: vec![],
         title: title.into(),
@@ -82,6 +82,7 @@ fn the_membership_predicate_matches_the_proposal_vocabulary() {
 #[tokio::test]
 async fn work_item_row_carries_the_proposal_that_covers_it() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let covered = create_work_item(&pool, wi("covered")).await.unwrap();
     let loose = create_work_item(&pool, wi("loose")).await.unwrap();
 
@@ -109,6 +110,7 @@ async fn work_item_row_carries_the_proposal_that_covers_it() {
 #[tokio::test]
 async fn covers_matches_on_the_right_end_not_the_left() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let a = create_work_item(&pool, wi("a")).await.unwrap();
     let p = create_proposal(&pool, proposal("sprint", vec![a.wi_number]))
         .await
@@ -130,6 +132,7 @@ async fn covers_matches_on_the_right_end_not_the_left() {
 #[tokio::test]
 async fn only_live_proposals_mark_an_item_as_spoken_for() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let a = create_work_item(&pool, wi("a")).await.unwrap();
     let p = create_proposal(&pool, proposal("sprint", vec![a.wi_number]))
         .await
@@ -218,6 +221,7 @@ async fn work_item_row_carries_handoff_presence() {
 #[tokio::test]
 async fn the_lean_summary_carries_all_three_markers() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let bare = create_work_item(&pool, wi("bare")).await.unwrap();
     let rich = create_work_item(
         &pool,
@@ -297,6 +301,7 @@ async fn the_lean_summary_carries_all_three_markers() {
 #[tokio::test]
 async fn the_full_list_read_carries_the_markers() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let a = create_work_item(&pool, wi("a")).await.unwrap();
     let p = create_proposal(&pool, proposal("sprint", vec![a.wi_number]))
         .await
@@ -319,6 +324,7 @@ async fn the_full_list_read_carries_the_markers() {
 #[tokio::test]
 async fn planning_rollup_counts_proposals_and_coverage_per_project() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     create_project(&pool, "alpha").await.unwrap();
     create_project(&pool, "beta").await.unwrap();
     // A project with nothing in it still has to appear — a rail entry that
@@ -410,6 +416,7 @@ async fn planning_rollup_counts_proposals_and_coverage_per_project() {
 #[tokio::test]
 async fn planning_rollup_ignores_terminal_proposals() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     create_project(&pool, "alpha").await.unwrap();
     let a1 = create_work_item(
         &pool,

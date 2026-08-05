@@ -14,14 +14,14 @@ use korg_core::repo::{
     create_proposal, create_work_item, get_proposal, list_work_items_lean, update_proposal,
     update_work_item, NewProposal, NewWorkItem, ProposalPatch, WorkItemPatch, PROPOSAL_SUMMARY_MAX,
 };
-use korg_test_support::{fresh_korg, new};
+use korg_test_support::{fresh_korg, new, test_project, TEST_PROJECT};
 use rust_decimal::Decimal;
 use sqlx::PgPool;
 
 fn proposal(title: &str, summary: &str) -> NewProposal {
     NewProposal {
         project_id: None,
-        project: None,
+        project: Some(TEST_PROJECT.into()),
         category: None,
         tags: vec![],
         title: title.into(),
@@ -39,12 +39,24 @@ fn proposal(title: &str, summary: &str) -> NewProposal {
 
 /// Seed a proposal past the constraint, the way production data got there:
 /// straight into the tables, before 0021 ran.
+///
+/// It still carries a project — 0022 made that a CHECK on `node`, and the
+/// production rows this stands in for all had one by then (0016 §5).
 async fn seed_raw(pool: &PgPool, title: &str, summary: &str) -> i64 {
-    let node_id: i64 =
-        sqlx::query_scalar("INSERT INTO node (kind) VALUES ('sprint_proposal') RETURNING id")
-            .fetch_one(pool)
-            .await
-            .unwrap();
+    let project: i64 = sqlx::query_scalar(
+        "INSERT INTO project (name) VALUES ('seeded') ON CONFLICT (name) DO UPDATE \
+         SET name = project.name RETURNING id",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let node_id: i64 = sqlx::query_scalar(
+        "INSERT INTO node (kind, project_id) VALUES ('sprint_proposal', $1) RETURNING id",
+    )
+    .bind(project)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO sprint_proposal (node_id, title, summary, rank) VALUES ($1,$2,$3,0)")
         .bind(node_id)
         .bind(title)
@@ -157,11 +169,20 @@ async fn migration_0021_moves_the_analysis_and_keeps_every_character() {
 }
 
 async fn seed_raw_expecting_failure(pool: &PgPool, summary: &str) -> String {
-    let node_id: i64 =
-        sqlx::query_scalar("INSERT INTO node (kind) VALUES ('sprint_proposal') RETURNING id")
-            .fetch_one(pool)
-            .await
-            .unwrap();
+    let project: i64 = sqlx::query_scalar(
+        "INSERT INTO project (name) VALUES ('seeded') ON CONFLICT (name) DO UPDATE \
+         SET name = project.name RETURNING id",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let node_id: i64 = sqlx::query_scalar(
+        "INSERT INTO node (kind, project_id) VALUES ('sprint_proposal', $1) RETURNING id",
+    )
+    .bind(project)
+    .fetch_one(pool)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO sprint_proposal (node_id, title, summary, rank) VALUES ($1,'x',$2,0)")
         .bind(node_id)
         .bind(summary)
@@ -182,6 +203,7 @@ async fn seed_raw_expecting_failure(pool: &PgPool, summary: &str) -> String {
 #[tokio::test]
 async fn an_over_long_summary_is_invalid_input_on_both_write_paths() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let over = "x".repeat(PROPOSAL_SUMMARY_MAX + 1);
 
     let err = create_proposal(&pool, proposal("too long", &over))
@@ -237,6 +259,7 @@ async fn an_over_long_summary_is_invalid_input_on_both_write_paths() {
 #[tokio::test]
 async fn notes_round_trips_and_clears() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let analysis = "measured, at length. ".repeat(500);
 
     let created = create_proposal(

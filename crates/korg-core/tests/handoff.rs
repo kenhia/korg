@@ -9,7 +9,7 @@ use korg_core::repo::{
     create_handoff, create_proposal, create_work_item, get_handoff, get_node_preview,
     get_work_item_detail, update_handoff, HandoffPatch, NewHandoff, NewWorkItem, RepoError,
 };
-use korg_test_support::{fresh_korg, new};
+use korg_test_support::{fresh_korg, new, test_project};
 
 fn wi(title: &str) -> NewWorkItem {
     NewWorkItem {
@@ -23,6 +23,7 @@ fn wi(title: &str) -> NewWorkItem {
 #[tokio::test]
 async fn create_links_every_owner_atomically() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let item = create_work_item(&pool, wi("owning WI")).await.unwrap();
     let prop = create_proposal(&pool, new::proposal("owning sprint"))
         .await

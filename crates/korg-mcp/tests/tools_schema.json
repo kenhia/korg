@@ -759,7 +759,7 @@
     "name": "mark_link_read"
   },
   {
-    "description": "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these five labels and no others: `covers` (proposal -> work item), `finding` (report -> work item), `depends_on` (dependent -> dependency), and `has_handoff` (node -> handoff; normally written by create_handoff, but relate attaches an existing handoff to another node) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. An unregistered label is invalid_input naming the registry and the near-miss; `covers`, `finding`, and `has_handoff` also validate endpoint kinds (`has_handoff`'s right end must be a handoff). Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected).",
+    "description": "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these five labels and no others: `covers` (proposal -> work item), `finding` (report -> work item), `depends_on` (dependent -> dependency), and `has_handoff` (node -> handoff; normally written by create_handoff, but relate attaches an existing handoff to another node) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. An unregistered label is invalid_input naming the registry and the near-miss; `covers`, `finding`, and `has_handoff` also validate endpoint kinds (`has_handoff`'s right end must be a handoff), and `covers` additionally requires BOTH ENDS IN THE SAME PROJECT -- a proposal bundles work from one project, and cross-project work belongs to a program, the layer above proposals (korg #968). `depends_on` across projects stays legal and is the normal case. Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected).",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1212,7 +1212,7 @@
     "name": "daily_plan_history"
   },
   {
-    "description": "Propose a sprint: bundle a title + summary with the work items it covers, in one call. `summary` is a routing contract capped at 500 characters -- what the bundle is, why now, roughly how big -- and the analysis goes in `notes`, which is unbounded; an over-long summary is invalid_input, not a truncation. Returns the created proposal plus `covered` -- which of the given wi_numbers actually resolved. Numbers that do not resolve are dropped, so compare `covered` against your request.",
+    "description": "Propose a sprint: bundle a title + summary with the work items it covers, in one call. `project` (or `project_id`) is REQUIRED, and every covered work item must be in it -- a proposal is a single-project bundle, so one from another project is invalid_input naming both projects, not a silent drop. Cross-project work is bundled by a program, the layer above proposals (korg #968). `summary` is a routing contract capped at 500 characters -- what the bundle is, why now, roughly how big -- and the analysis goes in `notes`, which is unbounded; an over-long summary is invalid_input, not a truncation. Returns the created proposal plus `covered` -- which of the given wi_numbers actually resolved. Numbers that do not resolve are dropped, so compare `covered` against your request.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1234,13 +1234,14 @@
           "type": "boolean"
         },
         "project": {
-          "description": "Project name, e.g. `klams` — the alternative to `project_id`; never pass\nboth. Resolved by exact name, and an unknown name returns `not_found`\nrather than mis-filing, so pass a name you are confident in directly.\nCall `list_projects` only when the name is genuinely unknown or\nambiguous — the roster in this server's instructions already names\nevery active project.",
+          "description": "Project name, e.g. `klams` — the alternative to `project_id`; never pass\nboth, and **one of them is required**. Resolved by exact name, and an\nunknown name returns `not_found` rather than mis-filing, so pass a name\nyou are confident in directly. Call `list_projects` only when the name is\ngenuinely unknown or ambiguous — the roster in this server's\ninstructions already names every active project.",
           "type": [
             "string",
             "null"
           ]
         },
         "project_id": {
+          "description": "**Required** — as either this or `project`, never both. A proposal is a\nsingle-project bundle (#967): it is what tells a session which repo to\nbranch in, and what `covers` is validated against.",
           "format": "int64",
           "type": [
             "integer",
@@ -1270,7 +1271,7 @@
         },
         "work_item_numbers": {
           "default": [],
-          "description": "wi_numbers this proposal covers; numbers that don't resolve are dropped.",
+          "description": "wi_numbers this proposal covers; numbers that don't resolve are dropped.\nA number that resolves to a work item in a **different project** is not\ndropped — it is `invalid_input` naming both projects (#967), because\nsilently omitting the item you meant to include is the failure this rule\nexists to stop.",
           "items": {
             "format": "int64",
             "type": "integer"

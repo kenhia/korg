@@ -25,6 +25,15 @@ pub struct LabelSpec {
     pub left_kind: Option<&'static str>,
     /// Node kind expected on the right, or `None` for any.
     pub right_kind: Option<&'static str>,
+    /// True when both endpoints must be in the same project (sprint 043,
+    /// #967). Only `covers` sets it: a sprint proposal is a single-project
+    /// bundle, and the cross-project layer is the program, not the proposal.
+    /// `depends_on` deliberately does not — the homelab-ai plan is built out
+    /// of cross-project dependencies.
+    ///
+    /// An endpoint with *no* project is unfiled rather than filed elsewhere
+    /// and is not a violation; see [`crate::repo::relate`].
+    pub same_project: bool,
     /// How the label reads left-to-right, for humans and tool descriptions.
     pub reads: &'static str,
 }
@@ -37,6 +46,7 @@ pub const REGISTRY: [LabelSpec; 5] = [
         directed: true,
         left_kind: Some("sprint_proposal"),
         right_kind: Some("workitem"),
+        same_project: true,
         reads: "proposal covers work item",
     },
     LabelSpec {
@@ -44,6 +54,7 @@ pub const REGISTRY: [LabelSpec; 5] = [
         directed: true,
         left_kind: Some("report"),
         right_kind: Some("workitem"),
+        same_project: false,
         reads: "report reported work item as a finding",
     },
     LabelSpec {
@@ -51,6 +62,7 @@ pub const REGISTRY: [LabelSpec; 5] = [
         directed: true,
         left_kind: None,
         right_kind: None,
+        same_project: false,
         reads: "dependent depends on dependency",
     },
     LabelSpec {
@@ -58,6 +70,7 @@ pub const REGISTRY: [LabelSpec; 5] = [
         directed: false,
         left_kind: None,
         right_kind: None,
+        same_project: false,
         reads: "the two nodes are related (no direction)",
     },
     LabelSpec {
@@ -70,6 +83,7 @@ pub const REGISTRY: [LabelSpec; 5] = [
         directed: true,
         left_kind: None,
         right_kind: Some("handoff"),
+        same_project: false,
         reads: "node has handoff",
     },
 ];
@@ -103,6 +117,20 @@ mod tests {
         assert!(spec("has_handoff").unwrap().directed);
         assert_eq!(spec("has_handoff").unwrap().left_kind, None);
         assert_eq!(spec("has_handoff").unwrap().right_kind, Some("handoff"));
+    }
+
+    #[test]
+    fn covers_is_the_only_single_project_label() {
+        // Sprint 043 (#967). depends_on in particular must stay cross-project:
+        // the homelab-ai plan's whole structure is dependencies between repos.
+        assert!(spec("covers").unwrap().same_project);
+        for s in REGISTRY.iter().filter(|s| s.label != "covers") {
+            assert!(
+                !s.same_project,
+                "{} must not require a shared project",
+                s.label
+            );
+        }
     }
 
     #[test]

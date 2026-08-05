@@ -102,6 +102,22 @@ pub async fn connect(url: &str) -> PgPool {
         .expect("connect to postgres")
 }
 
+/// The project a suite files things under when it does not care which one.
+///
+/// Sprint 043 made a project mandatory on every proposal, so `new::proposal`
+/// names this one and the suite creates it — one line — rather than every
+/// proposal test growing a routing story it has no opinion about. Suites that
+/// *are* about routing name their own projects instead.
+pub const TEST_PROJECT: &str = "korg";
+
+/// Create [`TEST_PROJECT`], returning its id. Idempotent, like
+/// `create_project` itself, so calling it twice in one suite is fine.
+pub async fn test_project(pool: &PgPool) -> i64 {
+    korg_core::repo::create_project(pool, TEST_PROJECT)
+        .await
+        .expect("create the default test project")
+}
+
 /// Row count of `table`. Only ever called with literal table names from the
 /// migrate suites, so the format-string interpolation is not a lever an input
 /// can reach.
@@ -170,10 +186,21 @@ pub mod new {
         }
     }
 
+    /// A proposal in [`TEST_PROJECT`](super::TEST_PROJECT).
+    ///
+    /// Unlike the other builders this one is *not* all-defaults: sprint 043
+    /// made `project` mandatory, so the honest default is the project the
+    /// suite will have created with [`test_project`](super::test_project).
+    /// Use [`proposal_in`] when the project is what the test is about.
     pub fn proposal(title: &str) -> NewProposal {
+        proposal_in(super::TEST_PROJECT, title)
+    }
+
+    /// A proposal in a named project — for suites where the routing matters.
+    pub fn proposal_in(project: &str, title: &str) -> NewProposal {
         NewProposal {
             project_id: None,
-            project: None,
+            project: Some(project.into()),
             category: None,
             tags: Vec::new(),
             title: title.into(),
