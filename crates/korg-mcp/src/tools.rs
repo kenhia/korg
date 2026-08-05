@@ -16,8 +16,8 @@ use korg_core::config::KorgConfig;
 use korg_core::error::{ErrorClass, ErrorCode};
 use korg_core::ops;
 use korg_core::repo::{
-    self, CardPatch, HandoffPatch, LinkPatch, NewCard, NewHandoff, NewLink, NewProposal, NewReport,
-    NewWorkItem, ProjectPatch, ProposalPatch, WorkItemPatch,
+    self, CardPatch, HandoffPatch, LinkPatch, NewCard, NewHandoff, NewLink, NewProgram,
+    NewProposal, NewReport, NewWorkItem, ProgramPatch, ProjectPatch, ProposalPatch, WorkItemPatch,
 };
 use korg_core::{daily_plan, topics};
 use rmcp::handler::server::ServerHandler;
@@ -196,7 +196,7 @@ pub fn tools() -> Vec<Tool> {
         tool2::<ops::NodeId, LinkPatch>("update_link", "Update a reading-list link in ONE transaction: disposition, read flag, tags, archived -- any combination. This is how an agent records what it decided about a captured URL (migration 0004's intended workflow), and `archived` is its lifecycle end: the disposal list_links has always excluded by default. Returns the updated link; isError `not_found` if the node is missing or is not a link; an invalid disposition changes nothing."),
         tool::<ops::NodeId>("delete_link", "Hard-delete a captured URL -- the disposal for a link that was never real (a probe, a mistyped capture). For a link that WAS real, archive it with update_link instead; delete is irreversible. REFUSES with `conflict` if the link has any relationship edge, comment, or daily-plan reference, naming what points at it -- anything referenced has a history, and resolving that reference is your decision, not the database's. Returns {deleted: bool} -- false means there was no such link."),
         tool::<MarkLinkReadArgs>("mark_link_read", "DEPRECATED -- use update_link, which does this plus disposition and tags in one transaction. Marks a reading-list link read or unread; returns the updated link."),
-        tool::<ops::Relate>("relate", "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these five labels and no others: `covers` (proposal -> work item), `finding` (report -> work item), `depends_on` (dependent -> dependency), and `has_handoff` (node -> handoff; normally written by create_handoff, but relate attaches an existing handoff to another node) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. An unregistered label is invalid_input naming the registry and the near-miss; `covers`, `finding`, and `has_handoff` also validate endpoint kinds (`has_handoff`'s right end must be a handoff), and `covers` additionally requires BOTH ENDS IN THE SAME PROJECT -- a proposal bundles work from one project, and cross-project work belongs to a program, the layer above proposals (korg #968). `depends_on` across projects stays legal and is the normal case. Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected)."),
+        tool::<ops::Relate>("relate", "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these six labels and no others: `covers` (proposal -> work item), `includes` (program -> proposal), `finding` (report -> work item), `depends_on` (dependent -> dependency), and `has_handoff` (node -> handoff; normally written by create_handoff, but relate attaches an existing handoff to another node) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` is UNDIRECTED -- orientation is stored but meaningless, so read it symmetrically. An unregistered label is invalid_input naming the registry and the near-miss; `covers`, `includes`, `finding`, and `has_handoff` also validate endpoint kinds (`has_handoff`'s right end must be a handoff), and `covers` additionally requires BOTH ENDS IN THE SAME PROJECT -- a proposal bundles work from one project, and cross-project work belongs to a program, the layer above proposals (korg #968). `includes` is the layer where cross-project work is legal, so it has NO same-project rule; `depends_on` across projects likewise stays legal and is the normal case. Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `rank` -- the position of the right endpoint within the left one, which is how a program's slices are ordered; re-relating an existing edge WITH a rank moves it in place and keeps its provenance, and re-relating without one leaves the position alone (so reordering never needs unrelate + relate). Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected)."),
         tool2::<ops::NodeId, ops::Neighbors>("neighbors", "List the nodes linked to a node (any kind), with labels. Returns {items, total, limit, truncated}. Each item has `rel_id` (pass to `unrelate`), `direction` (\"out\" = the queried node is the edge's left, so the label reads queried->neighbor; \"in\" = the reverse) and `directed` -- when `directed` is false the label is registry-undirected (e.g. related-to) and you MUST treat the edge as symmetric, ignoring `direction`. Filter server-side with `label` and/or `kind` instead of pulling every edge: e.g. label=\"covers\", kind=\"workitem\" for a proposal's work items. Ordering is neighbor node_id then rel_id."),
         tool::<ops::Id>("unrelate", "Remove a relationship edge by its id (the `rel_id` from `neighbors`, or the id returned by `relate`). Returns {deleted: bool} — false means there was no such edge."),
         tool::<topics::NewTopic>("create_topic", "Create a reusable planning topic. Returns the created topic."),
@@ -219,6 +219,12 @@ pub fn tools() -> Vec<Tool> {
         tool::<ops::ListProposals>("list_proposals", "The sprint queue: pinned first, then rank, then node_id (a stable order -- equal ranks no longer shuffle between calls). Returns {items, omitted} -- NOT a bare array; `omitted` counts the rows the defaults hid ({done, declined, archived}), so a narrowed queue can never be mistaken for the whole corpus. Defaults: live proposals only (`proposed` + `active`), unarchived, and the lean projection -- node_id, title, status, project, rank, pinned, covered_count, comment_count, no `summary`. Pass status:\"all\" (or one status) for the rest, detail:\"full\" for every column including `summary` and `notes`. Reading one proposal is get_proposal, which also gives you the work items it covers."),
         tool::<ops::NodeId>("get_proposal", "Fetch one sprint proposal by node_id with everything needed to start it: the proposal fields (including `notes`, the full analysis the 500-character `summary` cannot hold), `covered` (the work items it covers -- wi_number, node_id, title, wi_status, wi_tshirt, project, comment_count -- ordered by wi_number), and inlined comments (up to 10, with `comments_truncated`). This replaces the old list_proposals + neighbors + list_work_items dance. isError with code `not_found` if there is none."),
         tool2::<ops::NodeId, ProposalPatch>("update_proposal", "Partially update a sprint proposal by its node_id; returns the updated proposal (isError with code `not_found` if that node is missing or is not a proposal). Only the fields you pass are changed. Use this for status transitions (proposed -> active -> done/declined), reordering (rank), pinning, or archiving. `summary` is capped at 500 characters (invalid_input above that) -- long-form analysis belongs in `notes`, which is unbounded; pass null to clear it."),
+        tool::<NewProgram>("create_program", "Create a program -- the CROSS-project layer (korg #968). A program bundles sprint PROPOSALS, ordered, and is the sanctioned home for work that spans repos; a proposal itself is strictly single-project. It takes NO project: passing `project`/`project_id` is invalid_input, because a program filed under one repo rebuilds exactly the mis-routing that rule cured. Its `span` -- which repos it touches -- is DERIVED from the projects of the proposals it includes, so it cannot go stale when you add a slice. `slices` are proposal node_ids IN ORDER (first = slice 1), written as ranked `includes` edges; an id that is not a proposal is refused outright rather than dropped, because a program's slice list is its plan. `aim` is the routing contract capped at 500 characters -- analysis goes in `notes`, which is unbounded."),
+        tool::<ops::NodeId>("get_program", "Fetch one program by node_id with the whole rollup, so a consumer NEVER crawls program -> proposals -> work items: the program fields, `span` (its derived projects), and `slices` -- the included proposals in program order, each with node_id, title, status, project, its position `rank`, `covered_count`, and per-status work-item counts (open/resolved/done/closed). Also carries inlined comments and the `related` block, where a `has_handoff` edge surfaces -- a program is precisely the kind that accrues one, and it is required context. isError with code `not_found` if there is none."),
+        tool::<ops::ListPrograms>("list_programs", "List programs, pinned first then rank then node_id. Returns {items, omitted} -- NOT a bare array; `omitted` is {done, archived}, the rows the defaults hid. Defaults: live programs only (`active` + `holding`), unarchived. Pass status:\"all\" (or one status) for the rest. There is no detail flag and no project filter: a program has no project of its own (its `span` is derived and is on every row), and with a 500-character `aim` the full row is already the lean one. `holding` means started but nothing currently in flight -- it is the state a program spends most of its life in, and it is deliberately not collapsed into `active`."),
+        tool2::<ops::NodeId, ProgramPatch>("update_program", "Partially update a program by its node_id; returns the updated program (isError `not_found` if that node is missing or is not a program). Only the fields you pass change: title, aim, notes, status (active -> holding -> done), rank, pinned, archived, tags. `aim` is capped at 500 characters. Slice membership and ORDER are not here -- use relate/unrelate with the `includes` label, passing `rank` to position a slice."),
+        tool2::<ops::NodeId, ops::SetAwaiting>("set_awaiting", "Mark a node -- ANY kind: work item, proposal, program, card -- as awaiting Ken, or clear that marker. This is how an agent says \"this moves only when Ken acts\": a decision, an ops action no agent can perform, a review. Pass awaiting:true with a `note` saying what is being asked; pass awaiting:false to clear it, which you SHOULD do yourself once you have the answer rather than leaving an answered ask in the lane. Re-marking a node that is already awaiting KEEPS the original timestamp and only updates the note -- the age of an ask is what makes the lane useful, so it is not restarted. The marker is a real column, not a tag: tags are written wholesale and an unrelated tag edit would silently clear it. Clearing also happens automatically when Ken himself acts (a work item reaching `closed`, a proposal reaching `done`/`declined`, anything archived)."),
+        tool::<ops::NoArgs>("list_awaiting", "Everything currently waiting on Ken, oldest ask first -- one call, every node kind. Each row carries node_id, kind, wi_number (work items), a resolved title, project, the node's OWN status, `awaiting_since` and `awaiting_note`, so a board renders the lane without a follow-up read per row. Archived nodes and ones in a state only Ken sets (closed work items, done/declined proposals, done programs) are excluded -- the lane holds live asks, never answered ones. Note that `resolved` and `done` work items DO appear: \"implemented, needs your user test\" is the canonical awaiting-Ken state."),
         tool::<NewHandoff>("create_handoff", "Create a handoff -- a durable, cross-machine context document -- and attach it to the work it describes in ONE call. `related_node_ids` are the nodes it belongs to (work items, a sprint proposal, a report, another handoff); each becomes a `has_handoff` edge. REQUIRED context, not optional related reading: the handoff surfaces automatically in those nodes' get_work_item/get_proposal `related` block. Rejects an empty `related_node_ids` unless you pass `allow_standalone` (so a forgotten link can't orphan it), and rejects the whole create if any id does not resolve (isError `not_found` -- no partial insert). Returns the handoff plus the owner ids linked."),
         tool::<ops::NodeId>("get_handoff", "Fetch one handoff by node_id: title, summary, full Markdown `body`, and the nodes it is attached to (`related`, both directions, capped with `related_truncated`). isError with code `not_found` if there is none. This is the authoritative read once a `has_handoff` edge points you here."),
         tool2::<ops::NodeId, HandoffPatch>("update_handoff", "Partially update a handoff by its node_id; returns the updated handoff (isError with code `not_found` if that node is missing or is not a handoff). Only the fields you pass change (title, summary, body, tags, archived). Relationship changes go through relate/unrelate, not here."),
@@ -450,7 +456,9 @@ impl KorgServer {
             // --- relationships ---
             "relate" => {
                 let a: ops::Relate = parse_args(args)?;
-                match repo::relate(pool, a.left, a.right, &a.label, a.origin.as_deref()).await {
+                match repo::relate(pool, a.left, a.right, &a.label, a.origin.as_deref(), a.rank)
+                    .await
+                {
                     Ok(id) => ok_json(json!({ "id": id })),
                     Err(e) => Ok(to_err(e)),
                 }
@@ -611,6 +619,35 @@ impl KorgServer {
                 let (a, patch) = parse_args2::<ops::NodeId, ProposalPatch>(args)?;
                 respond(repo::update_proposal(pool, a.node_id, patch).await)
             }
+
+            // --- programs (#968) ---
+            "create_program" => {
+                let new: NewProgram = parse_args(args)?;
+                respond(repo::create_program(pool, new).await)
+            }
+            "get_program" => {
+                let a: ops::NodeId = parse_args(args)?;
+                respond_found(repo::get_program_detail(pool, a.node_id).await, || {
+                    format!("no program with node_id {}", a.node_id)
+                })
+            }
+            "list_programs" => {
+                let a: ops::ListPrograms = parse_args(args)?;
+                respond(repo::list_programs(pool, a.status.as_deref(), a.archived).await)
+            }
+            "update_program" => {
+                let a: ops::NodeId = parse_args(args.clone())?;
+                let patch: ProgramPatch = parse_args(args)?;
+                respond(repo::update_program(pool, a.node_id, patch).await)
+            }
+
+            // --- the awaiting-Ken marker (#969) ---
+            "set_awaiting" => {
+                let a: ops::NodeId = parse_args(args.clone())?;
+                let s: ops::SetAwaiting = parse_args(args)?;
+                respond(repo::set_awaiting(pool, a.node_id, s.awaiting, s.note.as_deref()).await)
+            }
+            "list_awaiting" => respond(repo::list_awaiting(pool).await),
 
             // --- handoffs ---
             "create_handoff" => {

@@ -40,7 +40,7 @@ pub struct LabelSpec {
 
 /// Labels korg itself writes or interprets. Free-form labels stay legal —
 /// [`spec`] returns `None` for them and their direction is caller-defined.
-pub const REGISTRY: [LabelSpec; 5] = [
+pub const REGISTRY: [LabelSpec; 6] = [
     LabelSpec {
         label: "covers",
         directed: true,
@@ -86,6 +86,28 @@ pub const REGISTRY: [LabelSpec; 5] = [
         same_project: false,
         reads: "node has handoff",
     },
+    LabelSpec {
+        // Sprint 044 (#968): the multi-project layer. A NEW label rather than a
+        // widened `covers`, because `covers` is declared proposal -> workitem
+        // *and* single-project; teaching it a second endpoint pair would mean
+        // one registry entry with two meanings and a `same_project` that depends
+        // on which pair matched — exactly what this registry exists to prevent.
+        //
+        // `same_project` is false and that is the entire point: a program is
+        // where cross-project work became legal once 0022 made it illegal on a
+        // proposal.
+        //
+        // The right end is pinned to `sprint_proposal` in v1. #968 also wants
+        // "occasionally standalone WIs", which needs `right_kind` to become a
+        // kind *set*; that is a mechanical change to six entries and is cheaper
+        // later than shipping an unvalidated `None` now and never tightening it.
+        label: "includes",
+        directed: true,
+        left_kind: Some("program"),
+        right_kind: Some("sprint_proposal"),
+        same_project: false,
+        reads: "program includes proposal as a slice",
+    },
 ];
 
 /// The registry entry for `label`, or `None` if it is a free-form label.
@@ -117,6 +139,23 @@ mod tests {
         assert!(spec("has_handoff").unwrap().directed);
         assert_eq!(spec("has_handoff").unwrap().left_kind, None);
         assert_eq!(spec("has_handoff").unwrap().right_kind, Some("handoff"));
+        // includes (sprint 044): program -> proposal, directed, both ends pinned.
+        assert!(spec("includes").unwrap().directed);
+        assert_eq!(spec("includes").unwrap().left_kind, Some("program"));
+        assert_eq!(
+            spec("includes").unwrap().right_kind,
+            Some("sprint_proposal")
+        );
+    }
+
+    /// The one that would quietly undo sprint 043 if it were ever "tidied up".
+    /// `includes` is the layer where cross-project work became legal again; a
+    /// well-meaning edit giving it `same_project: true` for symmetry with
+    /// `covers` would leave the corpus with no way to express a multi-repo
+    /// program at all, which is the entire reason #968 exists.
+    #[test]
+    fn includes_is_deliberately_cross_project() {
+        assert!(!spec("includes").unwrap().same_project);
     }
 
     #[test]

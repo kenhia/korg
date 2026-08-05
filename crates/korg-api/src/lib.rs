@@ -19,8 +19,8 @@ use tower_http::trace::TraceLayer;
 use korg_core::config::KorgConfig;
 use korg_core::ops;
 use korg_core::repo::{
-    self, CardPatch, HandoffPatch, LinkPatch, NewCard, NewHandoff, NewLink, NewProposal,
-    NewWorkItem, ProjectPatch, ProposalPatch, WorkItemPatch,
+    self, CardPatch, HandoffPatch, LinkPatch, NewCard, NewHandoff, NewLink, NewProgram,
+    NewProposal, NewWorkItem, ProgramPatch, ProjectPatch, ProposalPatch, WorkItemPatch,
 };
 use korg_core::{daily_plan, topics};
 use korg_mcp::tools::KorgServer;
@@ -98,6 +98,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/projects/:name", patch(update_project))
         .route("/api/proposals", get(list_proposals).post(create_proposal))
         .route("/api/proposals/rollup", get(planning_rollup))
+        .route("/api/programs", get(list_programs).post(create_program))
+        .route(
+            "/api/programs/:node_id",
+            get(get_program).patch(update_program),
+        )
+        .route("/api/awaiting", get(list_awaiting))
+        .route("/api/nodes/:id/awaiting", put(set_awaiting))
         .route("/api/reports", get(list_reports))
         .route("/api/reports/:node_id", get(get_report))
         .route("/api/handoffs", post(create_handoff))
@@ -642,7 +649,7 @@ async fn daily_plan_history(State(s): State<AppState>, Query(q): Query<HistoryQu
 // --- relationships --------------------------------------------------------
 
 async fn create_relationship(State(s): State<AppState>, Json(b): Json<ops::Relate>) -> ApiResult {
-    let id = repo::relate(&s.pool, b.left, b.right, &b.label, b.origin.as_deref()).await?;
+    let id = repo::relate(&s.pool, b.left, b.right, &b.label, b.origin.as_deref(), b.rank).await?;
     Ok(Json(json!({ "id": id })))
 }
 
@@ -753,6 +760,57 @@ async fn update_proposal(
 ) -> ApiResult {
     Ok(Json(json!(
         repo::update_proposal(&s.pool, node_id, patch).await?
+    )))
+}
+
+// --- programs: the cross-project layer (#968) -------------------------------
+
+async fn list_programs(State(s): State<AppState>, Query(q): Query<ops::ListPrograms>) -> ApiResult {
+    Ok(Json(json!(
+        repo::list_programs(&s.pool, q.status.as_deref(), q.archived).await?
+    )))
+}
+
+/// The rollup read (D-5): a program, its ordered slices, and each slice's
+/// work-item counts — so the UI renders a program without walking the graph.
+async fn get_program(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
+    match repo::get_program_detail(&s.pool, node_id).await? {
+        Some(detail) => Ok(Json(json!(detail))),
+        None => Err(not_found(format!("no program with node_id {node_id}"))),
+    }
+}
+
+async fn create_program(State(s): State<AppState>, Json(b): Json<NewProgram>) -> ApiResult {
+    Ok(Json(json!(repo::create_program(&s.pool, b).await?)))
+}
+
+async fn update_program(
+    State(s): State<AppState>,
+    Path(node_id): Path<i64>,
+    Json(patch): Json<ProgramPatch>,
+) -> ApiResult {
+    Ok(Json(json!(
+        repo::update_program(&s.pool, node_id, patch).await?
+    )))
+}
+
+// --- the awaiting-Ken marker (#969) ----------------------------------------
+
+/// The Commander's Call lane, oldest ask first. Ghost-free by D-7.
+async fn list_awaiting(State(s): State<AppState>) -> ApiResult {
+    Ok(Json(json!(repo::list_awaiting(&s.pool).await?)))
+}
+
+/// Set or clear the marker on any node. The web UI's one-click clear is this
+/// call with `awaiting: false` — the same core path an agent uses, not a second
+/// one that could drift from it.
+async fn set_awaiting(
+    State(s): State<AppState>,
+    Path(node_id): Path<i64>,
+    Json(b): Json<ops::SetAwaiting>,
+) -> ApiResult {
+    Ok(Json(json!(
+        repo::set_awaiting(&s.pool, node_id, b.awaiting, b.note.as_deref()).await?
     )))
 }
 
