@@ -109,6 +109,22 @@ pass re-authors the live queue by hand). Rolling back across 0021 is therefore
 cheap for history and lossy for whatever was authored since; take a dump first if
 the pass has already run.
 
+**0022 (single-project proposals) is a data move plus a CHECK.** The four
+proposals it re-files (599, 601, 602 → their real projects; 747 → kprojects) are
+plain column values an old image reads happily, so that half is not a boundary
+at all. The constraint is: an image built before sprint 043 has no
+project-required check of its own, so a `propose_sprint` with no project reaches
+the database and comes back as a raw constraint violation in a 500 rather than
+the `invalid_input` the current core returns.
+
+```sql
+ALTER TABLE node DROP CONSTRAINT node_sprint_proposal_has_project;
+```
+
+The re-filings are not reversed by that, and should not be — they corrected
+mis-files. Undoing one is a hand-written `UPDATE node SET project_id = …`; the
+sprint record (`sprints/043-single-project-proposals.md`) names all four.
+
 0020 also narrows `PROJECT_STATUSES` to `active | archived`, converting
 `maintenance` → `active` and `inactive` → `archived` on the way. That conversion
 is **not** decoration: it was added after a rehearsal against a nightly dump
