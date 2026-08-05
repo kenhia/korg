@@ -5,7 +5,7 @@ use korg_core::repo::{
     create_proposal, create_work_item, list_proposals, node_id_for_wi, update_proposal,
     NewProposal, NewWorkItem, ProposalPatch,
 };
-use korg_test_support::{fresh_korg, new};
+use korg_test_support::{fresh_korg, new, test_project, TEST_PROJECT};
 use rust_decimal::Decimal;
 
 fn wi(title: &str) -> NewWorkItem {
@@ -18,7 +18,9 @@ fn wi(title: &str) -> NewWorkItem {
 fn proposal(title: &str, rank: i64, covers: Vec<i64>) -> NewProposal {
     NewProposal {
         project_id: None,
-        project: None,
+        // A proposal has needed a project since sprint 043 (#967); this suite
+        // is not about routing, so it uses the default one.
+        project: Some(TEST_PROJECT.into()),
         category: None,
         tags: vec![],
         title: title.into(),
@@ -33,6 +35,7 @@ fn proposal(title: &str, rank: i64, covers: Vec<i64>) -> NewProposal {
 #[tokio::test]
 async fn create_proposal_bundles_covers_edges() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let a = create_work_item(&pool, wi("a")).await.unwrap().wi_number;
     let b = create_work_item(&pool, wi("b")).await.unwrap().wi_number;
 
@@ -63,6 +66,7 @@ async fn create_proposal_bundles_covers_edges() {
 #[tokio::test]
 async fn list_proposals_pinned_first_then_rank_and_status_filter() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let low = create_proposal(&pool, proposal("low rank", 1, vec![]))
         .await
         .unwrap();
@@ -135,6 +139,7 @@ async fn list_proposals_pinned_first_then_rank_and_status_filter() {
 #[tokio::test]
 async fn update_proposal_patches_only_given_fields() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let p = create_proposal(&pool, proposal("draft", 0, vec![]))
         .await
         .unwrap();

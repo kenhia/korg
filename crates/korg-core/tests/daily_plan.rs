@@ -9,7 +9,7 @@ use korg_core::repo::{
 use korg_core::topics::{
     archive_topic, create_topic, get_topic, list_topics, update_topic, NewTopic, TopicPatch,
 };
-use korg_test_support::{fresh_korg, new};
+use korg_test_support::{fresh_korg, new, test_project, TEST_PROJECT};
 use rust_decimal::Decimal;
 use sqlx::PgPool;
 use time::macros::{date, datetime};
@@ -118,6 +118,7 @@ async fn topic_crud_search_and_archive() {
 #[tokio::test]
 async fn planning_snapshots_orders_duplicates_and_validates_sources() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let wi = work_item(&pool, "Original title").await;
     let t = create_topic(&pool, topic("Explore")).await.unwrap().node_id;
     let card = create_card(
@@ -172,7 +173,7 @@ async fn planning_snapshots_orders_duplicates_and_validates_sources() {
         &pool,
         NewProposal {
             project_id: None,
-            project: None,
+            project: Some(TEST_PROJECT.into()),
             category: None,
             tags: vec![],
             title: "Proposal source".into(),

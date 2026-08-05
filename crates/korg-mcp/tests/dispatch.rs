@@ -276,7 +276,7 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
         // --- sprint proposals ---
         (
             "propose_sprint",
-            json!({"title": "proposed by the fence", "summary": "s"}),
+            json!({"title": "proposed by the fence", "summary": "s", "project": "korg"}),
         ),
         ("list_proposals", json!({})),
         ("get_proposal", json!({"node_id": proposal.row.node_id})),

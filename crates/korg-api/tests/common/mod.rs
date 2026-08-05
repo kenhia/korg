@@ -11,7 +11,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use korg_api::{build_router, AppState};
-use korg_test_support::fresh_korg;
+use korg_test_support::{fresh_korg, test_project};
 use serde_json::Value;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -25,10 +25,19 @@ pub async fn app() -> (impl Sized, axum::Router) {
     (pg, router)
 }
 
+/// The name every suite here files a proposal under. Re-exported from
+/// `korg-test-support` so a JSON payload can spell it without a second import.
+pub const PROJECT: &str = korg_test_support::TEST_PROJECT;
+
 /// The same, plus the pool — for suites that must seed something REST has no
 /// write route for (reports are MCP-only).
+///
+/// Seeds [`PROJECT`]: sprint 043 made a project mandatory on every proposal,
+/// and a REST suite that has to POST `/api/projects` first before it can test
+/// anything else is testing the wrong thing.
 pub async fn app_with_pool() -> (impl Sized, PgPool, axum::Router) {
     let (pg, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let router = build_router(AppState {
         pool: Arc::new(pool.clone()),
         config: Arc::new(

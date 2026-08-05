@@ -7,7 +7,7 @@ use korg_core::repo::{
     self, create_proposal, create_work_item, neighbors, relate, upsert_report, NeighborQuery,
     NewProposal, NewReport, NewWorkItem, RepoError,
 };
-use korg_test_support::{fresh_korg, new};
+use korg_test_support::{fresh_korg, new, test_project, TEST_PROJECT};
 use rust_decimal::Decimal;
 use time::macros::date;
 
@@ -25,6 +25,7 @@ fn wi(title: &str) -> NewWorkItem {
 #[tokio::test]
 async fn covers_edges_are_written_proposal_to_work_item() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let a = create_work_item(&pool, wi("first")).await.unwrap();
     let b = create_work_item(&pool, wi("second")).await.unwrap();
 
@@ -32,7 +33,7 @@ async fn covers_edges_are_written_proposal_to_work_item() {
         &pool,
         NewProposal {
             project_id: None,
-            project: None,
+            project: Some(TEST_PROJECT.into()),
             category: None,
             tags: vec![],
             title: "bundle".into(),
@@ -110,6 +111,7 @@ async fn finding_edges_are_written_report_to_work_item() {
 #[tokio::test]
 async fn backfill_orients_legacy_edges_and_leaves_no_proposal_on_the_right() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let a = create_work_item(&pool, wi("covered one")).await.unwrap();
     let bundle = create_work_item(&pool, wi("Sprint: legacy bundle"))
         .await
@@ -118,7 +120,7 @@ async fn backfill_orients_legacy_edges_and_leaves_no_proposal_on_the_right() {
         &pool,
         NewProposal {
             project_id: None,
-            project: None,
+            project: Some(TEST_PROJECT.into()),
             category: None,
             tags: vec![],
             title: "modern".into(),
@@ -227,13 +229,14 @@ async fn self_edges_are_rejected_by_the_app_and_the_schema() {
 #[tokio::test]
 async fn neighbors_filters_bounds_and_orders_stably() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let hub = create_work_item(&pool, wi("hub")).await.unwrap();
     let dep = create_work_item(&pool, wi("dependency")).await.unwrap();
     let p = create_proposal(
         &pool,
         NewProposal {
             project_id: None,
-            project: None,
+            project: Some(TEST_PROJECT.into()),
             category: None,
             tags: vec![],
             title: "bundle".into(),
@@ -363,6 +366,7 @@ async fn unknown_label_is_rejected_naming_the_vocabulary_and_near_miss() {
 #[tokio::test]
 async fn a_separator_near_miss_suggests_the_registered_spelling() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let a = create_work_item(&pool, wi("a")).await.unwrap();
     let b = create_work_item(&pool, wi("b")).await.unwrap();
 
@@ -492,12 +496,13 @@ async fn relate_stamps_provenance_and_preserves_it_on_rerelate() {
 #[tokio::test]
 async fn internal_writers_stamp_their_operation_as_origin() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let hub = create_work_item(&pool, wi("hub")).await.unwrap();
     create_proposal(
         &pool,
         NewProposal {
             project_id: None,
-            project: None,
+            project: Some(TEST_PROJECT.into()),
             category: None,
             tags: vec![],
             title: "bundle".into(),
@@ -527,6 +532,7 @@ async fn internal_writers_stamp_their_operation_as_origin() {
 #[tokio::test]
 async fn focused_reads_inline_related_context() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let a = create_work_item(&pool, wi("covered item")).await.unwrap();
     let dep = create_work_item(&pool, wi("a dependency")).await.unwrap();
 
@@ -538,7 +544,7 @@ async fn focused_reads_inline_related_context() {
         &pool,
         NewProposal {
             project_id: None,
-            project: None,
+            project: Some(TEST_PROJECT.into()),
             category: None,
             tags: vec![],
             title: "the sprint".into(),

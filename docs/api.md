@@ -463,13 +463,13 @@ interprets. The registry lives in `korg_core::relationships`, is the source
 this table is written from, and is the **complete set**: `relate` rejects any
 label not in it.
 
-| Label | Direction | Reads | Endpoints |
-|-------|-----------|-------|-----------|
-| `covers` | directed | proposal **covers** work item | `sprint_proposal` → `workitem` |
-| `finding` | directed | report **reported** work item | `report` → `workitem` |
-| `depends_on` | directed | dependent **depends on** dependency | any → any |
-| `related-to` | **undirected** | the two nodes are related | any → any |
-| `has_handoff` | directed | node **has** handoff | any → `handoff` |
+| Label | Direction | Reads | Endpoints | Same project? |
+|-------|-----------|-------|-----------|---------------|
+| `covers` | directed | proposal **covers** work item | `sprint_proposal` → `workitem` | **required** |
+| `finding` | directed | report **reported** work item | `report` → `workitem` | no |
+| `depends_on` | directed | dependent **depends on** dependency | any → any | no |
+| `related-to` | **undirected** | the two nodes are related | any → any | no |
+| `has_handoff` | directed | node **has** handoff | any → `handoff` | no |
 
 **Directed** means the stored orientation carries meaning, so the reverse edge
 is a *different* fact: `A depends_on B` and `B depends_on A` together are a
@@ -487,6 +487,14 @@ you mean 'related-to'?`); a label with declared endpoint kinds (`covers`,
 single write path both transports share — deliberately **not** a DB trigger or
 CHECK, which would duplicate the vocabulary outside Rust and re-invite the drift
 the registry exists to prevent.
+
+**`covers` is single-project** (sprint 043, #967). A proposal and the work item
+it covers must be in the same project; a cross-project edge is `invalid_input`
+naming both projects and pointing at the program layer (#968), which is where
+cross-project work is bundled. `depends_on` deliberately carries no such rule —
+the homelab-ai plan's whole structure is dependencies between repos. A work item
+with *no* project is unfiled rather than filed elsewhere and is not refused;
+production holds none (measured 2026-08-05).
 
 **Extending it** is one registry entry in `korg_core::relationships` plus
 `just gen`, which propagates the new label to the API, the MCP tool
@@ -544,9 +552,28 @@ standing in for a proposal kind that did not yet exist. Migration 0016
 converted those five into real archived-done proposals and re-pointed their
 edges, so the dual shape is gone — see History.)
 
+### One proposal, one project
+
+A sprint proposal carries a project (**required** since sprint 043 — `#967`,
+enforced by `create_proposal` and by the `node_sprint_proposal_has_project`
+CHECK), and every work item it covers is in that project. Both write paths
+refuse a cross-project `covers` edge: `propose_sprint`, which inserts the
+bundle directly, and `relate`, which is how a work item is added to a proposal
+later.
+
+This was convention until #967 made it a rule, and the convention leaked: at the
+time of writing, 13 legacy proposals still cover work across projects — four of
+them live in the queue. Migration 0022 moved the four that a rule could resolve
+(unanimous covered-work-item project) and reports the residual rather than
+guessing at the rest. They are split by hand, or absorbed by the program layer
+(#968) once it exists.
+
+The refusal names both projects and the program layer, because the answer to
+"my sprint spans two repos" is a program, not a wider proposal.
+
 ### Lifecycle invariants
 
-Two properties hold across the `covers` corpus and are maintained by
+Two further properties hold across the `covers` corpus and are maintained by
 **convention, not constraint** — recorded here so a reader knows what keeps them
 and what would break them (D-19; both zero-violation, verified 2026-07-23):
 
@@ -581,3 +608,12 @@ every stored label is now one the registry declares — and added the nullable
 `created` / `origin` provenance columns (NULL = predates provenance) that LB-2
 begins stamping on new edges. Like 0014, it asserts its own postcondition and
 refuses to half-apply.
+
+Migration 0022 (sprint 043) closed the project half. 0016 §5 gave every
+project-*less* proposal the unanimous project of the work items it covered;
+0022 applies the same rule to proposals filed under the *wrong* project — five
+pre-project-model bundles under the retired `Agent-Plan` umbrella and one
+kprojects proposal under `claude-cleo`, four rows in all — and adds the CHECK
+that stops a project-less proposal being written again. It reports, rather than
+asserts, the residual: proposals that genuinely span two projects have no
+mechanical answer and are left for a human.

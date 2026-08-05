@@ -8,7 +8,7 @@
 //! that every advertised tool is actually dispatched somewhere.
 
 use korg_mcp::tools::tools;
-use korg_test_support::fresh_korg;
+use korg_test_support::{fresh_korg, test_project};
 use rmcp::model::CallToolResult;
 use serde_json::{json, Value};
 
@@ -438,6 +438,7 @@ async fn mcp_coverage_gaps_end_to_end() {
 #[tokio::test]
 async fn list_work_items_filters_by_project() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let alpha = korg_core::repo::create_project(&pool, "alpha")
         .await
         .unwrap();
@@ -509,6 +510,7 @@ async fn list_work_items_filters_by_project() {
 #[tokio::test]
 async fn propose_sprint_and_lifecycle() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let server = server(pool);
 
     let wi = body(
@@ -526,7 +528,7 @@ async fn propose_sprint_and_lifecycle() {
         &server
             .call(
                 "propose_sprint",
-                args(json!({
+                args(json!({"project":"korg",
                     "title":"Sprint: fix things",
                     "summary":"bundle of small fixes",
                     "work_item_numbers":[wi_number, 9999],
@@ -810,6 +812,7 @@ async fn lean_list_excludes_archived_by_default_and_says_what_it_hid() {
 #[tokio::test]
 async fn list_proposals_returns_the_live_queue_lean_and_counts_what_it_hid() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let server = server(pool);
 
     let make = |title: &'static str, status: Option<&'static str>| {
@@ -819,7 +822,7 @@ async fn list_proposals_returns_the_live_queue_lean_and_counts_what_it_hid() {
                 &server
                     .call(
                         "propose_sprint",
-                        args(json!({
+                        args(json!({"project":"korg",
                             "title": title,
                             "summary": "a long plan, which is the whole payload problem",
                             "rank": 1,
@@ -1180,6 +1183,7 @@ fn advertised_defaults_match_server_behaviour() {
 #[tokio::test]
 async fn collection_contracts_and_new_tools_over_mcp() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let server = server(pool);
 
     let mut numbers = vec![];
@@ -1236,7 +1240,7 @@ async fn collection_contracts_and_new_tools_over_mcp() {
         &server
             .call(
                 "propose_sprint",
-                args(json!({
+                args(json!({"project":"korg",
                     "title":"bundle","summary":"s",
                     "work_item_numbers":[numbers[1], numbers[0]]
                 })),
@@ -1499,6 +1503,7 @@ async fn list_work_items_is_lean_and_terminal_excluded_by_default() {
 #[tokio::test]
 async fn proposal_summary_is_bounded_and_notes_carries_the_analysis() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let server = server(pool);
 
     let analysis = "why this bundle, at length. ".repeat(100);
@@ -1506,7 +1511,7 @@ async fn proposal_summary_is_bounded_and_notes_carries_the_analysis() {
         &server
             .call(
                 "propose_sprint",
-                args(json!({
+                args(json!({"project":"korg",
                     "title": "a sprint",
                     "summary": "What it is, why now, roughly how big.",
                     "notes": analysis,

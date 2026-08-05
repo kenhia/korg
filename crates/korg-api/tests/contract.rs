@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use axum::http::StatusCode;
 mod common;
-use common::{app, req};
+use common::{app, req, PROJECT};
 
 /// Assert status + the stable `code` field (D-5) together: agents branch on
 /// the code, so a right status with a missing code is still a broken contract.
@@ -390,7 +390,7 @@ async fn mutations_return_the_updated_entity() {
         &router,
         "POST",
         "/api/proposals",
-        Some(json!({"title":"p","summary":"s","work_item_numbers":[wi]})),
+        Some(json!({"project":PROJECT,"title":"p","summary":"s","work_item_numbers":[wi]})),
     )
     .await;
     assert_eq!(proposal["status"], "proposed");
@@ -545,7 +545,7 @@ async fn proposal_covers_edges_read_outward_over_rest() {
         &router,
         "POST",
         "/api/proposals",
-        Some(json!({"title":"bundle","summary":"s","work_item_numbers":[wi]})),
+        Some(json!({"project":PROJECT,"title":"bundle","summary":"s","work_item_numbers":[wi]})),
     )
     .await;
     let pnode = proposal["node_id"].as_i64().unwrap();
@@ -674,7 +674,7 @@ async fn commentable_rows_signal_discussion_and_detail_inlines_it() {
         &router,
         "POST",
         "/api/proposals",
-        Some(json!({"title":"p","summary":"s","work_item_numbers":[wi]})),
+        Some(json!({"project":PROJECT,"title":"p","summary":"s","work_item_numbers":[wi]})),
     )
     .await;
 
@@ -734,7 +734,7 @@ async fn get_proposal_returns_covered_refs_and_comments() {
         &router,
         "POST",
         "/api/proposals",
-        Some(json!({"title":"bundle","summary":"s","work_item_numbers":[b, a]})),
+        Some(json!({"project":PROJECT,"title":"bundle","summary":"s","work_item_numbers":[b, a]})),
     )
     .await;
     let pnode = proposal["node_id"].as_i64().unwrap();
@@ -764,7 +764,7 @@ async fn get_proposal_returns_covered_refs_and_comments() {
         &router,
         "POST",
         "/api/proposals",
-        Some(json!({"title":"empty","summary":"s"})),
+        Some(json!({"project":PROJECT,"title":"empty","summary":"s"})),
     )
     .await;
     let (st, bare_detail) = req(
@@ -849,11 +849,14 @@ async fn link_update_is_atomic_and_proposals_filter_by_project() {
         Some(json!({"title":"in alpha","summary":"s","project_id": alpha["id"]})),
     )
     .await;
+    // Sprint 043: the second proposal used to be the *unassigned* one, which is
+    // now refused outright — so the filter's contrast case is a proposal in a
+    // different project instead.
     req(
         &router,
         "POST",
         "/api/proposals",
-        Some(json!({"title":"unassigned","summary":"s"})),
+        Some(json!({"project":PROJECT,"title":"elsewhere","summary":"s"})),
     )
     .await;
     let (_st, all) = req(&router, "GET", "/api/proposals", None).await;

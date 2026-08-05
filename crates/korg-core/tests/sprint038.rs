@@ -13,7 +13,7 @@ use korg_core::repo::{
     update_project_by_name, update_proposal, update_work_item, CardPatch, LinkPatch, NewCard,
     NewLink, NewProposal, NewWorkItem, ProjectPatch, ProposalPatch, WorkItemPatch,
 };
-use korg_test_support::{fresh_korg, new};
+use korg_test_support::{fresh_korg, new, test_project};
 use sqlx::PgPool;
 use time::macros::date;
 use time::{Date, OffsetDateTime};
@@ -154,6 +154,7 @@ async fn total_and_omitted_stay_distinct_after_the_fold() {
 #[tokio::test]
 async fn archived_projects_are_refused_by_every_create() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
     make_project(&pool, "live", "active").await;
     make_project(&pool, "retired", "archived").await;
 
@@ -362,6 +363,7 @@ async fn an_archived_project_can_still_be_reactivated() {
 #[tokio::test]
 async fn updated_advances_on_ordinary_edits_of_every_kind() {
     let (_c, pool) = fresh_korg().await;
+    test_project(&pool).await;
 
     async fn node_updated(pool: &PgPool, node_id: i64) -> OffsetDateTime {
         sqlx::query_scalar("SELECT updated FROM node WHERE id = $1")

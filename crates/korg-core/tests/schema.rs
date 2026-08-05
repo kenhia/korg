@@ -82,6 +82,14 @@ async fn schema_applies_cleanly() {
     }
 
     // The replacement kinds are accepted and the obsolete slot kind is not.
+    // Every insert carries a project because 0022 requires one on
+    // `sprint_proposal`; the other kinds are indifferent to it, and this test
+    // is about the kind vocabulary, not about routing.
+    let project: i64 =
+        sqlx::query_scalar("INSERT INTO project (name) VALUES ('kinds') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .expect("seed a project");
     for kind in [
         "workitem",
         "card",
@@ -91,12 +99,22 @@ async fn schema_applies_cleanly() {
         "topic",
         "daily_plan_item",
     ] {
-        sqlx::query("INSERT INTO node (kind) VALUES ($1)")
+        sqlx::query("INSERT INTO node (kind, project_id) VALUES ($1, $2)")
             .bind(kind)
+            .bind(project)
             .execute(&pool)
             .await
             .unwrap_or_else(|e| panic!("kind `{kind}` should be accepted: {e}"));
     }
+    // …and the new constraint is real: a proposal node with no project is
+    // refused at the database, not only by core (0022 §2).
+    assert!(
+        sqlx::query("INSERT INTO node (kind) VALUES ('sprint_proposal')")
+            .execute(&pool)
+            .await
+            .is_err(),
+        "a sprint_proposal node must carry a project (#967)"
+    );
     assert!(
         sqlx::query("INSERT INTO node (kind) VALUES ('slot')")
             .execute(&pool)

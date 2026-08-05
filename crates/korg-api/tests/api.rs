@@ -4,7 +4,7 @@ use serde_json::json;
 
 use axum::http::StatusCode;
 mod common;
-use common::{app, req};
+use common::{app, req, PROJECT};
 
 #[tokio::test]
 async fn api_end_to_end() {
@@ -379,7 +379,7 @@ async fn proposals_end_to_end() {
         &router,
         "POST",
         "/api/proposals",
-        Some(json!({
+        Some(json!({"project":PROJECT,
             "title":"Sprint: fix things",
             "summary":"bundle of small fixes",
             "work_item_numbers":[wi_number, 9999],

@@ -6,7 +6,7 @@
 //! shows up in `get_work_item` / `get_proposal`'s LB-3 `related` block, titled,
 //! with truncation exact past the cap. No handoff-specific read field exists.
 
-use korg_test_support::{fresh_korg, new};
+use korg_test_support::{fresh_korg, new, test_project};
 use serde_json::{json, Value};
 
 mod common;
@@ -114,6 +114,7 @@ async fn create_rejections_carry_the_right_code() {
 #[tokio::test]
 async fn owner_reads_surface_the_handoff() {
     let (_pg, pool) = fresh_korg().await;
+    test_project(&pool).await;
     let wi = korg_core::repo::create_work_item(&pool, new::work_item("has handoff"))
         .await
         .unwrap();
