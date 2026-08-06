@@ -606,3 +606,35 @@ async fn focused_reads_inline_related_context() {
     );
     assert_eq!(pd.covered.len(), 1, "covers still reported via `covered`");
 }
+
+/// korg #1002 (kfdc sprint 003): mined proposal collisions ("same contract",
+/// "folds with whichever lands second") get their own undirected label —
+/// `related-to` is too vacuous to drive kfdc's Deconfliction panel. Any→any,
+/// cross-project legal, and undirected, so the reverse relate dedups.
+#[tokio::test]
+async fn collides_with_is_registered_undirected_and_dedups_the_reverse() {
+    let (_c, pool) = fresh_korg().await;
+    let a = create_work_item(&pool, wi("a")).await.unwrap();
+    let b = create_work_item(&pool, wi("b")).await.unwrap();
+
+    let id = relate(
+        &pool,
+        a.node_id,
+        b.node_id,
+        "collides-with",
+        Some("kfdc-curator"),
+        None,
+    )
+    .await
+    .unwrap();
+    let id2 = relate(&pool, b.node_id, a.node_id, "collides-with", None, None)
+        .await
+        .unwrap();
+    assert_eq!(id2, id, "reverse of an undirected edge dedups");
+
+    let spec = relationships::spec("collides-with").unwrap();
+    assert!(!spec.directed, "collides-with is undirected");
+    assert_eq!(spec.left_kind, None, "any kind on the left");
+    assert_eq!(spec.right_kind, None, "any kind on the right");
+    assert!(!spec.same_project, "collisions across projects are legal");
+}

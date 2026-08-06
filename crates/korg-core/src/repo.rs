@@ -4507,6 +4507,57 @@ pub struct BoardProposal {
     #[serde(with = "time::serde::rfc3339")]
     #[ts(type = "string")]
     pub updated: OffsetDateTime,
+    /// The curated synopsis (korg #1003): the newest [`CURATOR_MARKER`]-opened
+    /// comment on this proposal, or `None` when the curator hasn't written one.
+    pub synopsis: Option<BoardSynopsis>,
+}
+
+/// The curated-synopsis comment convention (korg #1003, kfdc sprint 003).
+///
+/// A comment whose body **starts with** this marker is a machine-curated
+/// synopsis of the node it sits on — one per node, updated in place by the
+/// curator (never appended per pass), with a `mined from:` provenance trailer.
+/// The board surfaces the newest such comment per live proposal as
+/// [`BoardProposal::synopsis`]; unmarked comments never ride the board.
+pub const CURATOR_MARKER: &str = "⟦curator⟧";
+
+/// A curated synopsis — the newest [`CURATOR_MARKER`]-opened comment on a live
+/// board proposal. `body` is verbatim (marker and trailer included: the writer's
+/// convention is the reader's to render), `updated` is the comment's own stamp,
+/// so a consumer can say how fresh the curation is.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct BoardSynopsis {
+    pub body: String,
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub updated: OffsetDateTime,
+}
+
+/// An edge between two live board proposals — Deconfliction's substrate
+/// (korg #1003). Only edges whose **both** endpoints are `active`/`queue` rows
+/// ride the board: an edge to a done/declined/archived proposal is history,
+/// not a collision, and slice-only rows fetched for Operations don't smuggle
+/// theirs in.
+///
+/// This is the first read surface for D-17's write-side edge provenance:
+/// `origin` (self-reported, unverified — "kfdc-curator" vs "web" is how curated
+/// edges stay distinguishable from human ones) and `created` (Postgres's
+/// clock, insert-time).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct BoardProposalEdge {
+    /// The edge's stored left endpoint; the label reads left → right.
+    pub left: i64,
+    pub right: i64,
+    pub label: String,
+    /// From the registry: when `false` the orientation is storage accident and
+    /// the edge must be read symmetrically.
+    pub directed: bool,
+    pub origin: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub created: OffsetDateTime,
 }
 
 /// A program with its slices inlined — the Operations panel in one value.
@@ -4554,6 +4605,10 @@ pub struct BoardRollup {
     /// What the live-and-unarchived default hid across `active` + `queue` —
     /// the same envelope, meaning the same thing, as `list_proposals`.
     pub proposals_omitted: ProposalOmitted,
+    /// Deconfliction: every edge whose both endpoints are `active`/`queue`
+    /// rows, with label, registry `directed`, and D-17 provenance. See
+    /// [`BoardProposalEdge`].
+    pub proposal_edges: Vec<BoardProposalEdge>,
     /// Operations: live programs with their ordered slices.
     pub programs: Vec<BoardProgram>,
     pub programs_omitted: ProgramOmitted,
@@ -4593,7 +4648,7 @@ struct BoardProposalRow {
 }
 
 impl BoardProposalRow {
-    fn into_proposal(self) -> BoardProposal {
+    fn into_proposal(self, synopsis: Option<BoardSynopsis>) -> BoardProposal {
         BoardProposal {
             node_id: self.node_id,
             title: self.title,
@@ -4609,6 +4664,7 @@ impl BoardProposalRow {
             done: self.done,
             closed: self.closed,
             updated: self.updated,
+            synopsis,
         }
     }
 
@@ -4733,6 +4789,53 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
         })
         .collect();
 
+    // The curated layer (korg #1003) keys off the *board* rows — live status
+    // and unarchived — not the fetched set, so a slice-only row contributes
+    // neither edges nor a synopsis.
+    let live_ids: Vec<i64> = rows
+        .iter()
+        .filter(|r| !r.archived && matches!(r.status.as_str(), "active" | "proposed"))
+        .map(|r| r.node_id)
+        .collect();
+
+    let proposal_edges = sqlx::query_as::<_, (i64, i64, String, Option<String>, OffsetDateTime)>(
+        "SELECT r.left_id, r.right_id, r.relationship, r.origin, r.created \
+           FROM relationship r \
+          WHERE r.left_id = ANY($1) AND r.right_id = ANY($1) \
+          ORDER BY r.id ASC",
+    )
+    .bind(&live_ids)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|(left, right, label, origin, created)| BoardProposalEdge {
+        directed: relationships::direction_is_meaningful(&label),
+        left,
+        right,
+        label,
+        origin,
+        created,
+    })
+    .collect();
+
+    // Newest marker-opened comment per live row. `updated` orders because the
+    // curator edits its one comment in place (CURATOR_MARKER's contract), so
+    // insertion order goes stale the first time a synopsis is refreshed.
+    let mut synopses: std::collections::HashMap<i64, BoardSynopsis> =
+        sqlx::query_as::<_, (i64, String, OffsetDateTime)>(
+            "SELECT DISTINCT ON (cm.node_id) cm.node_id, cm.body, cm.updated \
+               FROM comment cm \
+              WHERE cm.node_id = ANY($1) AND cm.body LIKE $2 \
+              ORDER BY cm.node_id, cm.updated DESC",
+        )
+        .bind(&live_ids)
+        .bind(format!("{CURATOR_MARKER}%"))
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|(node_id, body, updated)| (node_id, BoardSynopsis { body, updated }))
+        .collect();
+
     // A slice-only row is not part of the queue: it was fetched for Operations,
     // and its own status (or its archived flag) is what decides.
     let (mut active, mut queue) = (Vec::new(), Vec::new());
@@ -4740,9 +4843,10 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
         if row.archived {
             continue;
         }
+        let synopsis = synopses.remove(&row.node_id);
         match row.status.as_str() {
-            "active" => active.push(row.into_proposal()),
-            "proposed" => queue.push(row.into_proposal()),
+            "active" => active.push(row.into_proposal(synopsis)),
+            "proposed" => queue.push(row.into_proposal(synopsis)),
             _ => {}
         }
     }
@@ -4753,6 +4857,7 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
         queue,
         proposals_omitted: proposal_omitted(pool, None, archived_default(), Some(&live_statuses))
             .await?,
+        proposal_edges,
         programs,
         programs_omitted,
         awaiting: list_awaiting(pool).await?,

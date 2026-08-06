@@ -40,7 +40,7 @@ pub struct LabelSpec {
 
 /// Labels korg itself writes or interprets. Free-form labels stay legal —
 /// [`spec`] returns `None` for them and their direction is caller-defined.
-pub const REGISTRY: [LabelSpec; 6] = [
+pub const REGISTRY: [LabelSpec; 7] = [
     LabelSpec {
         label: "covers",
         directed: true,
@@ -108,6 +108,24 @@ pub const REGISTRY: [LabelSpec; 6] = [
         same_project: false,
         reads: "program includes proposal as a slice",
     },
+    LabelSpec {
+        // korg #1002 (kfdc sprint 003): the kfdc curator records mined
+        // collisions between proposals — "same contract", "folds with
+        // whichever lands second" — and `related-to` is too vacuous to drive a
+        // Deconfliction card: a collision must be distinguishable from generic
+        // relatedness without reading prose. A collision has no inherent
+        // orientation, so undirected like `related-to`; any→any because the
+        // colliding surfaces are not always two proposals (a proposal can
+        // collide with a standalone WI), and cross-project because two repos
+        // rewriting one published contract is exactly the case the panel
+        // exists to surface.
+        label: "collides-with",
+        directed: false,
+        left_kind: None,
+        right_kind: None,
+        same_project: false,
+        reads: "the two nodes collide (same contract / fold on landing; no direction)",
+    },
 ];
 
 /// The registry entry for `label`, or `None` if it is a free-form label.
@@ -146,6 +164,10 @@ mod tests {
             spec("includes").unwrap().right_kind,
             Some("sprint_proposal")
         );
+        // collides-with (korg #1002): undirected like related-to, any→any.
+        assert!(!spec("collides-with").unwrap().directed);
+        assert_eq!(spec("collides-with").unwrap().left_kind, None);
+        assert_eq!(spec("collides-with").unwrap().right_kind, None);
     }
 
     /// The one that would quietly undo sprint 043 if it were ever "tidied up".
