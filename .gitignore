@@ -4,6 +4,9 @@
 *.dump
 .env
 .korg-sprint-proposal
+# The real runtime env for the kubsdb container. It holds the DB password and
+# lives only on that host (mode 0600); deploy/korg.env.example is the template.
+deploy/korg.env
 # Playwright writes here if it is ever run from the repo root instead of web/.
 /test-results
 /playwright-report

@@ -1,0 +1,58 @@
+---
+# korg — the deployed run configuration.
+#
+# THIS FILE IS THE SOURCE OF TRUTH for how the korg container runs. It is
+# copied verbatim to /datastore/korg/docker-compose.yml on kubsdb by the
+# `deploy-kubsdb` skill, and `docker compose up -d` from that directory is
+# what creates the container.
+#
+# Before WI #842 the run config existed only as a prose table in
+# .claude/skills/deploy-kubsdb/SKILL.md, applied by a hand-rolled `docker run`.
+# That left every deploy unreviewable — a changed port binding or a dropped env
+# var produced no diff anywhere — and it left the container with no
+# com.docker.compose.* labels, which a later audit correctly read as "not
+# started by compose" and incorrectly read as "no compose file exists".
+#
+# So: if you change how korg runs, change it HERE.
+
+services:
+  korg:
+    # Overridable so a rollback is still one command:
+    #   KORG_IMAGE=korg:<short-sha> docker compose up -d
+    image: ${KORG_IMAGE:-korg:latest}
+    container_name: korg
+
+    # Loopback is what `tailscale serve` proxies to; the LAN address serves
+    # kwork and anything off-tailnet.
+    #
+    # NOT 0.0.0.0 — that overlaps tailscaled's own listener on kubsdb's tailnet
+    # address, so `up` fails with "address already in use" whenever tailscaled
+    # got there first, and the half-created container is left with no network
+    # attached, crash-looping on name resolution for `postgresql`. A
+    # docker-compose.yml.bak-20260717 making exactly this mistake sat beside the
+    # live one on kubsdb until sprint 047 removed it.
+    ports:
+      - "127.0.0.1:5674:5674"
+      - "192.168.1.60:5674:5674"
+
+    # DATABASE_URL and KORG_TIMEZONE only. Resolved relative to this file, so it
+    # is /datastore/korg/korg.env once deployed — mode 0600, never in this repo
+    # (deploy/korg.env is gitignored). See korg.env.example.
+    #
+    # KORG_WEB_DIR and KORG_LISTEN_ADDR are deliberately absent: the image sets
+    # them via Dockerfile ENV, and duplicating them here would create a second
+    # place for them to drift.
+    env_file:
+      - korg.env
+
+    networks:
+      - kubsdb-net
+    restart: unless-stopped
+
+networks:
+  # Created by k-homelab's docker-host recipe. korg does not own it and must not
+  # create it — an accidentally compose-created kubsdb-net would be a second
+  # network of the same name in a different project, and postgresql would not be
+  # on it.
+  kubsdb-net:
+    external: true
