@@ -30,25 +30,29 @@ deploy; it is the thing this skill exists to prevent.
 MCP on `:5674`. User-facing access is over Tailscale at
 `https://kubsdb.encke-wahoo.ts.net:5674/` (HTTPS — a secure context, so the
 browser clipboard API works there); deploy verification below uses the tailnet
-HTTPS `https://kubsdb.encke-wahoo.ts.net:5674` from the build host. Preserve this run config on
-redeploy:
+HTTPS `https://kubsdb.encke-wahoo.ts.net:5674` from the build host.
 
-| Setting | Value |
-|---------|-------|
-| network | `kubsdb-net` |
-| ports   | `127.0.0.1:5674 -> 5674` **and** `192.168.1.60:5674 -> 5674` (see the warning below — do **not** use `0.0.0.0:5674`) |
-| restart | `unless-stopped` |
-| env     | `DATABASE_URL=postgres://korg:…@postgresql:5432/korg`, `KORG_TIMEZONE=America/Los_Angeles`, `KORG_WEB_DIR=/app/web/build`, `KORG_LISTEN_ADDR=0.0.0.0:5674` |
-| mounts  | none |
+**The run config is not in this file.** It lives in
+[`deploy/docker-compose.yml`](../../../deploy/docker-compose.yml) — network,
+both port publications, restart policy, the env file — and that is the only
+place to change it (WI #842). This skill copies that file to
+`/datastore/korg/docker-compose.yml` and brings the container up from it. It
+deliberately does not restate what the file already says: a second copy of a run
+config is a second thing to drift, and the prose table that used to live here
+was exactly that.
 
-`KORG_TIMEZONE` is **required** — `korg-core`'s config rejects a missing or
-invalid value at startup, so a *first* deploy onto a host without it crash-loops
-immediately. Step 3 below carries the existing env forward, so a redeploy
-inherits it; it is listed here for the case where there is no previous container
-to inherit from.
+Two things the compose file cannot carry:
 
-**Never hand-copy the DB password.** Step 3 reuses the env from the running
-container via `docker inspect`, so the secret never leaves kubsdb.
+- **`/datastore/korg/korg.env`** (mode 0600) holds `DATABASE_URL` and
+  `KORG_TIMEZONE`. It is not in this repo and never will be, and a redeploy does
+  not touch it — which is how the password stays on kubsdb without anyone
+  hand-copying it. If it is *missing* (a rebuilt host), you are in the **cold
+  start** case, which this skill does not cover: see
+  [docs/operations.md](../../../docs/operations.md#cold-start) and
+  `deploy/cold-start.sh`.
+- **`KORG_TIMEZONE` is required** — `korg-core`'s config rejects a missing or
+  invalid value at startup rather than guessing a zone, so a first deploy onto a
+  host with no `korg.env` crash-loops immediately.
 
 **Do not publish on `0.0.0.0:5674`.** `tailscale serve` terminates TLS on
 kubsdb's tailnet address (`100.90.99.84:5674` + the IPv6 tailnet address) and
@@ -124,16 +128,29 @@ and re-run step 3 — `docker start` cannot repair the missing network.
    the build host alone, so the previous image on kubsdb became `<none>` the
    moment `latest` moved — quietly removing the named rollback target the
    Rollback section below depends on (WI #584).
-3. **Recreate** the container, reusing the existing env (piped through bash):
+3. **Deploy** — ship the run config, then bring the container up from it:
    ```bash
+   ssh kubsdb 'mkdir -p /datastore/korg'
+   scp deploy/docker-compose.yml kubsdb:/datastore/korg/docker-compose.yml
    ssh kubsdb bash -s <<'EOF'
-     ENV=$(docker inspect korg --format '{{range .Config.Env}}-e {{.}} {{end}}')
-     docker rm -f korg
-     docker run -d --name korg --network kubsdb-net \
-       -p 127.0.0.1:5674:5674 -p 192.168.1.60:5674:5674 \
-       --restart unless-stopped $ENV korg:latest
+     cd /datastore/korg
+     # One-time cutover: a container created before WI #842 came from `docker
+     # run` and carries no com.docker.compose.* labels, so compose will not
+     # adopt it and fails with "container name /korg is already in use". Remove
+     # it once. The guard is self-limiting — after the first compose deploy the
+     # label is present and this branch never runs again.
+     if [ -n "$(docker ps -aq -f name='^korg$')" ] && \
+        [ -z "$(docker inspect korg --format '{{index .Config.Labels "com.docker.compose.project"}}')" ]; then
+       echo "removing pre-compose container (one-time)"
+       docker rm -f korg
+     fi
+     docker compose up -d
    EOF
    ```
+   `korg.env` is untouched by all of this — compose reads it in place. `docker
+   compose up -d` recreates the container because `docker load` moved
+   `korg:latest` to a new image id; if it reports `up-to-date`, step 2 did not
+   land and you are about to verify last week's build.
 4. **Verify.** Run the fixed check first — reads on both transports, the error
    contract, an idempotent write, and a diff of every row count against the
    baseline from preflight:
@@ -160,9 +177,19 @@ and re-run step 3 — `docker start` cannot repair the missing network.
 
 Old images stay in kubsdb's local store — `docker images korg` lists them, and
 since step 2 now ships the `korg:<short-sha>` tag alongside `latest`, that list
-is readable *on the host that needs it*. To revert, recreate the container from
-the previous image (from preflight step 5) using the same step-3 command with
-that tag in place of `korg:latest`.
+is readable *on the host that needs it*. To revert, override the image the
+compose file defaults to (from preflight step 5):
+
+```bash
+ssh kubsdb bash -s <<'EOF'
+  cd /datastore/korg
+  KORG_IMAGE=korg:<short-sha> docker compose up -d
+EOF
+```
+
+That override is not sticky — the next deploy's plain `docker compose up -d`
+goes back to `korg:latest`, which is what you want, since a rollback is meant to
+be undone by shipping a fix rather than by remembering to unset something.
 
 Before WI #584, only `latest` was shipped, so each previous image went `<none>`
 the moment a new deploy moved the tag — and several sprint notes recorded a

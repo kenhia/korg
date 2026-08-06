@@ -20,6 +20,8 @@ needs in an emergency is written down here, in the repo, next to the code.
 | User-facing URL | `https://kubsdb.encke-wahoo.ts.net:5674/` over Tailscale |
 | Database | Postgres in the `postgresql` container on the same host, database `korg` |
 | Image | built locally and shipped over SSH; there is no registry |
+| Run config | [`deploy/docker-compose.yml`](../deploy/docker-compose.yml), copied to `/datastore/korg/docker-compose.yml` at deploy time — the one declaration of network, ports, restart policy and env file |
+| Credential | korg authenticates as the **non-superuser role `korg`**. The container reads `/datastore/korg/korg.env` (mode 0600); the recoverable copy is k-homelab's age store, `kubsdb-korg-db-password`. See [Cold start](#cold-start) |
 
 One process serves the web UI, the REST API and the MCP endpoint. Deploying is
 therefore all-or-nothing — there is no way to ship a UI change without shipping
@@ -133,6 +135,71 @@ to be clean at deploy time because the last three `inactive` rows had just been
 archived by hand — but any database restored from a dump predating that would
 have failed the migration and crash-looped the container at startup. If you ever
 restore an old dump and roll forward, this is why it now just works.
+
+## Cold start
+
+Everything above assumes a running container and a populated `/datastore/korg/`.
+After a kubsdb rebuild there is neither, and three things must exist before
+`docker compose up -d` can work:
+
+| | |
+|---|---|
+| the `korg` **role** | `pg_dump` of a database carries no `CREATE ROLE` — roles are cluster-level, and only `pg_dumpall --roles-only` would carry them. Restoring last night's dump therefore does **not** recreate the role korg authenticates as, and every `GRANT`/`ALTER … OWNER` in the dump fails without it. |
+| the `korg` **database** | Created empty; korg applies its migrations at startup. If you are restoring a dump, create it here and restore *before* starting the container. |
+| `/datastore/korg/korg.env` | Mode 0600, holding `DATABASE_URL` and `KORG_TIMEZONE`. |
+
+[`deploy/cold-start.sh`](../deploy/cold-start.sh) does all three, idempotently.
+It is the **only** korg procedure that reads the password out of k-homelab's age
+store — a routine deploy never moves the value off kubsdb.
+
+```bash
+ssh kubsdb 'mkdir -p /datastore/korg'
+scp deploy/docker-compose.yml deploy/cold-start.sh kubsdb:/datastore/korg/
+
+# The password travels over the pipe and nowhere else: not argv (visible in
+# `ps`), not the environment (visible in /proc), not a file, not shell history.
+ssh kubs0 'cd ~/k-homelab && bin/secret get kubsdb-korg-db-password' \
+  | ssh kubsdb 'bash /datastore/korg/cold-start.sh'
+
+ssh kubsdb 'cd /datastore/korg && docker compose up -d'
+```
+
+The k-homelab checkout lives on **kubs0**, which is why the first half of that
+pipeline runs there. `bin/secret` decrypts with the local machine's own SSH key
+— there is no passphrase to supply.
+
+The script prints two truncated sha256 fingerprints and never the value, which is
+enough to confirm the deployed credential matches the store without putting the
+password in your scrollback or an agent transcript:
+
+```bash
+ssh kubs0 "cd ~/k-homelab && bin/secret get kubsdb-korg-db-password" \
+  | tr -d '\n' | sha256sum | cut -c1-12
+```
+
+It also **logs in as the role** before reporting success. That check is doing
+real work only because it connects through the `postgresql` container's network
+name rather than loopback: kubsdb's `pg_hba.conf` trusts `127.0.0.1/32`
+unconditionally, so a loopback check would succeed against any password at all.
+Storing a credential and having a working one are different claims — the homelab
+paid for that lesson once already.
+
+**If the store has no value** — a genuinely fresh cluster, or a lost store —
+generate one, run `cold-start.sh` with it, and write it back with `bin/secret set
+kubsdb-korg-db-password` in the same sitting. A store that silently disagrees
+with the cluster is worse than an empty one: it looks like a working backstop
+and is not.
+
+### What cold start does not do
+
+It does not restore data. On a rebuilt host that lost `/datastore`, run it to put
+the role and database in place, restore the newest dump from
+`/gratch/backups/korg/` per [Restore](#restore), and *then* start the container
+— korg's migrations will happily establish a schema against an empty database,
+which is not what you want immediately before overwriting it.
+
+The cluster-level half of this also belongs to k-homelab, because kubsdb's DR
+runbook does: see that repo's `dr/kubsdb.md` step 8, and k-homelab #1005.
 
 ## Backups
 
