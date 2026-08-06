@@ -5,17 +5,19 @@ description: Build the korg image from a clean working tree and deploy it to the
 
 # Deploy korg to kubsdb
 
-Builds `korg:latest` locally from **committed code**, stamps it with the commit
-it was built from, and deploys it to `kubsdb` over SSH. There is no image
-registry.
+Builds the korg image locally from **committed code**, stamps it with the commit
+it was built from, pushes it to the homelab docker registry, and brings kubsdb
+up on it.
 
 ## Deploys are clean-tree only
 
 **Refuse to deploy from a dirty working tree.** The Dockerfile compiles the
 SvelteKit bundle and the Rust release binary from source, so whatever is in the
 tree ships — and if that includes uncommitted work, nothing on earth records
-what is actually running. `docker inspect` would say `korg:latest`, git would
-say something else, and the difference is invisible until it bites.
+what is actually running. `docker inspect` would name a `latest` tag, git would
+say something else, and the difference is invisible until it bites — and now
+that images are published, a dirty build does not just mislead this host, it
+puts an unattributable artefact in the registry's permanent history.
 
 So (decision D-9): production only ever receives builds of committed code, and
 every image carries its commit SHA as a label.
@@ -69,6 +71,35 @@ and re-run step 3 — `docker start` cannot repair the missing network.
 `ssh kubsdb bash -s` (a bare `ssh kubsdb '…'` runs under fish and mis-parses
 `$()` / `{{…}}`).
 
+## The registry
+
+Images travel through the homelab docker registry —
+`kubsdb.encke-wahoo.ts.net:5000`, a `registry:2` container whose blobs live in
+the backed-up `/datastore/packages` tree (k-homelab sprint 020, korg #1011).
+kai pushes, kubsdb pulls. This replaced `docker save | ssh kubsdb docker load`,
+which worked but left no history anywhere except kubsdb's local image store.
+
+- **TLS comes from `tailscale serve`**, so there is nothing to configure: no
+  `insecure-registries` entry, no certificate to distribute, no login. If a
+  push ever fails on TLS, the answer is tailscaled on kubsdb, not a daemon
+  flag.
+- **Use the tailnet name on both ends.** kubsdb pulls from
+  `kubsdb.encke-wahoo.ts.net:5000` — itself, over the tailnet — rather than
+  `localhost:5000`, because the image reference is baked into the compose file
+  and has to name the same thing on the host that pushes and the host that
+  pulls. The cost is that a deploy needs tailscaled up on kubsdb even though
+  the registry is running locally on it.
+- **Always push both tags** — `korg:<short-sha>` *and* `korg:latest`. `latest`
+  alone would recreate the no-history status quo the registry exists to fix;
+  the SHA tag is what [Rollback](#rollback) reverts to, and unlike the old
+  local-image-store history it survives kubsdb pruning its images and is
+  mirrored to the NAS nightly with the rest of `/datastore/packages`.
+
+The tag is the 12-character git short SHA, matching the
+`org.opencontainers.image.revision` label. korg's crate versions are a flat
+`0.1.0` and are not maintained per release, so a semver tag would collide on
+every build and name nothing — the commit is korg's real version.
+
 ## Preflight
 
 1. **Clean tree — stop here if it is not.**
@@ -81,6 +112,16 @@ and re-run step 3 — `docker start` cannot repair the missing network.
    exact failure this check exists for.
 
 2. `ssh -o ConnectTimeout=5 kubsdb hostname` — confirm reachability.
+
+   Confirm the registry answers too, since a deploy now goes through it and a
+   multi-minute build is a bad time to find out it does not:
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 \
+     https://kubsdb.encke-wahoo.ts.net:5000/v2/
+   ```
+   `200` is the healthy answer. Anything else is the registry container or
+   tailscaled on kubsdb — check `ssh kubsdb 'docker ps --filter name=registry'`
+   before building.
 
 3. **Backups current?** A deploy applies pending schema migrations
    automatically, and last night's dump is the only thing that makes a bad one
@@ -99,6 +140,11 @@ and re-run step 3 — `docker start` cannot repair the missing network.
    ```bash
    ssh kubsdb 'docker inspect korg --format "{{.Image}} {{index .Config.Labels \"org.opencontainers.image.revision\"}}"'
    ```
+   Confirm that revision is actually in the registry — that is what Rollback
+   pulls, and a target you never pushed is not a target:
+   ```bash
+   curl -s --max-time 10 https://kubsdb.encke-wahoo.ts.net:5000/v2/korg/tags/list
+   ```
 
 6. **Capture the baseline** the post-deploy check will diff against:
    ```bash
@@ -108,31 +154,40 @@ and re-run step 3 — `docker start` cannot repair the missing network.
 ## Procedure
 
 1. **Build** (from repo root; the Rust release stage takes a few minutes — run
-   it in the background and poll the log). The label is what makes a running
-   container answerable about which commit it is:
+   it in the background and poll the log). Tag with the registry-qualified name
+   directly, so there is no separate `docker tag` step to forget. The label is
+   what makes a running container answerable about which commit it is:
    ```bash
+   REG=kubsdb.encke-wahoo.ts.net:5000
    REV=$(git rev-parse HEAD)
-   docker build -t korg:latest -t "korg:${REV:0:12}" \
+   docker build -t "$REG/korg:latest" -t "$REG/korg:${REV:0:12}" \
      --label "org.opencontainers.image.revision=$REV" .
    ```
-   The second tag means the previous image keeps a meaningful name after
-   `korg:latest` moves, so `docker images korg` reads as a deploy history
-   instead of a list of `<none>`.
-2. **Ship** over SSH (no registry — save the image and load it remotely). Send
-   **both** refs: `docker save` accepts several and the archive is
-   content-addressed, so the SHA tag costs nothing extra to transfer.
+   The SHA tag is the one that lasts: after `latest` moves, it is the only name
+   the previous build still answers to.
+2. **Push** both refs. They share every layer, so the SHA tag costs one small
+   manifest on top of `latest`:
    ```bash
-   docker save korg:latest "korg:${REV:0:12}" | ssh kubsdb 'docker load'
+   docker push "$REG/korg:${REV:0:12}"
+   docker push "$REG/korg:latest"
    ```
-   Shipping only `korg:latest` (what this step used to do) left the SHA tag on
-   the build host alone, so the previous image on kubsdb became `<none>` the
-   moment `latest` moved — quietly removing the named rollback target the
-   Rollback section below depends on (WI #584).
-3. **Deploy** — ship the run config, then bring the container up from it:
+   Push the SHA **first**. If the second push fails, the registry holds a
+   complete, named build and `latest` still points at the last good one — the
+   safe half-state. The reverse order leaves `latest` pointing at a build with
+   no durable name.
+
+   This replaced `docker save … | ssh kubsdb 'docker load'`. That path had to
+   ship both refs by hand for the same reason (WI #584: shipping only `latest`
+   left the previous image on kubsdb as `<none>`, quietly deleting the rollback
+   target). The registry makes the history durable rather than a property of
+   one host's image store.
+3. **Deploy** — ship the run config, pull, then bring the container up:
    ```bash
    ssh kubsdb 'mkdir -p /datastore/korg'
    scp deploy/docker-compose.yml kubsdb:/datastore/korg/docker-compose.yml
-   ssh kubsdb bash -s <<'EOF'
+   ssh kubsdb bash -s "$REV" <<'EOF'
+     set -euo pipefail
+     expected="$1"
      cd /datastore/korg
      # One-time cutover: a container created before WI #842 came from `docker
      # run` and carries no com.docker.compose.* labels, so compose will not
@@ -144,13 +199,38 @@ and re-run step 3 — `docker start` cannot repair the missing network.
        echo "removing pre-compose container (one-time)"
        docker rm -f korg
      fi
+     docker compose pull
      docker compose up -d
+
+     # The gate that makes the pull trustworthy — see below.
+     actual=$(docker inspect korg \
+       --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+     if [ "$actual" != "$expected" ]; then
+       echo "REVISION MISMATCH: running $actual, built $expected" >&2
+       exit 1
+     fi
+     echo "running revision $actual"
    EOF
    ```
-   `korg.env` is untouched by all of this — compose reads it in place. `docker
-   compose up -d` recreates the container because `docker load` moved
-   `korg:latest` to a new image id; if it reports `up-to-date`, step 2 did not
-   land and you are about to verify last week's build.
+   `korg.env` is untouched by all of this — compose reads it in place.
+
+   **`docker compose pull` is required, and it does not report whether it did
+   anything.** Compose will not re-fetch an image it already has cached under
+   that name, so omitting the pull would leave `up -d` re-running whatever
+   `latest` kubsdb fetched last time — and unlike the old `docker save`
+   transfer, there is no visible shipping step whose absence you would notice.
+   But `compose pull` prints `Pulling` / `Pulled` identically whether it
+   downloaded a new image or matched a cached one, so **its output is not
+   evidence**: do not read success into it.
+
+   That is why the revision assertion above is part of the deploy rather than
+   an afterthought in Verify. It compares the running container's commit label
+   against the commit this run built, and fails the deploy if they differ —
+   which is the one check that catches a pull that silently did nothing, a
+   `latest` that never moved, and a compose `up` that adopted an existing
+   container, without depending on any command's phrasing. `set -euo pipefail`
+   is doing real work here too: a failed `compose pull` must not fall through
+   to `up -d`.
 4. **Verify.** Run the fixed check first — reads on both transports, the error
    contract, an idempotent write, and a diff of every row count against the
    baseline from preflight:
@@ -161,7 +241,9 @@ and re-run step 3 — `docker start` cannot repair the missing network.
    not disappear on their own. A count going *up* is normal — humans and agents
    add rows while an image builds — but it should be explainable.
 
-   Confirm the running container is the commit you built:
+   Step 3 already asserted the running container is the commit you built, so
+   this is where that fact gets recorded rather than re-checked. If you want it
+   by hand anyway — reviewing a deploy someone else ran, say:
    ```bash
    ssh kubsdb 'docker inspect korg --format "{{index .Config.Labels \"org.opencontainers.image.revision\"}}"'
    ```
@@ -175,40 +257,45 @@ and re-run step 3 — `docker start` cannot repair the missing network.
 
 ## Rollback
 
-Old images stay in kubsdb's local store — `docker images korg` lists them, and
-since step 2 now ships the `korg:<short-sha>` tag alongside `latest`, that list
-is readable *on the host that needs it*. To revert, override the image the
-compose file defaults to (from preflight step 5):
+**The registry is the rollback history.** Every build korg has deployed since
+the cutover is a named tag there, whether or not kubsdb still has it cached:
+
+```bash
+curl -s https://kubsdb.encke-wahoo.ts.net:5000/v2/korg/tags/list
+```
+
+To revert, override the image the compose file defaults to, using a tag from
+that list (or the revision noted in preflight step 5):
 
 ```bash
 ssh kubsdb bash -s <<'EOF'
   cd /datastore/korg
-  KORG_IMAGE=korg:<short-sha> docker compose up -d
+  export KORG_IMAGE=kubsdb.encke-wahoo.ts.net:5000/korg:<short-sha>
+  docker compose pull
+  docker compose up -d
 EOF
 ```
+
+`compose pull` matters here too: the point of rolling back to a registry tag is
+that it works even when the old image is *not* in kubsdb's local store, which
+is exactly the case pruning or a host rebuild leaves you in.
 
 That override is not sticky — the next deploy's plain `docker compose up -d`
-goes back to `korg:latest`, which is what you want, since a rollback is meant to
-be undone by shipping a fix rather than by remembering to unset something.
+goes back to `latest`, which is what you want, since a rollback is meant to be
+undone by shipping a fix rather than by remembering to unset something.
 
-Before WI #584, only `latest` was shipped, so each previous image went `<none>`
-the moment a new deploy moved the tag — and several sprint notes recorded a
-`korg:<sha>` rollback target that did not exist on kubsdb. The images themselves
-survived as dangling layers, so the names were recoverable from the label each
-one carries; sprint 027 restored them with:
+This used to depend on kubsdb's local image store, which made it fragile in a
+way worth remembering: before WI #584 only `latest` was shipped, so each
+previous image went `<none>` the moment a deploy moved the tag, and several
+sprint notes recorded a `korg:<sha>` rollback target that did not exist on the
+host. Sprint 027 recovered those names from each image's revision label. The
+registry removes the failure mode rather than mitigating it — the tags live off
+the host, and `/datastore/packages` is mirrored to the NAS nightly.
 
-```bash
-ssh kubsdb bash -s <<'EOF'
-for id in $(docker images -aq --filter "dangling=true") $(docker images -q korg); do
-  rev=$(docker inspect "$id" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null)
-  case "$rev" in ""|"<no value>") continue ;; esac
-  docker image inspect "korg:${rev:0:12}" >/dev/null 2>&1 || docker tag "$id" "korg:${rev:0:12}"
-done
-EOF
-```
-
-Worth knowing if an old target is ever missing again — the revision label makes
-an untagged image self-identifying.
+Pre-cutover images remain on kubsdb under their unqualified `korg:<short-sha>`
+names and still work as `KORG_IMAGE` values. They are not in the registry —
+only builds pushed since the cutover are — so for anything older than sprint
+048 check `ssh kubsdb 'docker images korg'` rather than the tags list.
 
 Rollback is image-only. It does **not** undo a schema migration — korg applies
 those automatically at startup. Going back across a migration boundary needs a

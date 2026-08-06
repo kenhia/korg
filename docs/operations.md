@@ -19,7 +19,7 @@ needs in an emergency is written down here, in the repo, next to the code.
 | Port | `5674`, published on `127.0.0.1` and `192.168.1.60` (**not** `0.0.0.0` — `tailscale serve` owns the tailnet listener) |
 | User-facing URL | `https://kubsdb.encke-wahoo.ts.net:5674/` over Tailscale |
 | Database | Postgres in the `postgresql` container on the same host, database `korg` |
-| Image | built locally and shipped over SSH; there is no registry |
+| Image | built on kai from committed code, pushed to the homelab docker registry `kubsdb.encke-wahoo.ts.net:5000` as `korg:<short-sha>` + `korg:latest`, pulled by kubsdb (korg #1011) |
 | Run config | [`deploy/docker-compose.yml`](../deploy/docker-compose.yml), copied to `/datastore/korg/docker-compose.yml` at deploy time — the one declaration of network, ports, restart policy and env file |
 | Credential | korg authenticates as the **non-superuser role `korg`**. The container reads `/datastore/korg/korg.env` (mode 0600); the recoverable copy is k-homelab's age store, `kubsdb-korg-db-password`. See [Cold start](#cold-start) |
 
@@ -55,11 +55,27 @@ prefer it for an investigation rather than as a standing setting.
 
 ### Rollback
 
-Old images stay in kubsdb's local store — `docker images korg` lists them.
-Recreate the container from a previous image id using the same `docker run` the
-deploy skill uses. Rollback is image-only: it does **not** undo a schema
-migration, and korg's migrations run automatically at startup. Rolling back
-across a migration boundary needs a restore (below), not a re-tag.
+Every build deployed since sprint 048 is a named tag in the registry, which is
+where rollback targets come from:
+
+```bash
+curl -s https://kubsdb.encke-wahoo.ts.net:5000/v2/korg/tags/list
+
+ssh kubsdb bash -s <<'EOF'
+  cd /datastore/korg
+  export KORG_IMAGE=kubsdb.encke-wahoo.ts.net:5000/korg:<short-sha>
+  docker compose pull && docker compose up -d
+EOF
+```
+
+The override is not sticky: the next deploy's plain `docker compose up -d`
+returns to `latest`. Images predating the cutover are not in the registry but
+survive in kubsdb's local store under their unqualified `korg:<short-sha>`
+names (`ssh kubsdb 'docker images korg'`), and work as `KORG_IMAGE` values too.
+
+Rollback is image-only: it does **not** undo a schema migration, and korg's
+migrations run automatically at startup. Rolling back across a migration
+boundary needs a restore (below), not a re-tag.
 
 Not every migration is such a boundary, and it is worth knowing which before
 you need to know it. A migration that only **changes data in existing columns**
@@ -161,8 +177,21 @@ scp deploy/docker-compose.yml deploy/cold-start.sh kubsdb:/datastore/korg/
 ssh kubs0 'cd ~/k-homelab && bin/secret get kubsdb-korg-db-password' \
   | ssh kubsdb 'bash /datastore/korg/cold-start.sh'
 
-ssh kubsdb 'cd /datastore/korg && docker compose up -d'
+ssh kubsdb 'cd /datastore/korg && docker compose pull && docker compose up -d'
 ```
+
+The `pull` is what makes this work on a host with no korg image at all. Before
+sprint 048 the image reached kubsdb only as a `docker load` from a kai build,
+so a rebuilt host silently needed a *fourth* thing this section never listed —
+someone to run a deploy first. Pulling a registry-qualified image closes that:
+cold start now needs only the registry, and the registry's blobs are restored
+by k-homelab's own DR before korg's.
+
+That is also the new dependency to know about. korg's deploy needs the
+`registry` container up on kubsdb and tailscaled serving `:5000`; a kubsdb loss
+that takes out `/datastore` takes out both korg and the registry, so k-homelab
+restores the package store first. The blobs live in `/datastore/packages` and
+are mirrored to the NAS nightly with the rest of it.
 
 The k-homelab checkout lives on **kubs0**, which is why the first half of that
 pipeline runs there. `bin/secret` decrypts with the local machine's own SSH key
