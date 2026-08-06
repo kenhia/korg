@@ -194,3 +194,38 @@ in `korg-mcp/tests/server.rs` cover the two items that reach past `web/`.
   could have seen coming. Worth its own item if the pattern repeats a third
   time; not folded in here, because giving it a CI job is a real piece of work
   (bundle, API, database) and not a polish sprint's business.
+
+## Deployed 2026-08-06
+
+- **Image:** `kubsdb.encke-wahoo.ts.net:5000/korg:13cebc7c96c4`
+  (digest `sha256:bde9e2f11699…`), revision
+  `13cebc7c96c46da3077c1a69c35a0df6accad055` — the squash-merge of PR #52.
+- **Rollback target:** `korg:4262e0a08b1a` (sprint 048), confirmed present in
+  the registry before building rather than assumed. No migration in this
+  sprint (`migration_max` 23 before and after), so a re-tag is a complete
+  rollback here — no dump restore needed.
+- **Baseline diff:** every count identical, nothing dropped — cards 30, links
+  4, projects 40, proposals 152, reports 28, topics 1, work items 719, 950
+  nodes. The deploy's revision gate passed, so the running container is
+  provably the commit that was built.
+
+Smoke-tested against what this sprint actually changed, not just `/api/health`:
+
+- **#982 on the node from the bug report.** `GET /api/nodes/979` now answers
+  `kfdc Phase 0 - the board substrate`, with `Span: korg`, `Slices: 4` and a
+  `Notes` body — where it used to answer with the literal string
+  `program #979`. `/programs`, `/programs/979`, `/plan` and `/planning` all
+  200.
+- **#966 with Fable's exact call shape.** `get_work_item {"node_id": 966}`
+  over the live MCP endpoint returns the item (fittingly, the WI that reported
+  the bug, now `resolved`) instead of `missing field wi_number`. Passing both
+  keys returns `isError` with code `invalid_input` and the message that names
+  the identity. `tools/list` advertises both properties with nothing required.
+- **#981's reads.** `/api/awaiting` 200 with 2 live rows, `/api/board` 200 —
+  the lane's inline reply rides on `POST /api/nodes/:id/comments` and
+  `PUT /api/nodes/:id/awaiting`, both already exercised by the post-deploy
+  check's write test.
+
+#980 is display-layer and has no endpoint of its own to probe; its contract
+claim — that nothing was added to `get_board` — is corroborated by `/api/board`
+answering unchanged, and its behaviour is covered by the four e2e specs.
