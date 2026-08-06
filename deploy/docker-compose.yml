@@ -17,9 +17,15 @@
 
 services:
   korg:
-    # Overridable so a rollback is still one command:
-    #   KORG_IMAGE=korg:<short-sha> docker compose up -d
-    image: ${KORG_IMAGE:-korg:latest}
+    # Pulled from the homelab docker registry (k-homelab sprint 020, korg
+    # #1011) — not loaded over SSH. The reference is the tailnet name on both
+    # ends: kai pushes to it and kubsdb pulls from it, and a host-local
+    # `localhost:5000` here would name a different image on the build host.
+    #
+    # Overridable so a rollback is still one command, now against the
+    # registry's history rather than whatever kubsdb happens to have cached:
+    #   KORG_IMAGE=kubsdb.encke-wahoo.ts.net:5000/korg:<short-sha> docker compose up -d
+    image: ${KORG_IMAGE:-kubsdb.encke-wahoo.ts.net:5000/korg:latest}
     container_name: korg
 
     # Loopback is what `tailscale serve` proxies to; the LAN address serves
