@@ -82,7 +82,35 @@ covered_count: number, open: number, resolved: number, done: number, closed: num
  * *last touched*, not last progressed, which is why the board does not
  * build an event feed out of it (D-7).
  */
-updated: string, };
+updated: string, 
+/**
+ * The curated synopsis (korg #1003): the newest [`CURATOR_MARKER`]-opened
+ * comment on this proposal, or `None` when the curator hasn't written one.
+ */
+synopsis: BoardSynopsis | null, };
+
+/**
+ * An edge between two live board proposals — Deconfliction's substrate
+ * (korg #1003). Only edges whose **both** endpoints are `active`/`queue` rows
+ * ride the board: an edge to a done/declined/archived proposal is history,
+ * not a collision, and slice-only rows fetched for Operations don't smuggle
+ * theirs in.
+ *
+ * This is the first read surface for D-17's write-side edge provenance:
+ * `origin` (self-reported, unverified — "kfdc-curator" vs "web" is how curated
+ * edges stay distinguishable from human ones) and `created` (Postgres's
+ * clock, insert-time).
+ */
+export type BoardProposalEdge = { 
+/**
+ * The edge's stored left endpoint; the label reads left → right.
+ */
+left: number, right: number, label: string, 
+/**
+ * From the registry: when `false` the orientation is storage accident and
+ * the edge must be read symmetrically.
+ */
+directed: boolean, origin: string | null, created: string, };
 
 /**
  * Everything a board renders, in one read (WI #970).
@@ -122,6 +150,12 @@ queue: Array<BoardProposal>,
  */
 proposals_omitted: ProposalOmitted, 
 /**
+ * Deconfliction: every edge whose both endpoints are `active`/`queue`
+ * rows, with label, registry `directed`, and D-17 provenance. See
+ * [`BoardProposalEdge`].
+ */
+proposal_edges: Array<BoardProposalEdge>, 
+/**
  * Operations: live programs with their ordered slices.
  */
 programs: Array<BoardProgram>, programs_omitted: ProgramOmitted, 
@@ -140,6 +174,14 @@ depth: Array<PlanningRollupRow>,
  * this is the whole of the board's event story (D-7).
  */
 reports: Array<ReportRow>, };
+
+/**
+ * A curated synopsis — the newest [`CURATOR_MARKER`]-opened comment on a live
+ * board proposal. `body` is verbatim (marker and trailer included: the writer's
+ * convention is the reader's to render), `updated` is the comment's own stamp,
+ * so a consumer can say how fresh the curation is.
+ */
+export type BoardSynopsis = { body: string, updated: string, };
 
 export type CardRow = { node_id: number, status: string, title: string, description: string, rank: string, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
 /**

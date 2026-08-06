@@ -43,5 +43,6 @@ export const RELATIONSHIP_LABELS = [
   { label: "related-to", directed: false, reads: "the two nodes are related (no direction)" },
   { label: "has_handoff", directed: true, reads: "node has handoff" },
   { label: "includes", directed: true, reads: "program includes proposal as a slice" },
+  { label: "collides-with", directed: false, reads: "the two nodes collide (same contract / fold on landing; no direction)" },
 ] as const;
 export type RelationshipLabel = (typeof RELATIONSHIP_LABELS)[number]["label"];

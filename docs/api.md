@@ -465,9 +465,10 @@ above: it is one composite object, not `{items, …}`.
 | Field | What it is |
 |---|---|
 | `generated` | when the board was assembled, from **Postgres's** clock — the same one every timestamp here came from, so `generated - awaiting_since` is a correct age |
-| `active` | proposals in `active`, pinned first then rank — each with `summary` and the work-item rollup `covered_count` + `open`/`resolved`/`done`/`closed` |
+| `active` | proposals in `active`, pinned first then rank — each with `summary`, the work-item rollup `covered_count` + `open`/`resolved`/`done`/`closed`, and `synopsis` (korg #1003): the newest comment opening with the `⟦curator⟧` marker as `{body, updated}`, or `null` |
 | `queue` | proposals in `proposed`, same row type, same order |
 | `proposals_omitted` | `{done, declined, archived}` — the same envelope, meaning the same thing, as `list_proposals` |
+| `proposal_edges` | korg #1003: every edge whose **both** endpoints are `active`/`queue` rows — `{left, right, label, directed, origin, created}`. `directed` comes from the registry (read undirected labels symmetrically); `origin`/`created` are the first read surface for D-17's write-side edge provenance, which is how curated edges (`origin: "kfdc-curator"`) stay distinguishable from human ones |
 | `programs` | live programs, each carrying `slices` exactly as `get_program` returns them |
 | `programs_omitted` | `{done, archived}` |
 | `awaiting` | `list_awaiting`'s lane, unchanged |
@@ -522,16 +523,20 @@ label not in it.
 | `finding` | directed | report **reported** work item | `report` → `workitem` | no |
 | `depends_on` | directed | dependent **depends on** dependency | any → any | no |
 | `related-to` | **undirected** | the two nodes are related | any → any | no |
+| `collides-with` | **undirected** | the two nodes collide (same contract / fold on landing) | any → any | no |
 | `has_handoff` | directed | node **has** handoff | any → `handoff` | no |
 
 **Directed** means the stored orientation carries meaning, so the reverse edge
 is a *different* fact: `A depends_on B` and `B depends_on A` together are a
 cycle, not a duplicate.
 
-**Undirected** (`related-to`) means korg stores whichever order the caller
-happened to pass and readers must ignore it — treat the edge as symmetric.
-There is no canonicalization: two nodes related to each other have one edge in
-some arbitrary orientation.
+**Undirected** (`related-to`, `collides-with`) means korg stores whichever
+order the caller happened to pass and readers must ignore it — treat the edge
+as symmetric. There is no canonicalization: two nodes related to each other
+have one edge in some arbitrary orientation. `collides-with` (korg #1002) is
+the kfdc curator's mined-collision label — "same contract", "fold with
+whichever lands second" — kept distinct from `related-to` so a Deconfliction
+card is distinguishable from generic relatedness without reading prose.
 
 **The vocabulary is closed.** An unregistered label is `invalid_input` whose
 message names the registry and the near-miss (`unknown label 'related'; …; did
@@ -595,9 +600,8 @@ Each edge records **provenance** (LB-2): `created` (now, on insert) and an
 optional self-reported `origin` — the web client sends `"web"`, `propose_sprint`
 and `create_report` stamp their own operation name, a skill sends its name.
 korg is no-auth HTTP, so `origin` is recorded, not verified; the re-relate no-op
-preserves the originals. Provenance is write-side only — no read surface exposes
-`created`/`origin` yet (there is no consumer; the handoff flow is the likely
-first).
+preserves the originals. The first read surface is the board's `proposal_edges`
+(korg #1003) — elsewhere provenance is still write-side only.
 
 Every `covers` edge is `sprint_proposal → workitem` — there is no exception.
 (One used to exist: pre-0008 bundles were work items titled `Sprint: …`,
