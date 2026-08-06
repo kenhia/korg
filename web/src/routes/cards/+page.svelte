@@ -8,7 +8,7 @@
     type Comment,
   } from "$lib/api";
   import { CARD_STATUSES, type CardStatus } from "$lib/generated/vocab";
-  import { activeCardStatuses, chip, CUT, isCut, midRank } from "$lib/domain";
+  import { activeCardStatuses, chip, CUT, ID_CLASS, isCut, midRank } from "$lib/domain";
   import { attempt, notify, reportError } from "$lib/toast.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
   import Dialog from "$lib/components/Dialog.svelte";
@@ -349,6 +349,9 @@
     }}
   >
     <div class="flex items-start gap-2">
+      <!-- #980 — a card is addressed by node_id everywhere agents touch it
+           (update_card, relate, the daily plan's source). -->
+      <span class={`shrink-0 ${ID_CLASS}`}>#{item.card.node_id}</span>
       <div class="min-w-0 flex-1 text-sm">{item.card.title}</div>
       <button
         type="button"
@@ -501,7 +504,8 @@
             class="sticky top-0 bg-[var(--color-surface)] text-left text-xs text-[var(--color-muted)]"
           >
             <tr
-              ><th class="px-3 py-2">Title</th><th class="px-3 py-2">Status</th
+              ><th class="px-3 py-2">ID</th><th class="px-3 py-2">Title</th><th
+                class="px-3 py-2">Status</th
               ><th class="px-3 py-2">Project</th><th class="px-3 py-2"
                 >Category</th
               ><th class="px-3 py-2">Tags</th><th class="px-3 py-2">Updated</th
@@ -515,6 +519,9 @@
                 class:opacity-55={card.archived}
                 onclick={() => openEdit(card)}
               >
+                <!-- #980 — its own column here, matching the Work Items table
+                     rather than crowding the title cell. -->
+                <td class={`px-3 py-1.5 ${ID_CLASS}`}>{card.node_id}</td>
                 <!-- A real button in the cell rather than role="button" on the
                      <tr> (WI #548): a row that claims to be a button is no
                      longer a row, and the table loses its semantics. This keeps
@@ -554,7 +561,7 @@
               <tr
                 ><td
                   class="px-3 py-3 text-sm text-[var(--color-muted)]"
-                  colspan="6">No cards.</td
+                  colspan="7">No cards.</td
                 ></tr
               >
             {/each}

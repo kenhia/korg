@@ -182,7 +182,7 @@ pub fn tools() -> Vec<Tool> {
     vec![
         tool::<NewWorkItem>("create_work_item", "Create a work item. Returns the created row (including node_id and the serial wi_number, which are the same number since the 0009 identity migration)."),
         tool::<ops::ListWorkItems>("list_work_items", "The work-item list: lean rows (wi_number, node_id, project, title, wi_type, wi_status, wi_tshirt, comment_count -- no content/details), ordered by wi_number, as {items, total, limit, offset, omitted}. `omitted` is {closed, archived} -- the rows the defaults hid, so a narrowed list can never be mistaken for the whole corpus. Defaults: everything not terminal (`open`, `resolved`, `done`) and unarchived. Pass wi_status:\"all\" (or one status, including \"closed\") for the rest, `project` (name) to scope to one project. There is no detail flag: reading one item in full is get_work_item, which also inlines its comments and edges."),
-        tool::<ops::WiNumber>("get_work_item", "Fetch a single work item by its wi_number (isError with code `not_found` if there is none), with its comments inlined (up to 10; `comments_truncated:true` + `comment_count` signal a longer thread — fetch the whole thread with list_comments, which returns every comment in one unpaginated array). Comments often hold the real payload (resolution rationale, decisions), so prefer this over list_work_items when you need the full state of one item."),
+        tool::<ops::WorkItemSelector>("get_work_item", "Fetch a single work item by `wi_number` OR `node_id` -- for a work item they are the SAME number (the 0009 identity migration), so pass whichever you are holding; passing both is invalid_input rather than a guess. isError with code `not_found` if there is none. Comments are inlined (up to 10; `comments_truncated:true` + `comment_count` signal a longer thread — fetch the whole thread with list_comments, which returns every comment in one unpaginated array). Comments often hold the real payload (resolution rationale, decisions), so prefer this over list_work_items when you need the full state of one item."),
         tool2::<ops::WiNumber, WorkItemPatch>("update_work_item", "Partially update a work item by its wi_number; returns the updated row (isError with code `not_found` if the wi_number does not exist). Only the fields you pass are changed. Status lifecycle: open -> resolved (implemented; may still need a user test or PR) -> done (agent satisfied; terminal but visible in default lists) -> closed (reserved for Ken; hidden from list_work_items unless you pass wi_status \"closed\" or \"all\" -- do not set unless directed). For nullable fields (project_id, details, sprint, area_id, parent, category) pass null to clear or omit to leave unchanged. Moving projects (project_id) clears an area that no longer belongs to the target project unless you pass a valid area_id in the same call."),
         tool::<NewCard>("create_card", "Create a kanban card. Returns the created card row."),
         tool2::<ops::NodeId, CardPatch>("update_card", "Partially update a kanban card by its node_id; returns the updated card (isError with code `not_found` if that node is missing or is not a card). Projects are addressed by `project_id` here and over REST alike (get ids from list_projects) -- REST used to take a project *name* and silently create it. Only the fields you pass are changed (move status/rank, edit title/description, archive, reassign project). For nullable fields (project_id, category) pass null to clear or omit to leave unchanged."),
@@ -384,10 +384,21 @@ impl KorgServer {
                 )
             }
             "get_work_item" => {
-                let a: ops::WiNumber = parse_args(args)?;
-                respond_found(repo::get_work_item_detail(pool, a.wi_number).await, || {
-                    format!("no work item #{}", a.wi_number)
-                })
+                // Either spelling of the same number (WI #966) — the read every
+                // agent reaches for should not turn on which key it happens to
+                // be holding.
+                let a: ops::WorkItemSelector = parse_args(args)?;
+                match a.resolve() {
+                    // An `isError` result carrying code `invalid_input`, the way
+                    // every other refusal on this surface arrives — not a
+                    // protocol-level error the agent has to read differently.
+                    Err(e) => Ok(to_err(e)),
+                    Ok(wi_number) => {
+                        respond_found(repo::get_work_item_detail(pool, wi_number).await, || {
+                            format!("no work item #{wi_number}")
+                        })
+                    }
+                }
             }
             "update_work_item" => {
                 let (a, patch) = parse_args2::<ops::WiNumber, WorkItemPatch>(args)?;

@@ -194,6 +194,17 @@ The Playwright e2e suite is deliberately out of CI for now: it needs a built
 bundle, a running `korg-api` and a database, i.e. most of a deployment. Run it
 by hand as below.
 
+**Run it whenever a sprint touches `web/`, and expect unrelated failures.**
+Because nothing runs it automatically, a contract change lands green and the
+specs that assumed the old contract only fail the next time somebody runs the
+suite — so the failures arrive in batches, attributed to whoever ran it rather
+than whoever caused them. Sprint 049 hit two at once: `handoff.spec.ts` was
+still creating a proposal with no project (sprint **043** made that required),
+and `work-item-edit.spec.ts` still asserted five relationship labels (sprint
+**044** added `includes` and `collides-with`). Both were one-line fixes. Read a
+failure in an untouched spec as drift to fix, not as a reason to doubt the
+sprint.
+
 End-to-end UI tests (Playwright/Chromium) run against a live `korg-api`:
 
 ```bash

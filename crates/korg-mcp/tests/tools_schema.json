@@ -161,18 +161,26 @@
     "name": "list_work_items"
   },
   {
-    "description": "Fetch a single work item by its wi_number (isError with code `not_found` if there is none), with its comments inlined (up to 10; `comments_truncated:true` + `comment_count` signal a longer thread — fetch the whole thread with list_comments, which returns every comment in one unpaginated array). Comments often hold the real payload (resolution rationale, decisions), so prefer this over list_work_items when you need the full state of one item.",
+    "description": "Fetch a single work item by `wi_number` OR `node_id` -- for a work item they are the SAME number (the 0009 identity migration), so pass whichever you are holding; passing both is invalid_input rather than a guess. isError with code `not_found` if there is none. Comments are inlined (up to 10; `comments_truncated:true` + `comment_count` signal a longer thread — fetch the whole thread with list_comments, which returns every comment in one unpaginated array). Comments often hold the real payload (resolution rationale, decisions), so prefer this over list_work_items when you need the full state of one item.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "node_id": {
+          "description": "The alternative spelling of `wi_number`, not a second identity: since\nthe 0009 migration a work item's node id and `wi_number` are the same\nvalue. Pass one or the other, never both.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "wi_number": {
           "format": "int64",
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
-      "required": [
-        "wi_number"
-      ],
       "type": "object"
     },
     "name": "get_work_item"

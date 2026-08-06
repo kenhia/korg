@@ -40,15 +40,19 @@ test("edit, archive, and relate a work item", async ({ page }) => {
   await page.getByRole("button", { name: "+ Add" }).click();
   const labelPicker = page.getByLabel("Relationship label");
   await expect(labelPicker).toHaveValue("related-to");
-  // Exactly the registry, in registry order. `has_handoff` joined it in sprint
-  // 025 (H-1) and this list was not updated — e2e is out of CI (docs/setup.md),
-  // so nothing caught it until sprint 028 ran the suite.
+  // Exactly the registry, in registry order. This list has now gone stale
+  // twice for the same structural reason — e2e is out of CI (docs/setup.md),
+  // so a registry addition is only noticed the next time someone runs the
+  // suite by hand. `has_handoff` joined in sprint 025 (H-1), caught in 028;
+  // `includes` and `collides-with` joined in 044, caught in 049.
   await expect(labelPicker.locator("option")).toHaveText([
     "covers",
     "finding",
     "depends_on",
     "related-to",
     "has_handoff",
+    "includes",
+    "collides-with",
   ]);
   await labelPicker.selectOption({ label: "depends_on" });
   await page.getByPlaceholder("42").fill(bId);

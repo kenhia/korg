@@ -13,7 +13,7 @@
   import { onMount } from "svelte";
   import { api, type ProgramRow } from "$lib/api";
   import type { ProgramStatus } from "$lib/generated/vocab";
-  import { chip } from "$lib/domain";
+  import { ID_CLASS, chip } from "$lib/domain";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
 
   let programs = $state<ProgramRow[]>([]);
@@ -82,6 +82,7 @@
           class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
         >
           <div class="flex flex-wrap items-baseline gap-2">
+            <span class={ID_CLASS}>#{p.node_id}</span>
             <a
               class="font-semibold hover:underline"
               href={`/programs/${p.node_id}`}>{p.title}</a

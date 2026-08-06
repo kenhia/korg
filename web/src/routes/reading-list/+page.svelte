@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { api, type LinkRow } from "$lib/api";
   import { LINK_DISPOSITIONS, type Disposition } from "$lib/generated/vocab";
-  import { chip } from "$lib/domain";
+  import { ID_CLASS, chip } from "$lib/domain";
   import { attempt } from "$lib/toast.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
 
@@ -103,6 +103,9 @@
       {#each links as link (link.node_id)}
         <li class="px-3 py-2">
           <div class="flex items-center justify-between gap-3">
+            <!-- #980: a link is a node an agent cites by id (mark_link_read,
+                 update_link both take node_id), so the id is on the row. -->
+            <span class={`shrink-0 ${ID_CLASS}`}>#{link.node_id}</span>
             <!-- The link navigates (WI #549). It used to preventDefault() and
                  open the editor instead, reserving ctrl/⌘-click for actually
                  following it — so the one control that looks like a link, is

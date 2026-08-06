@@ -15,9 +15,19 @@ covers:
   into one works too. Carries the latest daily report's status, and buttons
   through to History and Topics. Above the planner sits the **Awaiting you**
   lane (#969): everything an agent has marked as moving only when Ken acts,
-  oldest ask first, each clearable in one click. It renders **nothing** when the
-  lane is empty — a panel that shows an empty state every day is one you learn
-  to skip, and this one has to be read on the days it has rows.
+  oldest ask first. It renders **nothing** when the lane is empty — a panel that
+  shows an empty state every day is one you learn to skip, and this one has to
+  be read on the days it has rows.
+
+  Each row answers in one gesture (#981). `reply` opens an inline box; sending
+  posts the text as a comment **on the node** and clears the marker, in that
+  order — a failed comment leaves the ask standing rather than losing the
+  answer. The comment lands where agents read it (`get_work_item`,
+  `list_comments`); the lane itself stays a flag and never stores anything.
+  `clear` remains for asks that need no answer, and a status-shaped decision
+  needs neither: closing or finishing the item clears its marker on its own
+  (D-7). Every kind the lane renders is clickable — kinds with a page of their
+  own go there, the rest to the list they live on.
 - **Work Items** — create, edit, archive, set parent/area, and manage
   relationships and comments. Project selection is sticky across navigation.
   Filters include tags (AND-combined, collapsed by default) and `Only Prop`,
@@ -53,9 +63,20 @@ covers:
   order with each one's work-item rollup, from a **single** call: that read is
   what replaces walking program → proposals → work items. Deliberately minimal
   — kfdc's Operations panel is the real consumer.
+
+  Each slice's rollup reads `work-complete / verified-by-you / total` (#980),
+  where work-complete is `resolved + done + closed` — everything agents consider
+  finished — and verified is `closed`, the status reserved for Ken. The two are
+  separate figures because collapsing them misleads in the state that matters
+  most: `N / <N / N` means all the work is done and it is waiting on Ken, which
+  the old single count rendered as `0/N` and read as "not started". The bar
+  encodes the same three states from the same computation, so the two cannot
+  disagree. The header carries an active/holding/done control, so a program is
+  finishable from the browser rather than only over REST.
 - **Handoff pages** (`/handoffs/:node_id`) — the first per-node detail route
   (WI #621), and until sprint 044 the only one. A handoff's `has_handoff` ref opens the slide-over preview
-  anywhere it appears; "Open full page ↗" on that preview navigates here, where
+  anywhere it appears; "Open full page ↗" on that preview navigates here (it is
+  offered for any kind with a page of its own, so programs get it too), where
   the Markdown body gets a real reading width and a comment thread. The body is
   **read-only** — handoffs are authored through the API and the `handoff` skill
   — so a reviewer responds with a comment rather than editing the document.
@@ -64,7 +85,7 @@ covers:
 
 ### Behaviour common to every page
 
-Three rules hold across the UI (sprint 019):
+Four rules hold across the UI (sprint 019, plus one from 049):
 
 **Nothing fails silently.** Every mutation reports failure in a toast, and a
 failed *load* renders a distinguishable "couldn't load" state with a retry —
@@ -80,6 +101,16 @@ reversible, so it happens immediately and offers an Undo in the toast instead.
 
 **Dialogs behave like dialogs.** The node preview and the card editor trap
 focus, close on Escape, and return focus to whatever opened them.
+
+**Every id an agent cites is on screen, and every id resolves** (#980, #982).
+Agents name things by id — `korg:979`, `#846` — and Ken reads agent output
+constantly, so matching a number against a screen is a scanning task. Rows and
+detail headers across programs, cards, topics, the reading list, daily reports,
+the awaiting lane, Today's plan items and trays, and both Link Up pickers carry
+their id in one shared mono-and-muted style. The reverse direction holds too:
+find-by-ID on Work Items resolves **every** node kind to its real title (a work
+item navigates; anything else previews), and `crates/korg-core/tests/sprint049.rs`
+fails if a kind is ever added without a `get_node_preview` arm to resolve it.
 
 ## REST API
 
@@ -379,7 +410,10 @@ Everything is a **node** sharing one surrogate id space, so any kind can link to
 any other through a single generalized `relationship` edge:
 
 - **work item** — keeps a stable, user-facing serial `wi_number` (referenced by
-  external project docs) that is *not* the primary key.
+  external project docs) that is *not* the primary key column, though since the
+  0009 identity migration it holds the **same value** as the node id. Both
+  spellings therefore address the same row, and `get_work_item` accepts either
+  (#966) — passing both is `invalid_input`, not a guess.
 - **card** — kanban card (status, rank, tags).
 - **link** — reading-list URL.
 - **topic** — reusable planning identity with searchable name/description.

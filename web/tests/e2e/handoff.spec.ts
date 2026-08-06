@@ -48,12 +48,29 @@ test("open a handoff from a proposal card on Planning", async ({ page, request }
   // A proposal loads its related block only when it covers something, so seed a
   // covered work item too. A fresh browser context defaults to "All projects",
   // so the card is visible without touching the project filter.
+  //
+  // Both carry a project because sprint 043 made a proposal single-project and
+  // REQUIRED: an untargeted create is now `invalid_input`, and every covered
+  // item is checked against the proposal's project. This spec kept passing an
+  // untargeted create until sprint 049 ran the suite — the same "e2e is out of
+  // CI" lag as the relationship-label list in work-item-edit.spec.ts.
+  const project = `handoff-e2e-${stamp}`;
+  const pid = (
+    await (await request.post("/api/projects", { data: { name: project } })).json()
+  ).id as number;
   const wi = await (
-    await request.post("/api/work-items", { data: { title: `covered ${stamp}`, content: "b" } })
+    await request.post("/api/work-items", {
+      data: { title: `covered ${stamp}`, content: "b", project_id: pid },
+    })
   ).json();
   const prop = await (
     await request.post("/api/proposals", {
-      data: { title: `bundle ${stamp}`, summary: "s", work_item_numbers: [wi.wi_number] },
+      data: {
+        title: `bundle ${stamp}`,
+        summary: "s",
+        project_id: pid,
+        work_item_numbers: [wi.wi_number],
+      },
     })
   ).json();
   const h = await request.post("/api/handoffs", {
@@ -100,8 +117,10 @@ test("open a handoff on its own page and comment on it", async ({ page, request 
   await page.getByRole("row", { name: new RegExp(wiTitle) }).click();
   await page.getByRole("button", { name: hTitle }).click();
 
-  // The control on the preview navigates to the dedicated route.
-  await page.getByTestId("open-handoff-page").click();
+  // The control on the preview navigates to the dedicated route. Since #982 it
+  // is driven by `nodePage(kind)` rather than a hardcoded `handoff`, so the
+  // testid is kind-agnostic — programs render the same button.
+  await page.getByTestId("open-node-page").click();
   await expect(page).toHaveURL(new RegExp(`/handoffs/${h.node_id}$`));
 
   await expect(page.getByRole("heading", { name: hTitle, level: 1 })).toBeVisible();

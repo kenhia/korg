@@ -1623,6 +1623,59 @@ pub async fn get_node_preview(pool: &PgPool, id: i64) -> Result<Option<NodePrevi
                 }
             }
         }
+        "program" => {
+            // WI #982. Sprint 044 added the `program` kind and its own page but
+            // not an arm here, so find-by-ID answered `979` with the fallback:
+            // chip PROGRAM, title literally "program #979". Every other kind in
+            // the vocabulary already resolves, so program was the whole gap —
+            // there is no `_ => {}` kind left to fix after this one.
+            //
+            // `span` is the derived project set (D-6): a program has no project
+            // of its own, so `p.project` is always null here and the span is the
+            // honest answer to "which repos does this touch". Same statement
+            // shape the program list uses.
+            if let Some(r) = sqlx::query(
+                "SELECT g.title, g.aim, g.notes, g.status, g.pinned, \
+                        (SELECT count(*) FROM relationship r JOIN node sn ON sn.id = r.right_id \
+                          WHERE r.left_id = g.node_id AND r.relationship = 'includes' \
+                            AND sn.kind = 'sprint_proposal') AS slice_count, \
+                        (SELECT coalesce(array_agg(DISTINCT pj.name), '{}') \
+                           FROM relationship r JOIN node sn ON sn.id = r.right_id \
+                           JOIN project pj ON pj.id = sn.project_id \
+                          WHERE r.left_id = g.node_id AND r.relationship = 'includes') AS span \
+                 FROM program g WHERE g.node_id = $1",
+            )
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            {
+                p.title = r.get("title");
+                p.badges = vec![r.get("status")];
+                if r.get::<bool, _>("pinned") {
+                    p.badges.push("pinned".into());
+                }
+                let span: Vec<String> = r.get("span");
+                if !span.is_empty() {
+                    p.fields.push(field("Span", span.join(", ")));
+                }
+                p.fields
+                    .push(field("Slices", r.get::<i64, _>("slice_count").to_string()));
+                // Same rule as a proposal: the routing contract (`aim`) stays a
+                // field when there is a long form to show instead, and becomes
+                // the body when there is not — never both.
+                match r.get::<Option<String>, _>("notes") {
+                    Some(notes) => {
+                        p.fields.push(field("Aim", r.get::<String, _>("aim")));
+                        p.body = Some(notes);
+                        p.body_label = Some("Notes".into());
+                    }
+                    None => {
+                        p.body = Some(r.get("aim"));
+                        p.body_label = Some("Aim".into());
+                    }
+                }
+            }
+        }
         "handoff" => {
             // Sprint 026: the handoff "viewer" is this generic slide-over. The
             // owning read (get_work_item/get_proposal) surfaces the has_handoff
