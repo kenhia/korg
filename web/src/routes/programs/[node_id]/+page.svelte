@@ -10,7 +10,16 @@
   import { api, type ProgramDetail } from "$lib/api";
   import type { ProgramStatus } from "$lib/generated/vocab";
   import { renderMarkdown } from "$lib/markdown";
-  import { chip } from "$lib/domain";
+  import {
+    ID_CLASS,
+    PROGRESS_VERIFIED_CLASS,
+    PROGRESS_WORK_CLASS,
+    chip,
+    nodePage,
+    sliceProgress,
+  } from "$lib/domain";
+  import { PROGRAM_STATUSES } from "$lib/generated/vocab";
+  import { attempt } from "$lib/toast.svelte";
   import Comments from "$lib/components/Comments.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
 
@@ -52,11 +61,23 @@
     done: "bg-neutral-800 text-neutral-400",
   };
 
-  // A slice is finished when every work item it covers is; a slice with no work
-  // items is not "complete", it is empty, and the bar says so by staying blank.
-  function progress(s: ProgramDetail["slices"][number]): number {
-    if (s.covered_count === 0) return 0;
-    return Math.round(((s.done + s.closed) / s.covered_count) * 100);
+  // #980's third finding (filed as a comment, not its own WI): this page
+  // rendered status as a read-only pill while `PATCH /api/programs/:node_id`
+  // sat unused, so Ken could not mark 979 done from the browser — it was done
+  // via REST on his behalf. Same shape as the proposal status buttons on
+  // Planning. With D-7 in play this control IS the "answer the ask" gesture for
+  // a program row: marking one done clears its awaiting marker server-side,
+  // which is why it sits beside the awaiting note rather than in a menu.
+  let saving = $state(false);
+  async function setStatus(status: ProgramStatus) {
+    if (!program || program.status === status) return;
+    saving = true;
+    const r = await attempt(
+      () => api.updateProgram(program!.node_id, { status }),
+      `Set program status to ${status}`,
+    );
+    if (r) program = { ...program, status: r.status };
+    saving = false;
   }
 </script>
 
@@ -74,11 +95,10 @@
   {:else if program}
     <header class="space-y-2">
       <div class="flex flex-wrap items-baseline gap-2">
+        <!-- #980: agents cite this program as `korg:979`, so the number Ken is
+             matching against agent output belongs beside the title. -->
+        <span class={ID_CLASS} data-testid="program-id">#{program.node_id}</span>
         <h1 class="text-2xl font-semibold">{program.title}</h1>
-        <span
-          class={`rounded px-1.5 py-0.5 text-xs ${statusPill[program.status as ProgramStatus] ?? ""}`}
-          >{program.status}</span
-        >
         <!-- The derived span (D-6). A program has no project of its own; this
              is the union of its slices' projects, and it is the honest answer
              to "which repos does this touch". -->
@@ -87,6 +107,27 @@
         {/each}
       </div>
       <p class="text-[var(--color-muted)]">{program.aim}</p>
+      <!-- The status control, not a pill (#980's third finding). The current
+           status keeps the pill styling so the header still reads at a glance;
+           the other two are plain buttons beside it. -->
+      <div
+        class="flex flex-wrap items-center gap-1"
+        data-testid="program-status-control"
+      >
+        {#each PROGRAM_STATUSES as s (s)}
+          <button
+            class={program.status === s
+              ? `rounded px-2 py-0.5 text-xs ${statusPill[s]}`
+              : "rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-muted)] hover:bg-[var(--color-surface-hi)]"}
+            aria-pressed={program.status === s}
+            disabled={saving || program.status === s}
+            title={program.status === s
+              ? `Status is ${s}`
+              : `Set status to ${s}`}
+            onclick={() => setStatus(s)}>{s}</button
+          >
+        {/each}
+      </div>
     </header>
 
     {#if program.notes}
@@ -108,35 +149,63 @@
           <code>includes</code> label.
         </p>
       {:else}
+        <!-- The legend, once, above the list. Three bare numbers with no key
+             are what produced this bug in the first place — Ken read the left
+             figure as "work remaining" — so the meaning ships next to the
+             figures rather than in a tooltip nobody hovers. -->
+        <p class="mb-1 text-[0.65rem] text-[var(--color-muted)]">
+          <span class="font-mono text-amber-400">work complete</span> /
+          <span class="font-mono text-emerald-400">verified by you</span> /
+          <span class="font-mono">total</span>
+        </p>
         <ol class="space-y-2">
           {#each program.slices as s, i (s.node_id)}
+            {@const p = sliceProgress(s)}
             <li
               class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
+              data-testid={`slice-${s.node_id}`}
             >
               <div class="flex flex-wrap items-baseline gap-2">
                 <span class="text-xs tabular-nums text-[var(--color-muted)]"
                   >{i + 1}</span
                 >
+                <!-- The slice's proposal node_id — what `/start-sprint
+                     korg:<id>` takes, and what an agent names when it reports
+                     on a slice (#980). -->
+                <span class={ID_CLASS}>#{s.node_id}</span>
                 <span class="font-medium">{s.title}</span>
                 {#if s.project}<span class={chip.project}>{s.project}</span>{/if}
                 <span class="text-xs text-[var(--color-muted)]">{s.status}</span>
-                <span class="ml-auto text-xs tabular-nums text-[var(--color-muted)]">
-                  {#if s.covered_count === 0}
+                <span
+                  class="ml-auto text-xs tabular-nums text-[var(--color-muted)]"
+                  data-testid="slice-progress"
+                  title={`${p.workComplete} of ${p.total} implemented (resolved, done or closed) · ${p.verified} verified by you (closed)`}
+                >
+                  {#if p.total === 0}
                     no work items
                   {:else}
-                    {s.done + s.closed}/{s.covered_count} done
-                    {#if s.open > 0}· {s.open} open{/if}
-                    {#if s.resolved > 0}· {s.resolved} resolved{/if}
+                    <span class="text-amber-400">{p.workComplete}</span>
+                    / <span class="text-emerald-400">{p.verified}</span>
+                    / {p.total}
                   {/if}
                 </span>
               </div>
-              {#if s.covered_count > 0}
+              {#if p.total > 0}
+                <!-- The bar encodes the SAME three states as the triplet, from
+                     the same `sliceProgress` call, so the two cannot disagree —
+                     which is the failure #980 is about. The verified run is
+                     drawn over the work-complete one rather than beside it, so
+                     "all amber" reads as "all of this is waiting on you". -->
                 <div
-                  class="mt-2 h-1 overflow-hidden rounded bg-[var(--color-surface-hi)]"
+                  class="relative mt-2 h-1 overflow-hidden rounded bg-[var(--color-surface-hi)]"
                 >
                   <div
-                    class="h-full bg-[var(--color-accent)]"
-                    style={`width: ${progress(s)}%`}
+                    class={`absolute inset-y-0 left-0 ${PROGRESS_WORK_CLASS}`}
+                    style={`width: ${p.workPct}%`}
+                  ></div>
+                  <div
+                    class={`absolute inset-y-0 left-0 ${PROGRESS_VERIFIED_CLASS}`}
+                    style={`width: ${p.verifiedPct}%`}
                   ></div>
                 </div>
               {/if}
@@ -153,8 +222,12 @@
           {#each program.related as r (r.rel_id)}
             <li class="flex flex-wrap items-baseline gap-2">
               <span class="text-xs text-[var(--color-muted)]">{r.label}</span>
-              {#if r.kind === "handoff"}
-                <a class="hover:underline" href={`/handoffs/${r.node_id}`}
+              <span class={ID_CLASS}>#{r.wi_number ?? r.node_id}</span>
+              <!-- Was `kind === "handoff"` hardcoded; `nodePage` covers every
+                   kind with a route of its own, so a related program links too
+                   (#982). -->
+              {#if nodePage(r.kind, r.node_id)}
+                <a class="hover:underline" href={nodePage(r.kind, r.node_id)}
                   >{r.title}</a
                 >
               {:else}

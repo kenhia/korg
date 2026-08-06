@@ -44,9 +44,35 @@ env:
   # means a runner that somehow acquires a snapshot still behaves predictably.
   KORG_SNAPSHOT_TESTS: "0"
 
+# Superseding a run is right on a branch and wrong on `main` (WI #846, mirroring
+# klams #792 / its sprint 040).
+#
+# On a branch, a new push means the old commit no longer matters, so cancelling
+# saves a runner. On `main` every commit is a permanent record and each one needs
+# its own verdict — but `main` gets two pushes per ship (the merge commit, then
+# sprint-ship's deploy record a couple of minutes later), and under an unscoped
+# rule the second cancelled the first. The commit actually carrying the sprint's
+# code never completed a run.
+#
+# Two independent fixes; this is korg's half. The other is `[skip ci]` on the
+# deploy-record commit, which lives in the shared sprint-ship skill
+# (agent-skills #797) and korg inherits with no change here — verified live on
+# 2026-08-01 and again before this landed: the `docs(NNN): record the kubsdb
+# deploy … [skip ci]` commits start no run at all.
+#
+# So the symptom is currently MASKED, not gone, and that is exactly why this line
+# is still worth having: nothing about `[skip ci]` protects any *other* pair of
+# overlapping pushes to main — a hotfix on top of a fresh merge, two ships in
+# quick succession, a manual push mid-run. Please do not "simplify" it back.
+#
+# Checked before landing (the one open question on #846): korg has NO main-only
+# jobs — no `if:` conditions and no `github.ref ==` guard anywhere in this file,
+# the concurrency group below being the only `github.ref` reference at all. So
+# klams' tradeoff, where scoping the cancellation made its main-only `perf` job
+# run twice per ship, does not apply here. There is nothing to weigh.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   rust:

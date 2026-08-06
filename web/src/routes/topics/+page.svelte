@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type Topic } from "$lib/api";
-  import { chip } from "$lib/domain";
+  import { ID_CLASS, chip } from "$lib/domain";
   import { attempt, notify } from "$lib/toast.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
   import BackTo from "$lib/components/BackTo.svelte";
@@ -197,7 +197,15 @@
           data-testid={`topic-${topic.node_id}`}
         >
           <div class="min-w-0 flex-1">
-            <h2 class="font-medium">{topic.name}</h2>
+            <h2 class="flex flex-wrap items-baseline gap-2 font-medium">
+              <!-- #980 — get_topic/update_topic address a topic by node_id. -->
+              <span class={ID_CLASS}>#{topic.node_id}</span>
+              <!-- The name keeps an element of its own. Sitting as a bare text
+                   node beside the id would make the smallest element containing
+                   it the whole <h2>, whose text is now "#12 the name" — so
+                   nothing matches the name exactly, by sight or by locator. -->
+              <span>{topic.name}</span>
+            </h2>
             {#if topic.description}<p
                 class="mt-1 text-sm text-[var(--color-muted)]"
               >

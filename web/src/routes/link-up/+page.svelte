@@ -3,6 +3,7 @@
   import { api, type CardRow, type WorkItemRow, type LinkRow, type ProjectRow } from "$lib/api";
   import {
     DEFAULT_RELATIONSHIP_LABEL,
+    ID_CLASS,
     isCut,
     isHiddenByDefault,
   } from "$lib/domain";
@@ -174,6 +175,9 @@
         <li>
           <label class="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-[var(--color-surface-hi)]">
             <input type="checkbox" checked={isSelected(c.node_id)} onchange={() => toggle(c.node_id)} />
+            <!-- #980 — `relate` takes node_ids, and this page's whole job is
+                 picking the two ends of an edge. -->
+            <span class={`shrink-0 ${ID_CLASS}`}>#{c.node_id}</span>
             <span>{c.title}</span>
           </label>
         </li>
@@ -210,6 +214,7 @@
         <li>
           <label class="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-[var(--color-surface-hi)]">
             <input type="checkbox" checked={isSelected(w.node_id)} onchange={() => toggle(w.node_id)} />
+            <span class={`shrink-0 ${ID_CLASS}`}>#{w.wi_number}</span>
             <span>{w.title}</span>
           </label>
         </li>

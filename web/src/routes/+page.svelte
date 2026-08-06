@@ -9,7 +9,7 @@
     type ReportRow,
     type Topic,
   } from "$lib/api";
-  import { chip, isCut, kindLabel, reportStatusPill } from "$lib/domain";
+  import { ID_CLASS, chip, isCut, kindLabel, reportStatusPill } from "$lib/domain";
   import { attempt, notify, reportError } from "$lib/toast.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
   import ConfirmButton from "$lib/components/ConfirmButton.svelte";
@@ -415,6 +415,10 @@
                       <span
                         class={`mt-0.5 shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase ${kindClass(item.source_kind)}`}
                         >{kindLabel(item.source_kind)}</span
+                      ><!-- #980 — the SOURCE's id, not the plan row's: the
+                           source is the thing an agent names. -->
+                      <span class={`mt-0.5 shrink-0 ${ID_CLASS}`}
+                        >#{item.source_node_id}</span
                       ><span
                         class="line-clamp-2 break-words text-xs font-medium"
                         class:line-through={item.completed_at !== null}
@@ -528,6 +532,7 @@
       >
         {#if p.project}<span class={`${chip.project} shrink-0`}>{p.project}</span
           >{/if}
+        <span class={`shrink-0 ${ID_CLASS}`}>#{p.node_id}</span>
         <span
           class="min-w-0 flex-1 line-clamp-2 break-words text-xs"
           title={p.title}>{p.title}</span
@@ -554,6 +559,7 @@
         draggable="true"
         ondragstart={(event) => dragSource(event, card.node_id)}
       >
+        <span class={`shrink-0 ${ID_CLASS}`}>#{card.node_id}</span>
         <span
           class="min-w-0 flex-1 line-clamp-2 break-words text-xs"
           title={card.title}>{card.title}</span

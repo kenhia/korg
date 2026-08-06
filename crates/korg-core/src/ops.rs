@@ -699,6 +699,51 @@ pub struct WiNumber {
     pub wi_number: i64,
 }
 
+/// `{wi_number}` **or** `{node_id}` — the same number either way (WI #966).
+///
+/// Fable passed `node_id: 965` to `get_work_item` and got
+/// `missing field wi_number`. The call was right in every way that matters: the
+/// 0009 identity migration made a work item's node id *equal* its `wi_number`,
+/// so the agent was holding the number it needed and korg refused it on
+/// spelling. Every other node-addressed tool takes `node_id`, so an agent that
+/// has just read `related` or `covered` — both of which carry `node_id` — is
+/// reaching for the key the rest of the surface taught it.
+///
+/// Both halves together is `invalid_input`, matching the project/area selectors
+/// (#575) and for the same reason: korg does not pick between two ids the
+/// caller explicitly passed. That the two *are* equal for a work item is not a
+/// licence to guess — an unequal pair is a real contradiction, and a rule with
+/// an exception is a rule nobody remembers.
+#[derive(Debug, Clone, Copy, Default, Deserialize, JsonSchema)]
+pub struct WorkItemSelector {
+    #[serde(default)]
+    pub wi_number: Option<i64>,
+    /// The alternative spelling of `wi_number`, not a second identity: since
+    /// the 0009 migration a work item's node id and `wi_number` are the same
+    /// value. Pass one or the other, never both.
+    #[serde(default)]
+    pub node_id: Option<i64>,
+}
+
+impl WorkItemSelector {
+    /// The `wi_number` to read, or `invalid_input` naming both spellings.
+    pub fn resolve(self) -> anyhow::Result<i64> {
+        match (self.wi_number, self.node_id) {
+            (Some(_), Some(_)) => Err(crate::error::RepoError::InvalidInput(
+                "pass either wi_number or node_id, not both — for a work item they are the \
+                 same number (the 0009 identity migration), so either one alone is correct"
+                    .into(),
+            )
+            .into()),
+            (Some(n), None) | (None, Some(n)) => Ok(n),
+            (None, None) => Err(crate::error::RepoError::InvalidInput(
+                "pass wi_number (or node_id — for a work item they are the same number)".into(),
+            )
+            .into()),
+        }
+    }
+}
+
 /// `{id}` — comments and relationship edges carry plain row ids.
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 pub struct Id {

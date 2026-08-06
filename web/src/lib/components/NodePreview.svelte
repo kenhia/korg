@@ -5,7 +5,7 @@
   // Daily Reports and the Work Items find-by-ID box so the panel lives once.
   import { api, type NodePreview } from "$lib/api";
   import { renderMarkdown } from "$lib/markdown";
-  import { chip } from "$lib/domain";
+  import { chip, nodePage } from "$lib/domain";
   import Dialog from "./Dialog.svelte";
   import ErrorNotice from "./ErrorNotice.svelte";
 
@@ -65,13 +65,15 @@
         <!-- Handoffs get a full page (WI #621). The slide-over stays the quick
              peek and becomes its entry point: a long handoff is unreadable at
              max-w-md, and commenting on one needs somewhere to put the thread.
-             Only handoffs have a detail route today, so only they show this. -->
-        {#if node.kind === "handoff"}
+             This was hardcoded to `handoff` because that was the only detail
+             route at the time; programs have had one since 044, so the button
+             asks `nodePage` instead of naming a kind (WI #982). -->
+        {#if nodePage(node.kind, nodeId)}
           <a
             class="ml-auto rounded border border-[var(--color-border)] px-2 py-0.5 text-xs hover:bg-[var(--color-accent-soft)]"
-            href={`/handoffs/${nodeId}`}
-            data-testid="open-handoff-page"
-            title="Open this handoff on its own page, with comments"
+            href={nodePage(node.kind, nodeId)}
+            data-testid="open-node-page"
+            title={`Open this ${node.kind} on its own page`}
             onclick={onClose}>Open full page ↗</a
           >
         {/if}

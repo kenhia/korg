@@ -1582,3 +1582,74 @@ async fn proposal_summary_is_bounded_and_notes_carries_the_analysis() {
         "the error must name the remedy: {err}"
     );
 }
+
+/// WI #966 — `get_work_item` takes either spelling of the same number.
+///
+/// Fable's actual call was `{node_id: 965}` and the answer was
+/// `missing field wi_number`. Since the 0009 identity migration the two ARE the
+/// same value for a work item, and every neighbouring read (`related`,
+/// `covered`, `list_awaiting`) hands out `node_id` — so the agent was holding
+/// the right number and korg refused it on spelling alone.
+#[tokio::test]
+async fn get_work_item_takes_node_id_or_wi_number() {
+    let (_c, pool) = fresh_korg().await;
+    let server = server(pool);
+
+    let created = body(
+        &server
+            .call(
+                "create_work_item",
+                args(json!({"title":"either id finds me","content":"x"})),
+            )
+            .await
+            .expect("create_work_item"),
+    );
+    let n = created["wi_number"].as_i64().unwrap();
+    assert_eq!(created["node_id"].as_i64(), Some(n), "0009 identity");
+
+    for key in ["wi_number", "node_id"] {
+        let got = body(
+            &server
+                .call("get_work_item", args(json!({ key: n })))
+                .await
+                .unwrap_or_else(|e| panic!("get_work_item by {key}: {e}")),
+        );
+        assert_eq!(
+            got["title"], "either id finds me",
+            "{key} must reach the same row"
+        );
+    }
+
+    // Both together is a refusal, not a guess — the project/area selector rule
+    // (#575). Equal values are still two ids the caller passed on purpose.
+    let both = server
+        .call("get_work_item", args(json!({"wi_number": n, "node_id": n})))
+        .await
+        .expect("call completes");
+    assert_eq!(both.is_error, Some(true), "both ids must be refused");
+    let text = both.content[0].as_text().expect("text").text.clone();
+    let err: Value = serde_json::from_str(&text).expect("error body is json");
+    assert_eq!(err["code"], "invalid_input");
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("not both"),
+        "{err}"
+    );
+
+    // Neither is invalid_input naming both spellings, not a panic.
+    let neither = server
+        .call("get_work_item", args(json!({})))
+        .await
+        .expect("call completes");
+    assert_eq!(neither.is_error, Some(true));
+    let text = neither.content[0].as_text().expect("text").text.clone();
+    let err: Value = serde_json::from_str(&text).expect("error body is json");
+    assert_eq!(err["code"], "invalid_input");
+    let msg = err["message"].as_str().unwrap_or_default();
+    assert!(
+        msg.contains("wi_number") && msg.contains("node_id"),
+        "{err}"
+    );
+}

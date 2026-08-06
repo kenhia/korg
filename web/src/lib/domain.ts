@@ -212,6 +212,149 @@ export function kindLabel(kind: string): string {
   return KIND_LABELS[kind] ?? kind;
 }
 
+// --- IDs, everywhere an agent might cite one (WI #980) -----------------------
+
+/**
+ * How an id renders. One constant, because the point of the sweep is that an id
+ * looks the same everywhere — Ken reads agent output constantly, and matching
+ * "korg:979" against a screen is a scanning task, not a reading one.
+ *
+ * The style is the Work Items list's, which is the surface that already had it
+ * right: mono so digits line up column-wise, muted so a screenful of ids never
+ * competes with the titles they annotate.
+ */
+export const ID_CLASS = "font-mono text-xs text-[var(--color-muted)]";
+
+// --- program slice progress (WI #980) ----------------------------------------
+
+/** The per-slice work-item rollup `get_board`/`get_program` already carries. */
+export type SliceCounts = {
+  covered_count: number;
+  open: number;
+  resolved: number;
+  done: number;
+  closed: number;
+};
+
+/**
+ * The three states a slice's work can be in, and the two percentages that draw
+ * them.
+ *
+ * Ken misread program 979 — everything implemented, nothing closed — as "still
+ * has implementation to do", because the old two-part count put his *closed*
+ * count on the left where a "how much is finished" figure goes. `0/3` is a true
+ * statement about verification and a false one about work, and the display gave
+ * no way to tell which question was being answered.
+ *
+ * So the figure answers both, in D-7's own vocabulary:
+ *
+ * - **work-complete** = `resolved + done + closed` — everything agents consider
+ *   finished. `resolved` counts here because that is exactly what it means:
+ *   implemented, awaiting Ken.
+ * - **Ken-verified** = `closed` — the status reserved for him.
+ *
+ * `N / <N / N` is the state worth spotting across the room: all the work is
+ * done and it is waiting on Ken. Both the triplet and the bar are computed
+ * here so they cannot disagree — the bug being fixed is a display that
+ * contradicted itself, and two call sites doing their own arithmetic is how it
+ * would come back.
+ *
+ * Display-layer only, deliberately: `get_board`'s slices already carry these
+ * four counters and kfdc's Operations panel is a second consumer of the same
+ * fields, so nothing new goes on the read.
+ */
+export function sliceProgress(s: SliceCounts): {
+  workComplete: number;
+  verified: number;
+  total: number;
+  /** Width of the whole finished run, verified part included. */
+  workPct: number;
+  /** Width of the verified run alone, drawn over the finished one. */
+  verifiedPct: number;
+} {
+  const total = s.covered_count;
+  const workComplete = s.resolved + s.done + s.closed;
+  const verified = s.closed;
+  // An empty slice is not "complete", it is empty, and the bar says so by
+  // staying blank rather than reading 100%.
+  const pct = (n: number) => (total === 0 ? 0 : Math.round((n / total) * 100));
+  return {
+    workComplete,
+    verified,
+    total,
+    workPct: pct(workComplete),
+    verifiedPct: pct(verified),
+  };
+}
+
+/**
+ * The bar's two hues, reusing meanings the rest of the UI already carries so
+ * the colour is readable before the legend is: emerald is a finished status
+ * pill, amber is the awaiting-Ken lane. A fully amber bar therefore *means*
+ * "all of this is waiting on you", which is the signal #980 is about.
+ */
+export const PROGRESS_VERIFIED_CLASS = "bg-emerald-500";
+export const PROGRESS_WORK_CLASS = "bg-amber-500";
+
+// --- where a node lives (WI #981, #982) --------------------------------------
+
+/**
+ * The kinds with a page of their own, and how to build it.
+ *
+ * Two entries, and that is the honest size of the set: everything else is
+ * rendered inside a list page or the slide-over preview. Add a route here the
+ * day a kind grows one, and both the preview's "Open full page" affordance and
+ * the awaiting lane pick it up without either being edited.
+ */
+const OWN_PAGE: Record<string, (node_id: number) => string> = {
+  handoff: (id) => `/handoffs/${id}`,
+  program: (id) => `/programs/${id}`,
+};
+
+/** The node's own page, or null when the kind has none. */
+export function nodePage(kind: string, node_id: number): string | null {
+  return OWN_PAGE[kind]?.(node_id) ?? null;
+}
+
+/**
+ * The page where a list of this kind lives — the fallback for kinds with no
+ * per-node route.
+ *
+ * A list page is a genuinely useful destination, not a consolation: it is where
+ * the row is, and landing on it beats a dead title. The awaiting lane already
+ * shipped this reasoning for `sprint_proposal` → `/planning` (#969); #981 only
+ * asks for the rest of the kinds to be treated the same way.
+ */
+const LIST_PAGE: Record<string, string> = {
+  card: "/cards",
+  daily_plan_item: "/plan",
+  link: "/reading-list",
+  report: "/daily-reports",
+  sprint_proposal: "/planning",
+  topic: "/topics",
+};
+
+/**
+ * Where to send someone who clicks this node — its own page, its work-item
+ * route, or the list it lives on. Null only for a kind korg has no page for at
+ * all, which today is none of the nine.
+ *
+ * Work items are addressed by number rather than node id in the URL even though
+ * the two are equal since the 0009 identity migration, because `?wi=` is what
+ * the Work Items page reads.
+ */
+export function nodeHref(
+  kind: string,
+  node_id: number,
+  wi_number?: number | null,
+): string | null {
+  const own = nodePage(kind, node_id);
+  if (own) return own;
+  if (kind === "workitem")
+    return `/work-items?wi=${wi_number ?? node_id}`;
+  return LIST_PAGE[kind] ?? null;
+}
+
 // --- fractional ranking -----------------------------------------------------
 
 /**

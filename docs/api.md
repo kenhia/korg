@@ -402,6 +402,13 @@ the tail via `list_comments`:
 
 - `GET /api/work-items/:wi` and the `get_work_item` tool — **the same shape**.
   They were one operation under one name with two shapes until sprint 015.
+  The tool takes `wi_number` **or** `node_id` (WI #966): the 0009 identity
+  migration made a work item's node id equal its `wi_number`, so an agent
+  holding either — and `related`, `covered` and `list_awaiting` all hand out
+  `node_id` — is holding the right number. Passing both is `invalid_input`,
+  matching the project/area selectors: korg does not choose between two ids the
+  caller passed on purpose. REST keeps the single path segment, which is
+  unambiguous by construction.
 - `GET /api/proposals/:node_id` and the `get_proposal` tool — the proposal,
   its `covered` work items (`wi_number`, `node_id`, `title`, `wi_status`,
   `wi_tshirt`, `project`, `comment_count`, ordered by `wi_number`), and its

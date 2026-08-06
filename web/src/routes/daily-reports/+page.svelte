@@ -3,7 +3,7 @@
   import Comments from "$lib/components/Comments.svelte";
   import NodePreview from "$lib/components/NodePreview.svelte";
   import { renderMarkdown } from "$lib/markdown";
-  import { reportStatusPill } from "$lib/domain";
+  import { ID_CLASS, reportStatusPill } from "$lib/domain";
 
   let rows = $state<ReportRow[]>([]);
   let expanded = $state<Set<number>>(new Set());
@@ -71,6 +71,9 @@
         aria-expanded={expanded.has(r.node_id)}
       >
         <span class="text-[var(--color-muted)]">{expanded.has(r.node_id) ? "▾" : "▸"}</span>
+        <!-- #980 — a report is addressed by node_id (get_report, and it is what
+             a finding's `related` block cites). -->
+        <span class={`shrink-0 ${ID_CLASS}`}>#{r.node_id}</span>
         <span class="font-mono text-sm tabular-nums">{r.report_date}</span>
         <span class={reportStatusPill(r.status)}>
           {r.status}
