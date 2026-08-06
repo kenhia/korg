@@ -175,3 +175,53 @@ belongs in **krot**, whose whole job is knowing every copy of a rotatable secret
 Not done here.
 
 ## Deployed
+
+Deployed to `kubsdb` 2026-08-06 (post-merge, from `main` @ `1eacecd`) — the
+**first compose-driven deploy of korg**, and the one that closes the loop this
+sprint is about.
+
+| | |
+|---|---|
+| Image | `korg:1eacecd10af7` / `korg:latest`, revision label `1eacecd10af76e99ded9329f2bd427025783ed02` |
+| Rollback target | `korg:2d3c401ce6b2` (sprint 046), retained on kubsdb |
+| Migration | none — deploy/docs only; `migrations: 23` before and after |
+
+The one-time cutover guard **fired exactly once**, as designed: it saw a
+container with no `com.docker.compose.project` label, printed `removing
+pre-compose container (one-time)`, removed it, and `docker compose up -d`
+created the replacement. On any subsequent deploy the label is present and the
+branch is skipped.
+
+Verified live:
+
+- `com.docker.compose.project=korg`, `service=korg` — **the labels are back.**
+  Their absence is what sprint 016 misread, and what made this sprint's audit
+  trail wrong in the first place.
+- Revision label on the running container matches the commit built, exactly.
+- Deployed `/datastore/korg/docker-compose.yml` is **byte-identical** to the
+  committed `deploy/docker-compose.yml` (sha256 `366c25f2…` both sides) — the
+  proposal's stated success criterion.
+- `korg.env` untouched; the container's environment is unchanged from before the
+  cutover, including `KORG_WEB_DIR` and `KORG_LISTEN_ADDR` arriving from the
+  image rather than the env file.
+- `post-deploy-check.sh --compare`: `== OK`. Every count flat (935 nodes, 708
+  work items, 149 proposals, 40 projects, 30 cards, 27 reports, 4 links, 1
+  topic), schema and sequence state identical.
+- `/`, `/plan`, `/work-items` all 200 over the tailnet HTTPS URL; container
+  `healthy`; MCP exercised by a real `get_work_item` call against the new
+  container.
+
+One thing worth not misreading: a bare `curl -X POST /mcp` returns *"Not
+Acceptable: Client must accept both application/json and text/event-stream"*.
+That is the MCP spec being enforced, not a broken endpoint — the transport was
+confirmed with an actual MCP client call instead.
+
+### A third instance of the same stdin trap
+
+The deploy hit the `docker exec -i` lesson again in a new costume: a nested
+`ssh -n`-less `ssh` inside an outer `ssh kai bash -s <<'EOF'` swallowed the rest
+of the preflight script, silently skipping the baseline capture. `ssh` reads
+stdin exactly like `docker exec -i` does. The general rule, now seen three times
+in one sprint: **any command that inherits stdin will eat the heredoc that is
+feeding the shell it runs in** — pass `-n` to nested `ssh`, redirect
+`</dev/null`, or give the inner command its own explicit input.
