@@ -24,6 +24,37 @@ nothing about what is on disk. The audit was one `ls` away from the truth.
 So this stopped being a credential emergency and became what it actually was: an
 undeclared deploy. Downgraded, not dismissed.
 
+## This was known once, and lost
+
+The compose file was not news to this repo. `sprints/004-sprint-proposal/DEPLOY.md`
+records finding it the hard way: a deploy that reconstructed `docker run` from
+`docker inspect` produced a container with an **empty** environment which
+crash-looped on `Error: DATABASE_URL is required`, and recovery was
+`find / -iname "*korg*"` on kubsdb turning up `/datastore/korg/docker-compose.yml`
+and `korg.env` — described there, exactly, as *"the actual source of truth,
+checked into neither git nor memory but sitting right there on the host"*. That
+record ends with an instruction:
+
+> check for a compose file on the target host *before* trying to hand-reconstruct
+> a `docker run` command.
+
+Sprints 004, 005 and 006 duly deployed with `cd /datastore/korg && docker compose
+up -d`.
+
+Then sprint **009** created the `deploy-kubsdb` skill, and its very first commit
+(`d60d674`) encodes `docker inspect` + `docker run` — the pre-004 approach. The
+lesson had been written down in a sprint record, which is not a place the next
+tool looks. Every deploy since has used `docker run`; that is why the container
+carries no compose labels; that is what sprint 016's audit saw and misread as
+"no compose file exists".
+
+So the same fact was learned in 004, discarded in 009, and mis-rediscovered in
+016. That chain is the argument for this sprint's shape. Committing the compose
+file and pointing the skill at it is not merely tidier than prose — it is the
+only version of the fix a future skill author cannot silently undo, because the
+run config becomes a file the deploy *reads* instead of a fact someone has to
+remember to honour.
+
 ## Goal
 
 Make "how does korg run, and how do I bring it up on a host that has never run
