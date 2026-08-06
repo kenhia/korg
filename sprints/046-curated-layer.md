@@ -59,4 +59,12 @@ panels:
 
 ## Deployed
 
-(filled at deploy)
+2026-08-06 — PR #49 squash-merged as `2d3c401`; image built from that
+commit, shipped and recreated on kubsdb (rollback target: `korg:8c2cc9e7`,
+the 045 image). `post-deploy-check.sh --compare` clean — the only count
+change was the check's own idempotent-write probe (node 1005). Revision
+label verified. Smoke test on the live board: `proposal_edges` serves the
+kfdc:999 `depends_on` korg:1004 edge with `origin: "kfdc-sprint-003"` —
+the curated layer's first row is the edge that sequenced this very slice —
+and `synopsis` is `null` everywhere, correctly, until the curator's first
+pass.
