@@ -131,16 +131,51 @@ The matching new dependency is recorded there too: korg's deploy needs the
 both, so k-homelab restores the package store before korg. `/datastore/packages`
 is mirrored to the NAS nightly.
 
+## Deployed
+
+Deployed to `kubsdb` 2026-08-06 (post-merge, from `main` @ `4262e0a`) — the
+**first registry-driven deploy of korg**, and the cutover this sprint exists
+for. No migration; deploy/docs only.
+
+| | |
+|---|---|
+| Image | `kubsdb.encke-wahoo.ts.net:5000/korg:4262e0a08b1a` + `:latest`, digest `sha256:e4ac5fb8…`, revision label `4262e0a08b1aae60b3652ec0e720679c9d41e5ce` |
+| Rollback target | `kubsdb.encke-wahoo.ts.net:5000/korg:1eacecd10af7` (sprint 047) — **in the registry**, confirmed pullable |
+| Migration | none — `migrations: 23` before and after |
+
+Verified live:
+
+- The **revision gate fired for real and passed**: `running revision
+  4262e0a08b1a…` matched the commit built. It is the first thing in korg's
+  deploy that would have *failed the deploy* rather than merely reported oddly.
+- `docker compose pull` fetched the new image and `up -d` recreated the
+  container — and, as this sprint documented, the pull's own output said
+  nothing distinguishable. The gate is what made it evidence.
+- The container's image reference is now
+  `kubsdb.encke-wahoo.ts.net:5000/korg:latest`, not `korg:latest` — the cutover
+  landed in the run config, not just in the procedure.
+- Deployed `/datastore/korg/docker-compose.yml` byte-identical to the committed
+  file (md5 `6eab3f9e…` both sides); compose labels `korg / korg` intact, so
+  the one-time pre-compose guard correctly did **not** fire.
+- `post-deploy-check.sh --compare`: every row count and all schema state
+  unchanged. `/plan` and `/api/health` both 200.
+- **Rollback proven, not asserted**: pulled `korg:1eacecd10af7` on kubsdb from
+  the registry (`Image is up to date`) without disturbing the running
+  container. The rollback path is a real, exercised route on day one rather
+  than a claim to be tested during an outage.
+
+The registry now holds `1eacecd10af7`, `4262e0a08b1a` and `latest` — korg's
+deploy history exists off the deploying host for the first time.
+
 ## Follow-ups, filed not implied
 
-- **Supersede the klams korg memory at deploy time, not before.**
-  `019f541f-7752-7162-aa15-a883147bb90f` records *"Deploys: build `korg:latest`
-  locally, `docker save | ssh kubsdb docker load` … No image registry."* That
-  is still accurate for the **running** deployment — kubsdb's
-  `/datastore/korg/docker-compose.yml` is the pre-cutover copy until this
-  branch deploys — so it was deliberately left alone rather than updated to
-  describe a state that is not yet live. Supersede it once the deploy lands,
-  in the same sitting as the sprint's Deployed section.
+- ~~Supersede the klams korg memory at deploy time, not before.~~ **Done.**
+  `019f541f-7752-7162-aa15-a883147bb90f` recorded *"Deploys: build
+  `korg:latest` locally, `docker save | ssh kubsdb docker load` … No image
+  registry."* That stayed accurate for the **running** deployment right up to
+  the cutover above, so it was deliberately left alone during the sprint rather
+  than updated to describe a state that was not yet live — and superseded in
+  the same sitting as this Deployed section.
 
 - **kwebi has its own `deploy-kubsdb` skill** (`~/src/tools/kwebi`) which also
   states there is no registry. It is not in the #1026 program, which names only
