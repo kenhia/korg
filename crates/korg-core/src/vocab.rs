@@ -32,6 +32,32 @@ pub const WI_LIVE_STATUSES: [&str; 3] = ["open", "resolved", "done"];
 /// side it falls on; `wi_statuses_partition_cleanly` fences that.
 pub const WI_TERMINAL_STATUSES: [&str; 1] = ["closed"];
 
+/// The statuses that mean **the work is finished** (#978, sprint 053).
+///
+/// **This is not [`WI_TERMINAL_STATUSES`], and confusing the two is the whole
+/// reason it has a name.** That split is about *list visibility* — which rows a
+/// lean `list_work_items` hides — and it holds `closed` alone, because `done`
+/// stays visible by design. This split is about *completion*: whether a thing
+/// depending on this item is still waiting. `done` is "agent satisfied", which
+/// this doc comment has called terminal since #285, so a dependency on a `done`
+/// item is satisfied even though the row is still on screen.
+///
+/// A reader that used `WI_TERMINAL_STATUSES` here would report every `done`
+/// dependency as an unmet blocker — a deterministic panel confidently wrong,
+/// which is precisely what #977 and #978 exist to prevent.
+///
+/// This is also the set `advance_completed_anchor` has always used (sprint 051:
+/// finishing a materialised maintenance item restarts a `completed`-anchored
+/// schedule's clock). Naming it makes the two agree by construction rather than
+/// by two matching literals in different files.
+pub const WI_FINISHED_STATUSES: [&str; 2] = ["done", "closed"];
+
+/// The complement of [`WI_FINISHED_STATUSES`] — a dependency in one of these
+/// still blocks. `resolved` is the interesting member: "implemented; may still
+/// need a user test / may not be PR'd" is not landed, and a queue row told it
+/// was unblocked by unlanded work would be told to start on sand.
+pub const WI_UNFINISHED_STATUSES: [&str; 2] = ["open", "resolved"];
+
 /// Work-item types (D-2). `brainstorm` is deliberate: half-formed ideas get
 /// filed as work items rather than lost.
 ///
@@ -286,7 +312,8 @@ mod partition {
         PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES, PROGRAM_TERMINAL_STATUSES, PROPOSAL_LIVE_STATUSES,
         PROPOSAL_STATUSES, PROPOSAL_TERMINAL_STATUSES, REPORT_STATUSES, SCHEDULE_LIVE_STATUSES,
         SCHEDULE_STATUSES, SCHEDULE_TERMINAL_STATUSES, SOURCE_ASSERTIONS, SOURCE_ASSERTS_UNKNOWN,
-        SOURCE_FRESHNESS, WI_LIVE_STATUSES, WI_STATUSES, WI_TERMINAL_STATUSES,
+        SOURCE_FRESHNESS, WI_FINISHED_STATUSES, WI_LIVE_STATUSES, WI_STATUSES,
+        WI_TERMINAL_STATUSES, WI_UNFINISHED_STATUSES,
     };
     use std::collections::BTreeSet;
 
@@ -331,6 +358,44 @@ mod partition {
             live.union(&terminal).copied().collect::<BTreeSet<&str>>(),
             "every work-item status must be classified live or terminal — \
              list_work_items' default and its `omitted` counts both depend on it"
+        );
+    }
+
+    /// The *completion* split (#978), fenced separately from the visibility one
+    /// above because they are different questions over the same vocabulary and
+    /// a fifth status has to be classified on both axes.
+    ///
+    /// The assertion that matters is the last one: these two partitions must
+    /// **not** be the same set. If a future edit made them agree, the name
+    /// `WI_FINISHED_STATUSES` would stop earning its existence and the next
+    /// reader would collapse them back into one — reintroducing exactly the bug
+    /// the split was created to prevent, in which every `done` dependency reads
+    /// as an unmet blocker.
+    #[test]
+    fn wi_statuses_partition_by_completion_too() {
+        let all: BTreeSet<&str> = WI_STATUSES.into_iter().collect();
+        let finished: BTreeSet<&str> = WI_FINISHED_STATUSES.into_iter().collect();
+        let unfinished: BTreeSet<&str> = WI_UNFINISHED_STATUSES.into_iter().collect();
+        assert!(
+            finished.is_disjoint(&unfinished),
+            "a work-item status is both finished and unfinished: {:?}",
+            finished.intersection(&unfinished).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            all,
+            finished
+                .union(&unfinished)
+                .copied()
+                .collect::<BTreeSet<&str>>(),
+            "every work-item status must be classified finished or unfinished — \
+             the board's blocker derivation (#978) asks this of every dependency"
+        );
+        let terminal: BTreeSet<&str> = WI_TERMINAL_STATUSES.into_iter().collect();
+        assert_ne!(
+            finished, terminal,
+            "WI_FINISHED_STATUSES and WI_TERMINAL_STATUSES must stay different \
+             sets — `done` is finished work that a lean list still shows, and \
+             collapsing the two makes every `done` dependency read as a blocker"
         );
     }
 

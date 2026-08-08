@@ -28,6 +28,83 @@ title: string, project: string | null,
 status: string | null, awaiting_since: string | null, awaiting_note: string | null, archived: boolean, };
 
 /**
+ * One unmet dependency holding up a live board row — Deconfliction's
+ * deterministic half (#978).
+ *
+ * The concept renders a card naming both sides (`korg 825 ⟂ korg #861`), which
+ * is why this is the blocking *ref* and not a boolean: a boolean cannot be
+ * widened later without another contract change, and it cannot name the thing
+ * the reader has to go look at.
+ */
+export type BoardBlocker = { 
+/**
+ * The `active`/`queue` row that cannot proceed.
+ */
+proposal: number, 
+/**
+ * Where the dependency was written — `proposal` when the proposal itself
+ * carries the `depends_on` edge, `covered` when one of its covered work
+ * items does. Both count (D-3), and they are distinguished rather than
+ * merged because they mean different things to a reader: the first is a
+ * sequencing decision about the sprint, the second is one task inside it
+ * waiting on something outside.
+ */
+via: string, 
+/**
+ * The node carrying the edge: the proposal itself, or the covered item.
+ */
+dependent: number, dependent_wi_number: number | null, 
+/**
+ * What is depended on, resolved enough to render without a follow-up read.
+ */
+blocker: number, blocker_kind: string, blocker_wi_number: number | null, blocker_title: string, blocker_project: string | null, blocker_status: string, 
+/**
+ * The `program` whose ordered slices already express this dependency —
+ * set when the blocked proposal **and** the blocker's owning proposal are
+ * both slices of the same live program, `null` otherwise.
+ *
+ * This field is kfdc #1070's answer (D-5). Ken's objection to the
+ * Deconfliction panel was that for program-ordered work it "is essentially
+ * showing the same data twice, in Operations and Deconfliction" — and he is
+ * right, but the fix cannot live in kfdc, because **kfdc cannot filter what
+ * korg did not label**. korg says which dependencies Operations is already
+ * rendering as sequence; the render decides whether to show them. Neither
+ * side has to guess, and korg does not lose a true fact to make one panel
+ * tidier.
+ */
+sequenced_by: number | null, };
+
+/**
+ * One line of the board's ticker: a status change that actually happened
+ * (#977).
+ *
+ * Every field but `from_status`/`to_status`/`at` is resolved here so a ticker
+ * renders a line without a follow-up read per event — the same reason
+ * [`AwaitingRow`] carries a title and a status.
+ *
+ * **What is not here, and why the absence is the feature.** There is no actor:
+ * korg has no authenticated writer, and a self-reported one would read as
+ * provenance while being nothing of the sort. There is no free-text label:
+ * a transition is `from` → `to` and the renderer names it, so the feed cannot
+ * drift from the statuses it describes.
+ */
+export type BoardEvent = { node_id: number, 
+/**
+ * `workitem`, `sprint_proposal` or `program` — the three kinds whose
+ * update paths write the log.
+ */
+kind: string, 
+/**
+ * Present when the node is a work item — its user-facing handle.
+ */
+wi_number: number | null, title: string, project: string | null, from_status: string, to_status: string, 
+/**
+ * When it happened, from Postgres's clock — the same one
+ * [`BoardRollup::generated`] reads, so an age computed against it is right.
+ */
+at: string, };
+
+/**
  * A program with its slices inlined — the Operations panel in one value.
  *
  * Both halves are the types `get_program` already returns (D-4), so a consumer
@@ -156,6 +233,19 @@ proposals_omitted: ProposalOmitted,
  */
 proposal_edges: Array<BoardProposalEdge>, 
 /**
+ * Deconfliction, the deterministic half (#978): every unmet `depends_on`
+ * holding up a live row, one entry per (row, blocker) pair. See
+ * [`BoardBlocker`] — in particular `sequenced_by`, which is how a consumer
+ * tells a real collision from work Operations already orders.
+ *
+ * Distinct from `proposal_edges` and not a superset of it: that list is
+ * *every* edge between two live rows whatever it says, this one is the
+ * subset that means "cannot start yet", widened to blockers that are not
+ * proposals at all. An edge to a finished or archived node appears in
+ * neither, because a satisfied dependency is not a blocker.
+ */
+blocked: Array<BoardBlocker>, 
+/**
  * Operations: live programs with their ordered slices.
  */
 programs: Array<BoardProgram>, programs_omitted: ProgramOmitted, 
@@ -170,10 +260,23 @@ awaiting: Array<AwaitingRow>,
 depth: Array<PlanningRollupRow>, 
 /**
  * Sensor Net: the newest [`BOARD_REPORT_CAP`] reports. `report_date` is the
- * only date in korg that records when something *happened*, which is why
- * this is the whole of the board's event story (D-7).
+ * only date in korg that records when something *happened* to the fleet.
  */
 reports: Array<ReportRow>, 
+/**
+ * The ticker: the newest [`BOARD_EVENT_CAP`] status transitions, newest
+ * first (#977, sprint 053 — sprint 045's D-7, now built).
+ *
+ * **Read the cold-start behaviour before wiring a panel to this.** The
+ * transition log begins at migration 0026 and was deliberately not
+ * backfilled: no honest history existed to backfill *from*, and
+ * manufacturing one out of `node.updated` is the precise lie the log was
+ * built to stop telling. So this is empty on a freshly migrated corpus and
+ * fills forward. An empty ticker means "nothing has moved since 0026", not
+ * "nothing has ever moved", and a renderer that cannot say that difference
+ * out loud should render nothing rather than "no recent activity".
+ */
+events: Array<BoardEvent>, 
 /**
  * Sensor Net, the other half (#950, sprint 051): every known reporting
  * source and whether korg can currently believe it.

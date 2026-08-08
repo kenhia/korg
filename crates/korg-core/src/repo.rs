@@ -18,8 +18,8 @@ use crate::ops::{self, schema};
 use crate::relationships;
 use crate::vocab::{
     self, CARD_STATUSES, LINK_DISPOSITIONS, PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES,
-    PROJECT_STATUS_ACTIVE, PROPOSAL_LIVE_STATUSES, PROPOSAL_STATUSES, REPORT_STATUSES,
-    WI_LIVE_STATUSES,
+    PROGRAM_TERMINAL_STATUSES, PROJECT_STATUS_ACTIVE, PROPOSAL_LIVE_STATUSES, PROPOSAL_STATUSES,
+    PROPOSAL_TERMINAL_STATUSES, REPORT_STATUSES, WI_FINISHED_STATUSES, WI_LIVE_STATUSES,
 };
 pub use crate::vocab::{PROJECT_CATEGORIES, PROJECT_STATUSES, WI_STATUSES};
 
@@ -287,6 +287,44 @@ where
 {
     sqlx::query("UPDATE node SET updated = now() WHERE id = $1")
         .bind(node_id)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+/// Append a status transition to the log (#977), or do nothing if the status
+/// did not actually move.
+///
+/// **The no-op guard is the point.** `node.updated` cannot serve a "recently
+/// shipped" feed because it advances on any edit — a proposal touched for its
+/// tags dates as newly shipped. A transition log that recorded every status
+/// *write* rather than every status *change* would rebuild that same lie one
+/// table over: korg's own post-deploy check re-PATCHes a status to the value it
+/// already holds, and agents re-set statuses routinely. So the caller passes
+/// what it read and what it is about to write, and equality means silence.
+/// Migration 0026's `transition_actually_changed` CHECK is the backstop.
+///
+/// Takes the transaction the status write itself is in, so an event cannot
+/// survive a rolled-back update — the same discipline `advance_completed_anchor`
+/// follows, and for the same reason.
+///
+/// Called from the three update paths that hook [`settle_awaiting`]. Schedules
+/// are deliberately absent: `materialize_schedule` moves a `once` schedule to
+/// `done` outside `update_schedule`, so hooking only the update path would give
+/// that kind a half-recorded history, and a feed that is silently partial for
+/// one kind is worse than one that never claims to cover it. A schedule's real
+/// history is its `materializes` edges, which already record every firing.
+async fn record_transition<'e, E>(executor: E, node_id: i64, from: &str, to: &str) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    if from == to {
+        return Ok(());
+    }
+    sqlx::query("INSERT INTO transition (node_id, from_status, to_status) VALUES ($1, $2, $3)")
+        .bind(node_id)
+        .bind(from)
+        .bind(to)
         .execute(executor)
         .await?;
     Ok(())
@@ -3632,6 +3670,13 @@ pub async fn update_proposal(
             .await?;
     }
     if let Some(v) = &patch.status {
+        // Read-before-write (#977): the log records status *changes*, and the
+        // only way to know one happened is to have seen what was there.
+        let before: String =
+            sqlx::query_scalar("SELECT status::text FROM sprint_proposal WHERE node_id = $1")
+                .bind(node_id)
+                .fetch_one(&mut *tx)
+                .await?;
         sqlx::query(
             "UPDATE sprint_proposal SET status = $2::sprint_proposal_status WHERE node_id = $1",
         )
@@ -3639,6 +3684,7 @@ pub async fn update_proposal(
         .bind(v)
         .execute(&mut *tx)
         .await?;
+        record_transition(&mut *tx, node_id, &before, v).await?;
     }
     if let Some(v) = patch.rank {
         sqlx::query("UPDATE sprint_proposal SET rank = $2 WHERE node_id = $1")
@@ -4129,11 +4175,17 @@ pub async fn update_program(
             .await?;
     }
     if let Some(v) = &patch.status {
+        // Read-before-write (#977), as in `update_proposal`.
+        let before: String = sqlx::query_scalar("SELECT status FROM program WHERE node_id = $1")
+            .bind(node_id)
+            .fetch_one(&mut *tx)
+            .await?;
         sqlx::query("UPDATE program SET status = $2 WHERE node_id = $1")
             .bind(node_id)
             .bind(v)
             .execute(&mut *tx)
             .await?;
+        record_transition(&mut *tx, node_id, &before, v).await?;
     }
     if let Some(v) = patch.rank {
         sqlx::query("UPDATE program SET rank = $2 WHERE node_id = $1")
@@ -4968,16 +5020,20 @@ pub async fn materialize_schedule(
 /// that lifecycle rules live in korg-core, the one path both transports share,
 /// never in a trigger that can drift from it.
 ///
-/// `done`/`closed` only. `resolved` is excluded on purpose and for the same
-/// reason [`SCHEDULE_DUE_SQL`] treats it as outstanding — a restore drill that
-/// is "implemented, may still need a user test" has not been performed, and
+/// [`WI_FINISHED_STATUSES`] only. `resolved` is excluded on purpose and for the
+/// same reason [`SCHEDULE_DUE_SQL`] treats it as outstanding — a restore drill
+/// that is "implemented, may still need a user test" has not been performed, and
 /// advancing the anchor there would restart the quarter from a drill nobody ran.
+///
+/// Sprint 053 replaced the literal pair here with the named vocabulary the
+/// board's blocker derivation also reads (#978), so "the work is finished" has
+/// one definition rather than two that happen to agree today.
 async fn advance_completed_anchor(
     tx: &mut Transaction<'_, Postgres>,
     wi_node_id: i64,
     new_status: &str,
 ) -> Result<()> {
-    if !matches!(new_status, "done" | "closed") {
+    if !WI_FINISHED_STATUSES.contains(&new_status) {
         return Ok(());
     }
     sqlx::query(
@@ -5388,6 +5444,121 @@ pub struct BoardProposalEdge {
     pub created: OffsetDateTime,
 }
 
+/// How many transitions the board's ticker carries (#977).
+///
+/// Four times [`BOARD_REPORT_CAP`], and the asymmetry is deliberate. A report is
+/// a whole document and five of them is a panel; a transition is one line, and a
+/// ticker showing five would cover about a day of a working sprint — short
+/// enough that "nothing shipped this week" and "five things shipped this
+/// morning" render identically. Twenty covers a sprint's worth of movement at
+/// korg's actual write rate, and the series lives behind the node's own history
+/// for anyone who wants more.
+pub const BOARD_EVENT_CAP: i64 = 20;
+
+/// One line of the board's ticker: a status change that actually happened
+/// (#977).
+///
+/// Every field but `from_status`/`to_status`/`at` is resolved here so a ticker
+/// renders a line without a follow-up read per event — the same reason
+/// [`AwaitingRow`] carries a title and a status.
+///
+/// **What is not here, and why the absence is the feature.** There is no actor:
+/// korg has no authenticated writer, and a self-reported one would read as
+/// provenance while being nothing of the sort. There is no free-text label:
+/// a transition is `from` → `to` and the renderer names it, so the feed cannot
+/// drift from the statuses it describes.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct BoardEvent {
+    pub node_id: i64,
+    /// `workitem`, `sprint_proposal` or `program` — the three kinds whose
+    /// update paths write the log.
+    pub kind: String,
+    /// Present when the node is a work item — its user-facing handle.
+    pub wi_number: Option<i64>,
+    pub title: String,
+    pub project: Option<String>,
+    pub from_status: String,
+    pub to_status: String,
+    /// When it happened, from Postgres's clock — the same one
+    /// [`BoardRollup::generated`] reads, so an age computed against it is right.
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub at: OffsetDateTime,
+}
+
+/// The board's ticker: the newest [`BOARD_EVENT_CAP`] status transitions
+/// (#977), newest first.
+///
+/// Archived nodes are excluded — they are out of every other panel, and an
+/// event feed is the wrong place to reintroduce them. `id` breaks the `at` tie
+/// because two transitions committed in one transaction share `now()` to the
+/// microsecond, and a ticker that reshuffles between refreshes is one nobody
+/// reads twice.
+pub async fn list_transitions(pool: &PgPool, limit: i64) -> Result<Vec<BoardEvent>> {
+    Ok(sqlx::query_as::<_, BoardEvent>(
+        "SELECT t.node_id, n.kind, w.wi_number, \
+                COALESCE(w.title, sp.title, g.title, n.kind || ' #' || n.id) AS title, \
+                pj.name AS project, t.from_status, t.to_status, t.at \
+           FROM transition t \
+           JOIN node n ON n.id = t.node_id \
+           LEFT JOIN workitem w         ON w.node_id  = n.id \
+           LEFT JOIN sprint_proposal sp ON sp.node_id = n.id \
+           LEFT JOIN program g          ON g.node_id  = n.id \
+           LEFT JOIN project pj         ON pj.id = n.project_id \
+          WHERE NOT n.archived \
+          ORDER BY t.at DESC, t.id DESC \
+          LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// One unmet dependency holding up a live board row — Deconfliction's
+/// deterministic half (#978).
+///
+/// The concept renders a card naming both sides (`korg 825 ⟂ korg #861`), which
+/// is why this is the blocking *ref* and not a boolean: a boolean cannot be
+/// widened later without another contract change, and it cannot name the thing
+/// the reader has to go look at.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct BoardBlocker {
+    /// The `active`/`queue` row that cannot proceed.
+    pub proposal: i64,
+    /// Where the dependency was written — `proposal` when the proposal itself
+    /// carries the `depends_on` edge, `covered` when one of its covered work
+    /// items does. Both count (D-3), and they are distinguished rather than
+    /// merged because they mean different things to a reader: the first is a
+    /// sequencing decision about the sprint, the second is one task inside it
+    /// waiting on something outside.
+    pub via: String,
+    /// The node carrying the edge: the proposal itself, or the covered item.
+    pub dependent: i64,
+    pub dependent_wi_number: Option<i64>,
+    /// What is depended on, resolved enough to render without a follow-up read.
+    pub blocker: i64,
+    pub blocker_kind: String,
+    pub blocker_wi_number: Option<i64>,
+    pub blocker_title: String,
+    pub blocker_project: Option<String>,
+    pub blocker_status: String,
+    /// The `program` whose ordered slices already express this dependency —
+    /// set when the blocked proposal **and** the blocker's owning proposal are
+    /// both slices of the same live program, `null` otherwise.
+    ///
+    /// This field is kfdc #1070's answer (D-5). Ken's objection to the
+    /// Deconfliction panel was that for program-ordered work it "is essentially
+    /// showing the same data twice, in Operations and Deconfliction" — and he is
+    /// right, but the fix cannot live in kfdc, because **kfdc cannot filter what
+    /// korg did not label**. korg says which dependencies Operations is already
+    /// rendering as sequence; the render decides whether to show them. Neither
+    /// side has to guess, and korg does not lose a true fact to make one panel
+    /// tidier.
+    pub sequenced_by: Option<i64>,
+}
+
 /// A program with its slices inlined — the Operations panel in one value.
 ///
 /// Both halves are the types `get_program` already returns (D-4), so a consumer
@@ -5437,6 +5608,17 @@ pub struct BoardRollup {
     /// rows, with label, registry `directed`, and D-17 provenance. See
     /// [`BoardProposalEdge`].
     pub proposal_edges: Vec<BoardProposalEdge>,
+    /// Deconfliction, the deterministic half (#978): every unmet `depends_on`
+    /// holding up a live row, one entry per (row, blocker) pair. See
+    /// [`BoardBlocker`] — in particular `sequenced_by`, which is how a consumer
+    /// tells a real collision from work Operations already orders.
+    ///
+    /// Distinct from `proposal_edges` and not a superset of it: that list is
+    /// *every* edge between two live rows whatever it says, this one is the
+    /// subset that means "cannot start yet", widened to blockers that are not
+    /// proposals at all. An edge to a finished or archived node appears in
+    /// neither, because a satisfied dependency is not a blocker.
+    pub blocked: Vec<BoardBlocker>,
     /// Operations: live programs with their ordered slices.
     pub programs: Vec<BoardProgram>,
     pub programs_omitted: ProgramOmitted,
@@ -5446,9 +5628,20 @@ pub struct BoardRollup {
     /// can count the active ones and dim the rest.
     pub depth: Vec<PlanningRollupRow>,
     /// Sensor Net: the newest [`BOARD_REPORT_CAP`] reports. `report_date` is the
-    /// only date in korg that records when something *happened*, which is why
-    /// this is the whole of the board's event story (D-7).
+    /// only date in korg that records when something *happened* to the fleet.
     pub reports: Vec<ReportRow>,
+    /// The ticker: the newest [`BOARD_EVENT_CAP`] status transitions, newest
+    /// first (#977, sprint 053 — sprint 045's D-7, now built).
+    ///
+    /// **Read the cold-start behaviour before wiring a panel to this.** The
+    /// transition log begins at migration 0026 and was deliberately not
+    /// backfilled: no honest history existed to backfill *from*, and
+    /// manufacturing one out of `node.updated` is the precise lie the log was
+    /// built to stop telling. So this is empty on a freshly migrated corpus and
+    /// fills forward. An empty ticker means "nothing has moved since 0026", not
+    /// "nothing has ever moved", and a renderer that cannot say that difference
+    /// out loud should render nothing rather than "no recent activity".
+    pub events: Vec<BoardEvent>,
     /// Sensor Net, the other half (#950, sprint 051): every known reporting
     /// source and whether korg can currently believe it.
     ///
@@ -5656,6 +5849,8 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
     })
     .collect();
 
+    let blocked = board_blockers(pool, &live_ids, &slice_edges).await?;
+
     // Newest marker-opened comment per live row. `updated` orders because the
     // curator edits its one comment in place (CURATOR_MARKER's contract), so
     // insertion order goes stale the first time a synopsis is refreshed.
@@ -5696,13 +5891,193 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
         proposals_omitted: proposal_omitted(pool, None, archived_default(), Some(&live_statuses))
             .await?,
         proposal_edges,
+        blocked,
         programs,
         programs_omitted,
         awaiting: list_awaiting(pool).await?,
         depth: planning_rollup(pool).await?,
         reports: list_reports(pool, None, BOARD_REPORT_CAP).await?,
+        events: list_transitions(pool, BOARD_EVENT_CAP).await?,
         sources: list_report_sources(pool).await?,
     })
+}
+
+/// The blocker pass (#978): which live board rows cannot start, and on what.
+///
+/// Three queries and no new data — `depends_on` edges are already real, typed
+/// and deterministic, which is the entire case the WI makes for building this
+/// rather than mining it out of prose.
+///
+/// **Where the four design questions landed** (#978 listed them as questions
+/// with several defensible answers each; these are the answers, and each one is
+/// pinned by a test in `sprint053.rs`):
+///
+/// 1. **Granularity — both.** A proposal is blocked when it depends on
+///    something unfinished *or* when a work item it covers does. `via`
+///    distinguishes them so a render can choose; merging them would have thrown
+///    away the distinction for good.
+/// 2. **Doneness — from the vocabulary, per kind.** [`WI_FINISHED_STATUSES`]
+///    for work items (**not** `WI_TERMINAL_STATUSES` — see that const's docs for
+///    the bug that confusion produces), [`PROPOSAL_TERMINAL_STATUSES`] for
+///    proposals, [`PROGRAM_TERMINAL_STATUSES`] for programs. Deriving rather
+///    than hardcoding is what makes a future status handled here for free.
+/// 3. **Transitivity — one hop.** A closure is a different query and a
+///    different UI, and nothing has asked for one. A blocked blocker still
+///    appears in its own right, so the chain is visible without being computed.
+/// 4. **Shape — the refs.** See [`BoardBlocker`].
+///
+/// Two exclusions that are decisions rather than oversights:
+///
+/// * **An archived blocker does not block.** It is out of every other view, and
+///   a row held blocked forever by something nobody will ever do is worse than
+///   a row that quietly frees up. What archiving a depended-on node *should*
+///   surface is a dangling-dependency warning — a different card, and one
+///   nothing has asked for.
+/// * **A finished covered item's dependencies do not block.** If a covered work
+///   item is `done` and it depended on something still open, the proposal is not
+///   waiting on it: the work happened anyway. Only an unfinished dependent can
+///   be stuck.
+///
+/// A `depends_on` whose target is a kind with no lifecycle korg tracks (a link,
+/// a report, a handoff) is not a blocker: korg cannot say whether such a node is
+/// "finished", and inventing an answer is the failure mode this panel exists to
+/// avoid.
+async fn board_blockers(
+    pool: &PgPool,
+    live_ids: &[i64],
+    slice_edges: &[(i64, i64, Option<Decimal>)],
+) -> Result<Vec<BoardBlocker>> {
+    let wi_finished: Vec<String> = WI_FINISHED_STATUSES.iter().map(|s| s.to_string()).collect();
+
+    // Both granularities in one pass. The `covered` arm requires the covered
+    // item to be unfinished and unarchived — a `done` task's own dependencies
+    // are nobody's blocker.
+    let deps = sqlx::query_as::<_, (String, i64, i64, Option<i64>, i64)>(
+        "SELECT 'proposal' AS via, r.left_id AS proposal, r.left_id AS dependent, \
+                NULL::bigint AS dependent_wi_number, r.right_id AS blocker \
+           FROM relationship r \
+          WHERE r.relationship = 'depends_on' AND r.left_id = ANY($1) \
+          UNION ALL \
+         SELECT 'covered', c.left_id, r.left_id, w.wi_number, r.right_id \
+           FROM relationship c \
+           JOIN relationship r ON r.left_id = c.right_id \
+                              AND r.relationship = 'depends_on' \
+           JOIN workitem w ON w.node_id = c.right_id \
+           JOIN node dn    ON dn.id     = c.right_id \
+          WHERE c.relationship = 'covers' AND c.left_id = ANY($1) \
+            AND NOT (w.wi_status = ANY($2)) AND NOT dn.archived",
+    )
+    .bind(live_ids)
+    .bind(&wi_finished)
+    .fetch_all(pool)
+    .await?;
+
+    if deps.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Resolve every candidate blocker once, across kinds — the same COALESCE
+    // shape `AWAITING_SELECT` uses, for the same reason.
+    let blocker_ids: Vec<i64> = deps.iter().map(|(_, _, _, _, b)| *b).collect();
+    let resolved = sqlx::query_as::<
+        _,
+        (
+            i64,
+            String,
+            bool,
+            Option<i64>,
+            String,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
+        "SELECT n.id, n.kind, n.archived, w.wi_number, \
+                COALESCE(w.title, sp.title, g.title, cd.title, lk.title, lk.url, \
+                         rp.summary, hd.title, n.kind || ' #' || n.id) AS title, \
+                pj.name AS project, \
+                COALESCE(w.wi_status, sp.status::text, g.status) AS status \
+           FROM node n \
+           LEFT JOIN workitem w         ON w.node_id  = n.id \
+           LEFT JOIN sprint_proposal sp ON sp.node_id = n.id \
+           LEFT JOIN program g          ON g.node_id  = n.id \
+           LEFT JOIN card cd            ON cd.node_id = n.id \
+           LEFT JOIN link lk            ON lk.node_id = n.id \
+           LEFT JOIN report rp          ON rp.node_id = n.id \
+           LEFT JOIN handoff hd         ON hd.node_id = n.id \
+           LEFT JOIN project pj         ON pj.id = n.project_id \
+          WHERE n.id = ANY($1)",
+    )
+    .bind(&blocker_ids)
+    .fetch_all(pool)
+    .await?;
+
+    // The blocker's owning proposal, for the `sequenced_by` test below. A
+    // blocker that IS a proposal owns itself.
+    let owners: std::collections::HashMap<i64, i64> = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT r.right_id, r.left_id FROM relationship r \
+              WHERE r.relationship = 'covers' AND r.right_id = ANY($1)",
+    )
+    .bind(&blocker_ids)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .collect();
+
+    // Slice membership, from the edges the caller already fetched — so
+    // `sequenced_by` can only ever name a program the Operations panel is
+    // actually rendering.
+    let mut programs_of: std::collections::HashMap<i64, Vec<i64>> =
+        std::collections::HashMap::new();
+    for (program, proposal, _) in slice_edges {
+        programs_of.entry(*proposal).or_default().push(*program);
+    }
+
+    let mut out = Vec::new();
+    for (via, proposal, dependent, dependent_wi_number, blocker) in deps {
+        let Some((_, kind, archived, wi_number, title, project, status)) =
+            resolved.iter().find(|r| r.0 == blocker)
+        else {
+            continue;
+        };
+        if *archived {
+            continue;
+        }
+        // A kind with no lifecycle status resolves to NULL and is not a blocker.
+        let Some(status) = status else { continue };
+        let unfinished = match kind.as_str() {
+            "workitem" => !WI_FINISHED_STATUSES.contains(&status.as_str()),
+            "sprint_proposal" => !PROPOSAL_TERMINAL_STATUSES.contains(&status.as_str()),
+            "program" => !PROGRAM_TERMINAL_STATUSES.contains(&status.as_str()),
+            _ => false,
+        };
+        if !unfinished {
+            continue;
+        }
+        // Both ends slices of one live program => Operations already draws it.
+        let owning = owners.get(&blocker).copied().unwrap_or(blocker);
+        let sequenced_by = programs_of.get(&proposal).and_then(|mine| {
+            programs_of
+                .get(&owning)
+                .and_then(|theirs| mine.iter().find(|p| theirs.contains(p)).copied())
+        });
+        out.push(BoardBlocker {
+            proposal,
+            via,
+            dependent,
+            dependent_wi_number,
+            blocker,
+            blocker_kind: kind.clone(),
+            blocker_wi_number: *wi_number,
+            blocker_title: title.clone(),
+            blocker_project: project.clone(),
+            blocker_status: status.clone(),
+            sequenced_by,
+        });
+    }
+    // Stable across calls: equal ranks used to shuffle rows (F-19) and a
+    // Deconfliction card that moves between refreshes is one nobody trusts.
+    out.sort_by_key(|b| (b.proposal, b.blocker, b.dependent, b.via.clone()));
+    Ok(out)
 }
 
 // --- work item update (Edit + Archive) ------------------------------------
@@ -5818,11 +6193,18 @@ pub async fn update_work_item(
             .await?;
     }
     if let Some(v) = &patch.wi_status {
+        // Read-before-write (#977), as in `update_proposal`.
+        let before: String =
+            sqlx::query_scalar("SELECT wi_status FROM workitem WHERE node_id = $1")
+                .bind(node_id)
+                .fetch_one(&mut *tx)
+                .await?;
         sqlx::query("UPDATE workitem SET wi_status = $2 WHERE node_id = $1")
             .bind(node_id)
             .bind(v)
             .execute(&mut *tx)
             .await?;
+        record_transition(&mut *tx, node_id, &before, v).await?;
     }
     if let Some(v) = &patch.wi_tshirt {
         sqlx::query("UPDATE workitem SET wi_tshirt = $2 WHERE node_id = $1")
