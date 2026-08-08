@@ -71,7 +71,8 @@
             "open",
             "resolved",
             "done",
-            "closed"
+            "closed",
+            "parked"
           ],
           "type": "string"
         },
@@ -149,6 +150,7 @@
             "resolved",
             "done",
             "closed",
+            "parked",
             "all"
           ],
           "type": [
@@ -278,7 +280,8 @@
             "open",
             "resolved",
             "done",
-            "closed"
+            "closed",
+            "parked"
           ],
           "type": "string"
         },
