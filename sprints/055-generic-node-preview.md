@@ -131,3 +131,49 @@ arm live because production held zero schedules.
   documenting materialise semantics, dispositions and report findings from
   scratch, which is its own item rather than a ship-time drive-by. Worth
   filing.
+
+## Deployed 2026-08-08
+
+Image `kubsdb.encke-wahoo.ts.net:5000/korg:01de7bd78c96`
+(digest `sha256:8ea6466a5fd6…`, revision
+`01de7bd78c965d5b32cc0fec6c0a0980507fd043` — the squash-merge of PR #58).
+Rollback target: `korg:9ef654695280` (sprint 054), confirmed present in the
+registry before building.
+
+Revision assertion passed in-deploy: the running container's
+`org.opencontainers.image.revision` matches the commit built, so the
+`compose pull` was real and not a cached no-op.
+
+`post-deploy-check.sh --compare` clean. **Every row count unchanged** and
+`migrations` still **26** — this sprint is pure rendering of payloads that
+already existed, and the unchanged migration count is the deploy-side evidence
+of exactly that.
+
+Verified live beyond the fixed check, with a **read-only** browser pass — no
+comment was posted and nothing was created, because the target is the real
+database:
+
+- **A proposal's preview carries its comments and timestamps** (#1104, #1106).
+  Checked on proposal #439 in the live queue: tags `kyac`/`#post-mvp-review`/
+  `#autonomy` render, `created 7/13/2026, 5:59:50 PM` renders, and the Comments
+  section with its input is present. This is the sprint's headline and it is
+  live on real data.
+- **Planning cards carry `queued <date>` and tag chips** (#1106), on the live
+  queue rather than a fixture.
+- **A reading-list link opens a preview with a comment surface** (#1107), on one
+  of the four real links.
+- `/`, `/planning`, `/schedules`, `/reading-list`, `/programs` all 200.
+
+**Not verified live: the schedule run history (#1105)** — the sprint's other
+substantial change. Production now holds exactly one schedule (node 1109,
+created earlier today, `cadence: once`) and its `materialized_count` is **0**,
+so there is no history to expand and the disclosure correctly does not render.
+The feature is covered by two e2e specs against a real korg-api — including the
+materialise-with-history-open cache path — but it has not been exercised
+against production data, and this record should not imply otherwise.
+
+That is the second sprint running where a schedules change could not be
+confirmed live. 054 noted production held *zero* schedules; there is now one,
+never materialised. The quarterly restore drill that motivated #581 — and that
+`docs/operations.md` treats as the backstop for a bad migration — still does not
+exist as a schedule. Ken's call, not a defect.
