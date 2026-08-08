@@ -2,6 +2,8 @@
   import { onMount, tick } from "svelte";
   import {
     api,
+    type AttachmentRow,
+    type Comment,
     type ProjectRow,
     type ProposalRow,
     type WalkedPage,
@@ -26,7 +28,9 @@
     projectRailColor,
     relationshipReads,
   } from "$lib/domain";
-  import { renderMarkdown } from "$lib/markdown";
+  import AttachmentPanel from "$lib/components/AttachmentPanel.svelte";
+  import { modalOpen } from "$lib/components/Dialog.svelte";
+  import MarkdownView from "$lib/components/MarkdownView.svelte";
   import MultiSelectFilter from "$lib/components/MultiSelectFilter.svelte";
   import WorkItemForm from "$lib/components/WorkItemForm.svelte";
   import NodePreview from "$lib/components/NodePreview.svelte";
@@ -79,6 +83,12 @@
   let detail = $state<WorkItemRow | null>(null);
   let cursor = $state<number | null>(null);
   let related = $state<RelatedRef[]>([]);
+  // Both come from the same `get_work_item` read as `related` does, and are
+  // held beside it for the same reason: the list row that seeds `detail` does
+  // not carry them (#1121). `detailComments` is bound from <Comments> and read
+  // only for the attachment list's inline-or-not indicator.
+  let attachments = $state<AttachmentRow[]>([]);
+  let detailComments = $state<Comment[]>([]);
   let currentAreas = $state<{ id: number; name: string }[]>([]);
   let detailAreas = $state<{ id: number; name: string }[]>([]);
 
@@ -556,6 +566,7 @@
     cursor = item.wi_number;
     editing = false;
     related = [];
+    attachments = [];
     detailAreas = [];
     // get_work_item inlines the related-context block (LB-3), so the detail
     // panel reads its relationships from the same fetch — no separate neighbors
@@ -565,6 +576,7 @@
     if (full) {
       detail = full;
       related = full.related;
+      attachments = full.attachments;
     }
     detailAreas = item.project ? await loadAreas(item.project) : [];
   }
@@ -586,6 +598,7 @@
     if (u) {
       detail = u;
       related = u.related;
+      attachments = u.attachments;
     }
   }
 
@@ -684,6 +697,10 @@
   }
 
   function onKey(e: KeyboardEvent) {
+    // A modal on top owns the keyboard. Without this, Escape out of the
+    // lightbox (or the node preview) also closed the detail panel underneath
+    // it, because `keydown` bubbles to `window` even from inside a `<dialog>`.
+    if (modalOpen()) return;
     const tag = (e.target as HTMLElement)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if (creating) {
@@ -1308,18 +1325,29 @@
 
       <section>
         <h3 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Content</h3>
-        <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
-        <div class="prose prose-invert max-w-none text-sm">{@html renderMarkdown(item.content)}</div>
+        <MarkdownView src={item.content} />
       </section>
 
       {#if item.details}
         <section>
           <h3 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Details</h3>
-          <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
-          <div class="prose prose-invert max-w-none rounded p-2 text-sm" style="background: color-mix(in oklch, var(--color-surface) 75%, var(--color-accent) 25%)">{@html renderMarkdown(item.details)}</div>
+          <MarkdownView
+            src={item.details}
+            class="prose prose-invert max-w-none rounded p-2 text-sm"
+            style="background: color-mix(in oklch, var(--color-surface) 75%, var(--color-accent) 25%)"
+          />
         </section>
       {/if}
     {/if}
+
+    <!-- Attachments below the body, above the relationships: closer to the
+         prose the images are placed in than to the graph edges (#1121). -->
+    <AttachmentPanel
+      {attachments}
+      ownerNodeId={item.node_id}
+      bodies={[item.content, item.details, ...detailComments.map((c) => c.body)]}
+      onChanged={refreshDetail}
+    />
 
     <section>
       <div class="mb-1 flex items-center justify-between border-b border-[var(--color-border)] pb-1">
@@ -1368,6 +1396,10 @@
       {/if}
     </section>
 
-    <Comments node_id={item.node_id} />
+    <Comments
+      node_id={item.node_id}
+      bind:comments={detailComments}
+      onAttachmentsChanged={refreshDetail}
+    />
   </article>
 {/snippet}

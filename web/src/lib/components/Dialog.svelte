@@ -1,3 +1,23 @@
+<script module lang="ts">
+  // How many modals are open, and the question pages actually ask: "is
+  // something modal on top of me?".
+  //
+  // `showModal()` makes the rest of the page inert for *pointer and focus*, but
+  // a `keydown` still bubbles to `window` — so a page-level Escape handler
+  // fires alongside the dialog's own, and one keystroke closes two things. That
+  // is how Escape out of the lightbox also closed the work item behind it
+  // (#1121). Counting here rather than querying `dialog[open]` keeps the answer
+  // to korg's own modals: a `<dialog>` opened non-modally by something else is
+  // not on top of anything.
+  let openModals = 0;
+
+  /** True while any korg modal is open. Page-level key handlers return early on
+   *  this so the topmost thing owns the key. */
+  export function modalOpen(): boolean {
+    return openModals > 0;
+  }
+</script>
+
 <script lang="ts">
   // The one modal primitive (WI #548), built on the native `<dialog>` element.
   //
@@ -20,7 +40,11 @@
   // or Escape, and the cards modal had Escape only.
   //
   // `placement` reproduces the two looks korg already had: a right-hand
-  // slide-over (NodePreview) and a centred panel (the cards editor).
+  // slide-over (NodePreview) and a centred panel (the cards editor) — plus
+  // `lightbox` (#1121), a transparent full-viewport box whose only content is
+  // the image. A third placement rather than a second modal primitive: the
+  // lightbox needs exactly the trap/restore/Escape/backdrop this element
+  // already gives, and differs only in how big the box is.
 
   interface Props {
     open: boolean;
@@ -29,7 +53,7 @@
     title: string;
     /** Show the title visually, or keep it for assistive tech only. */
     titleHidden?: boolean;
-    placement?: "side" | "center";
+    placement?: "side" | "center" | "lightbox";
     children: import("svelte").Snippet;
     /** Optional extra controls rendered next to the close button. */
     actions?: import("svelte").Snippet;
@@ -57,6 +81,25 @@
   // parent chooses to unmount.
   let opener: HTMLElement | null = null;
 
+  // Whether *this* dialog is currently counted in `openModals`, so the count
+  // survives both close paths (the `open` prop going false, and the parent
+  // simply unmounting the component) without ever double-counting.
+  let counted = false;
+
+  function markOpen() {
+    if (!counted) {
+      counted = true;
+      openModals += 1;
+    }
+  }
+
+  function markClosed() {
+    if (counted) {
+      counted = false;
+      openModals -= 1;
+    }
+  }
+
   function restoreFocus() {
     const target = opener;
     opener = null;
@@ -77,15 +120,20 @@
     if (open && !d.open) {
       opener = document.activeElement as HTMLElement | null;
       d.showModal();
+      markOpen();
     } else if (!open && d.open) {
       d.close();
+      markClosed();
       restoreFocus();
     }
   });
 
   // Covers the common case: the parent drops the component rather than setting
   // `open` to false, so the effect above never runs its close branch.
-  $effect(() => () => restoreFocus());
+  $effect(() => () => {
+    markClosed();
+    restoreFocus();
+  });
 </script>
 
 <dialog
@@ -97,7 +145,9 @@
     "backdrop:bg-black/60 text-[var(--color-text)] outline-none",
     placement === "side"
       ? "ml-auto mr-0 h-full max-h-full w-full max-w-md border-l border-[var(--color-border)] bg-[var(--color-surface)] p-4"
-      : "m-auto w-full max-w-lg rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-xl",
+      : placement === "lightbox"
+        ? "m-auto max-h-[96dvh] max-w-[96vw] border-0 bg-transparent p-0 shadow-none"
+        : "m-auto w-full max-w-lg rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-xl",
     cls,
   ].join(" ")}
   oncancel={(e) => {
@@ -113,7 +163,12 @@
     if (e.target === e.currentTarget) onClose();
   }}
 >
-  <div class="mb-3 flex items-center justify-between gap-2">
+  <div
+    class={[
+      "flex items-center gap-2",
+      placement === "lightbox" ? "mb-1 justify-end" : "mb-3 justify-between",
+    ].join(" ")}
+  >
     <h2
       id={titleId}
       class={titleHidden ? "sr-only" : "text-lg font-semibold"}

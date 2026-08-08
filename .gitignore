@@ -10,6 +10,9 @@ deploy/korg.env
 # Playwright writes here if it is ever run from the repo root instead of web/.
 /test-results
 /playwright-report
+# The image store the e2e run writes to (playwright.config.ts sets
+# KORG_IMG_ROOT here so it never touches the container's /data/images).
+/.e2e-images
 
 # graphify (kai tooling) writes its stat cache here; never part of a build.
 graphify-out/

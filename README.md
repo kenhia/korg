@@ -96,7 +96,10 @@ curl -s -X POST http://localhost:8090/mcp \
 
 ```bash
 cd web && pnpm install && pnpm build
+# KORG_IMG_ROOT only matters if you use images — its default is the container's
+# /data/images, which a dev box does not have.
 DATABASE_URL=... KORG_TIMEZONE=Etc/UTC KORG_WEB_DIR=$PWD/build KORG_LISTEN_ADDR=0.0.0.0:8090 \
+  KORG_IMG_ROOT=/tmp/korg-images \
   cargo run -p korg-api          # open http://<host>:8090
 
 # Or hot-reload the UI against a running API:

@@ -9,7 +9,7 @@
   import { page } from "$app/stores";
   import { api, type ProgramDetail } from "$lib/api";
   import type { ProgramStatus } from "$lib/generated/vocab";
-  import { renderMarkdown } from "$lib/markdown";
+  import MarkdownView from "$lib/components/MarkdownView.svelte";
   import {
     ID_CLASS,
     PROGRESS_VERIFIED_CLASS,
@@ -142,10 +142,7 @@
     </header>
 
     {#if program.notes}
-      <article class="prose prose-invert max-w-none text-sm">
-        <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
-        {@html renderMarkdown(program.notes)}
-      </article>
+      <MarkdownView src={program.notes} />
     {/if}
 
     <div>

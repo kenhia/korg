@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { api, type WorkItemRow } from "$lib/api";
+  import { PasteUploads, pasteImages } from "$lib/imagePaste.svelte";
   import { WI_STATUSES, WI_TSHIRTS, WI_TYPES } from "$lib/generated/vocab";
 
   let {
@@ -37,6 +38,17 @@
   let saving = $state(false);
   let err = $state<string | null>(null);
 
+  // Images pasted into either editor, uploaded as they were pasted and claimed
+  // by the item on save (handoff D5). One ledger for both fields: the images
+  // belong to the work item, not to the textarea they were dropped in.
+  //
+  // Uploading with no owner even when editing an *existing* item is deliberate.
+  // The alternative — upload straight onto the item being edited — would leave
+  // an attachment behind on Cancel, permanently, because nothing sweeps a
+  // linked image. Pending-then-link makes Cancel cost nothing and gives the
+  // same result on Save.
+  const uploads = new PasteUploads();
+
   function tagList(): string[] {
     return tags
       .split(",")
@@ -55,8 +67,15 @@
     }
     saving = true;
     err = null;
+    // An upload that lands after the save would leave `![uploading image 1…]()`
+    // in the saved text. Waiting is the whole cost of not blocking typing
+    // earlier, and it is paid at the one moment the user is already waiting.
+    await uploads.settled();
     const areaId = area === "" ? null : (areas.find((a) => a.name === area)?.id ?? null);
     const parentNum = parent.trim() === "" ? null : parseInt(parent, 10);
+    // Which node claims the pasted images: the item being edited, or the one
+    // the create is about to return.
+    let ownerNodeId = editItem?.node_id ?? null;
     try {
       if (editItem) {
         await api.updateWorkItem(editItem.wi_number, {
@@ -84,7 +103,11 @@
           project_id: projectId,
         });
         if (parentNum) await api.updateWorkItem(r.wi_number, { parent: parentNum });
+        ownerNodeId = r.node_id;
       }
+      // After the item exists, and before the parent reloads it — so the
+      // attachment list it renders already shows them as linked.
+      if (ownerNodeId != null) await uploads.linkAll(ownerNodeId);
       onSaved();
     } catch (e) {
       err = e instanceof Error ? e.message : String(e);
@@ -131,15 +154,27 @@
     </span>
   </div>
 
-  <span class="block text-xs text-[var(--color-muted)]">Content (markdown)</span>
-  <textarea class="min-h-[12rem] flex-1 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none" placeholder="Content (markdown)" bind:value={content}></textarea>
+  <span class="block text-xs text-[var(--color-muted)]">
+    Content (markdown)
+    <!-- Said once, next to the field it applies to: paste is invisible until
+         someone knows it is there. `inFlight` then reports the one thing that
+         is genuinely in progress. -->
+    {#if uploads.inFlight > 0}
+      <span class="text-[var(--color-accent)]">· uploading {uploads.inFlight} image{uploads.inFlight === 1 ? "" : "s"}…</span>
+    {:else}
+      <span class="opacity-60">· Ctrl-V an image to attach it</span>
+    {/if}
+  </span>
+  <textarea class="min-h-[12rem] flex-1 w-full rounded bg-[var(--color-surface-hi)] px-2 py-1.5 text-sm outline-none" placeholder="Content (markdown)" data-testid="wi-content" bind:value={content} use:pasteImages={uploads}></textarea>
 
   <span class="block text-xs text-[var(--color-muted)]">Details (markdown)</span>
   <textarea
     class="min-h-[6rem] w-full rounded px-2 py-1.5 text-sm outline-none"
     style="background: color-mix(in oklch, var(--color-surface-hi) 80%, var(--color-accent) 20%)"
     placeholder="Details (markdown)"
+    data-testid="wi-details"
     bind:value={details}
+    use:pasteImages={uploads}
   ></textarea>
 
   <input class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none" placeholder="tags, comma, separated" bind:value={tags} />

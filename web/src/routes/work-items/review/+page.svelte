@@ -25,7 +25,8 @@
     type WorkItemSummary,
   } from "$lib/api";
   import { IN_PROPOSAL_COLOR, chip, projectRailColor } from "$lib/domain";
-  import { renderMarkdown } from "$lib/markdown";
+  import MarkdownView from "$lib/components/MarkdownView.svelte";
+  import { modalOpen } from "$lib/components/Dialog.svelte";
   import BackTo from "$lib/components/BackTo.svelte";
   import Comments from "$lib/components/Comments.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
@@ -181,6 +182,9 @@
   // page exists because a stray input put items in the wrong state, and a
   // hotkey next to the navigation keys would be a new way to do exactly that.
   function onKey(e: KeyboardEvent) {
+    // Arrowing through the queue while a lightbox is open would change what is
+    // behind it — the modal owns the keyboard while it is up.
+    if (modalOpen()) return;
     const tag = (e.target as HTMLElement)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if (e.key === "ArrowDown") {
@@ -430,8 +434,7 @@
 
     <section>
       <h3 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Content</h3>
-      <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
-      <div class="prose prose-invert max-w-none text-sm">{@html renderMarkdown(item.content)}</div>
+      <MarkdownView src={item.content} />
     </section>
 
     <!-- Hole 3: `details` and the comments are the two places a reason to NOT
@@ -440,13 +443,11 @@
     {#if item.details}
       <section>
         <h3 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Details</h3>
-        <div
+        <MarkdownView
+          src={item.details}
           class="prose prose-invert max-w-none rounded p-2 text-sm"
           style="background: color-mix(in oklch, var(--color-surface) 75%, var(--color-accent) 25%)"
-        >
-          <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
-          {@html renderMarkdown(item.details)}
-        </div>
+        />
       </section>
     {/if}
 

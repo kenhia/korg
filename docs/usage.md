@@ -90,7 +90,7 @@ covers:
 
 ### Behaviour common to every page
 
-Five rules hold across the UI (sprint 019, plus one each from 049 and 055):
+Six rules hold across the UI (sprint 019, plus one each from 049, 055 and 057):
 
 **Nothing fails silently.** Every mutation reports failure in a toast, and a
 failed *load* renders a distinguishable "couldn't load" state with a retry —
@@ -104,8 +104,10 @@ two presses — the button arms, then commits, and disarms if you click away.
 Archiving a work item or card *is* reversible, so it happens immediately and
 offers an Undo in the toast instead.
 
-**Dialogs behave like dialogs.** The node preview and the card editor trap
-focus, close on Escape, and return focus to whatever opened them.
+**Dialogs behave like dialogs.** The node preview, the card editor and the
+image lightbox trap focus, close on Escape, and return focus to whatever opened
+them. While one is open it owns the keyboard: page-level shortcuts stand down,
+so closing a lightbox no longer also closes the work item behind it (#1121).
 
 **Every id an agent cites is on screen, and every id resolves** (#980, #982).
 Agents name things by id — `korg:979`, `#846` — and Ken reads agent output
@@ -126,6 +128,23 @@ three kinds that had none, despite agents writing to them. A **new node type
 gets a comment surface by existing**, which is the failure this rule exists to
 prevent: `schedule` shipped in sprint 051 and arrived with every one of these
 gaps at once.
+
+**Images are pasted, not uploaded** (sprint 057, #1120/#1121). Ctrl-V a
+screenshot into a work item's content or details, or into any comment box, and
+it uploads immediately — a placeholder holds the caret's place and becomes an
+`![img-<hex>](…)` token when the bytes land, so typing never waits on an
+upload. Dropping an image file on an editor does the same thing. Pasted images
+are created **pending** and claimed when you save, which is what makes Cancel
+free: nothing claims them, and the server sweeps them 24 hours later.
+
+Inline images render as thumbnails that open full-resolution in a lightbox. The
+📎 control and the attachment list below the body are the explicit half:
+everything attached to the item, with its `img-<hex>` id, its size, and whether
+any text actually places it. Discard lives *there* and nowhere else — deleting a
+token from the prose only un-places the image, because placement lives in
+markdown and existence lives in the attachment (`docs/api.md`, handoff D2). A
+comment is not a node, so an image pasted into one belongs to the node the
+comment is on and appears in that node's list.
 
 What a *list row* shows on top of that is decided per surface, and the
 exceptions are argued in `docs/node-shapes.md` rather than defaulted — a
