@@ -13,7 +13,8 @@ pub mod tools;
 pub fn server_instructions() -> &'static str {
     "korg MCP server — one typed-node data model over Postgres covering work items, cards, \
      comments, reading-list links, generalized relationships, \
-     sprint proposals, programs, reports, handoffs, schedules, projects and areas, and a one-call \
+     sprint proposals, programs, reports, handoffs, schedules, attachments, projects and areas, \
+     and a one-call \
      Board rollup. \
      Mutations validate their target and return the updated entity; errors are isError \
      results carrying {message, code} where code is one of invalid_input, not_found, \
@@ -22,7 +23,8 @@ pub fn server_instructions() -> &'static str {
      whole filtered corpus on every page — including one whose offset overshot the last \
      row, which returns no items and the same total; \
      the unpaginated ones (list_reports, list_areas, \
-     list_comments, list_awaiting, list_report_sources) return a bare array and have no archived \
+     list_comments, list_awaiting, list_report_sources, list_attachments) return a bare array and \
+     have no archived \
      filter; and the filtered ones \
      (list_proposals, list_programs, list_projects, list_schedules) return {items, omitted}, where `omitted` counts \
      the rows their defaults hid — so a narrowed view can never be mistaken for the \
@@ -47,6 +49,12 @@ pub fn server_instructions() -> &'static str {
      create_schedule, and list_schedules(due_only:true) is what is due now. korg runs \
      no scheduler — due-ness is computed on read and materialize_schedule is an \
      explicit write. \
+     Images are attachments: bytes go over REST (`curl -F file=@shot.png \
+     '<korg>/api/img?owner=<node_id>'` to upload, `DELETE /api/img/<img-id>` to discard) and \
+     metadata over MCP. get_work_item inlines a work item's attachments with a `url` per size; \
+     to READ one, fetch its `agent` variant (≤1568px — bigger is bytes the model never sees) to \
+     a temp file and read that file. An attachment with no has_attachment edge is `pending` and \
+     is deleted 24 hours after upload, so an image you want kept must be owned. \
      A report source that filed on a cadence and then stopped is itself an alert: \
      list_report_sources says whether korg can still believe each one, and anything \
      not `fresh` asserts `unknown` rather than its last known status. \

@@ -24,10 +24,26 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = connect(&database_url).await?;
     let config = KorgConfig::from_env()?;
+
+    // The image store (sprint 056). Created at startup so a misconfigured or
+    // unmounted volume is a log line now rather than a failed paste later —
+    // but never fatal: korg's work tracking must not stop serving because the
+    // screenshot volume is missing.
+    let images = korg_api::img::store_from_env();
+    match images.ensure_root() {
+        Ok(()) => tracing::info!(root = %images.root().display(), "image store ready"),
+        Err(e) => tracing::error!(
+            root = %images.root().display(), error = %e,
+            "image store is not writable — uploads will fail until this is fixed"
+        ),
+    }
+
     let state = AppState {
         pool: Arc::new(pool),
         config: Arc::new(config),
+        images: Arc::new(images),
     };
+    korg_api::img::spawn_sweeper(state.clone());
     let app = build_router(state);
 
     tracing::info!(%listen_addr, "korg-api listening");

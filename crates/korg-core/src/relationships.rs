@@ -40,7 +40,7 @@ pub struct LabelSpec {
 
 /// Labels korg itself writes or interprets. Free-form labels stay legal —
 /// [`spec`] returns `None` for them and their direction is caller-defined.
-pub const REGISTRY: [LabelSpec; 8] = [
+pub const REGISTRY: [LabelSpec; 9] = [
     LabelSpec {
         label: "covers",
         directed: true,
@@ -147,6 +147,30 @@ pub const REGISTRY: [LabelSpec; 8] = [
         same_project: false,
         reads: "schedule materialized work item",
     },
+    LabelSpec {
+        // Sprint 056 (#582/#1119): owner -> attachment, registered exactly the
+        // way `has_handoff` is and for the same reason — any node kind may own
+        // an image, so only the right endpoint is pinned.
+        //
+        // This edge carries more weight than the others in the registry: it is
+        // not merely a cross-reference but the **liveness** of the thing on the
+        // other end. An attachment with no `has_attachment` edge is what the
+        // sweeper collects, so `unrelate`-ing one is a decision to let the
+        // image go, and writing one rescues an image from the pending state.
+        // Markdown tokens deliberately have no say in it (handoff D2): deleting
+        // `![img-c2a](…)` from a body never removes this edge, which is what
+        // keeps garbage collection derivable rather than parsed out of prose.
+        //
+        // `same_project` is false. An attachment inherits its owner's project
+        // at upload where there is one, but the edge must survive a work item
+        // being re-filed, and an image is not a bundle of work.
+        label: "has_attachment",
+        directed: true,
+        left_kind: None,
+        right_kind: Some("attachment"),
+        same_project: false,
+        reads: "node has attachment",
+    },
 ];
 
 /// The registry entry for `label`, or `None` if it is a free-form label.
@@ -193,6 +217,33 @@ mod tests {
         assert!(spec("materializes").unwrap().directed);
         assert_eq!(spec("materializes").unwrap().left_kind, Some("schedule"));
         assert_eq!(spec("materializes").unwrap().right_kind, Some("workitem"));
+        // has_attachment (sprint 056): any owner -> attachment, directed.
+        assert!(spec("has_attachment").unwrap().directed);
+        assert_eq!(spec("has_attachment").unwrap().left_kind, None);
+        assert_eq!(
+            spec("has_attachment").unwrap().right_kind,
+            Some("attachment")
+        );
+    }
+
+    /// `has_attachment` is the only label whose absence *destroys* its right
+    /// endpoint: the sweeper collects edge-less attachments, so an undirected
+    /// or unpinned version of this label would leave garbage collection unable
+    /// to tell an owner from an owned (sprint 056).
+    #[test]
+    fn has_attachment_is_directed_with_a_pinned_right_end() {
+        let spec = spec("has_attachment").unwrap();
+        assert!(
+            spec.directed,
+            "an attachment edge read symmetrically would make every image its \
+             owner's owner — and the sweeper reads this edge for liveness"
+        );
+        assert_eq!(
+            spec.right_kind,
+            Some("attachment"),
+            "the owned end must be pinned: relate() is the generic path, and an \
+             edge pointing the wrong way would silently orphan the image"
+        );
     }
 
     /// The one that would quietly undo sprint 043 if it were ever "tidied up".

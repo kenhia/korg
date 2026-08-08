@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/korg-core",
+    "crates/korg-img",
     "crates/korg-migrate",
     "crates/korg-mcp",
     "crates/korg-api",
@@ -55,8 +56,23 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 # MCP
 rmcp = { version = "1.7", features = ["server", "transport-streamable-http-server"] }
 
+# Images (sprint 056, korg:1081). `default-features = false` because the
+# default feature set pulls every codec `image` knows; korg accepts the five
+# formats a screenshot or a photo actually arrives as, and a decoder korg never
+# reaches is attack surface it does not need.
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "webp",
+    "bmp",
+] }
+# Content hashing for attachments — recorded for future dedup *detection*, never
+# used to share a blob (see the handoff's D4).
+sha2 = "0.10"
+
 # HTTP server
-axum = "0.7"
+axum = { version = "0.7", features = ["multipart"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 http-body-util = "0.1"

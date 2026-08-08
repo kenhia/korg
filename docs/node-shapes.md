@@ -218,6 +218,29 @@ The **id** opens the preview, not the title. On a reading list the title has one
 job — following the link (#549) — and taking that back to open a panel would
 re-make the mistake that WI exists to record.
 
+### attachment — no page yet (sprint 056)
+
+| Field | | Where |
+|---|---|---|
+| `filename`, `img_id` | ≈ | preview title + badge |
+| `state` (`pending`/`linked`) | ≈ | preview badge |
+| `mime`, `width`/`height`, `byte_size` | ≈ | preview fields |
+| `url`, variant urls | ≈ | preview fields (as links, not as images) |
+| `project`, `tags`, `archived`, `created`, `updated`, comments | ≈ | generic preview |
+| `content_hash`, `owner_node_ids` | ✗ | API only — the hash is recorded for future dedup *detection* and has no reader; owners are the `has_attachment` edges, which the preview already shows |
+| inline rendering, thumbnails, lightbox | ✗ | **slice 2** (`korg:1124`, #1120/#1121) |
+
+The ninth kind, and the first to arrive knowing this document exists — which is
+the section's only real finding. `schedule` landed in sprint 051 with every
+generic gap open; `attachment` landed with none of them, because sprint 055 made
+them generic. Everything above the line came free.
+
+What is deliberately **not** here is an image. `NodePreview` renders markdown
+bodies, and a screenshot is not markdown; giving it an `<img>` affordance is
+slice 2's design call, made once, with the lightbox that has to sit behind it.
+Until then the variant URLs are fields — enough to open one in a browser tab,
+and honest about being a stopgap rather than a half-built viewer.
+
 ## Deliberately hidden — the column that matters
 
 These are decisions, not gaps. Changing one is a design change.

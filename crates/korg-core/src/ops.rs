@@ -724,6 +724,51 @@ impl WorkItemSelector {
     }
 }
 
+/// `{img_id}` **or** `{node_id}` — an attachment, either way an agent is
+/// holding it (sprint 056, #1119).
+///
+/// The two spellings come from two places and both are normal: `node_id` is
+/// what a focused read hands you, and `img_id` (`img-c2a`) is what appears in a
+/// markdown token in a work item's body — which is precisely the moment an
+/// agent wants to look one up. They are the same number in different bases, so
+/// refusing one spelling would be refusing on formatting, the mistake #966
+/// fixed for work items.
+///
+/// Both at once is `invalid_input` for the same reason it is there: korg does
+/// not pick between two ids the caller explicitly passed, and a rule with an
+/// exception is a rule nobody remembers.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub struct AttachmentSelector {
+    /// The display id, e.g. `img-c2a` — what a markdown token carries.
+    #[serde(default)]
+    #[schemars(schema_with = "schema::non_empty_opt")]
+    pub img_id: Option<String>,
+    /// The attachment's node id — the same number `img_id` spells in hex.
+    #[serde(default)]
+    pub node_id: Option<i64>,
+}
+
+impl AttachmentSelector {
+    /// The node id to read, or `invalid_input` naming both spellings.
+    pub fn resolve(&self) -> anyhow::Result<i64> {
+        match (&self.img_id, self.node_id) {
+            (Some(_), Some(_)) => Err(crate::error::RepoError::InvalidInput(
+                "pass either img_id or node_id, not both — an attachment's img_id is its \
+                 node_id in hex, so either one alone is correct"
+                    .into(),
+            )
+            .into()),
+            (Some(img), None) => Ok(korg_img::ImgId::parse(img)?.node_id()),
+            (None, Some(id)) => Ok(id),
+            (None, None) => Err(crate::error::RepoError::InvalidInput(
+                "pass img_id (e.g. \"img-c2a\", as it appears in a markdown token) or node_id"
+                    .into(),
+            )
+            .into()),
+        }
+    }
+}
+
 /// `{id}` — comments and relationship edges carry plain row ids.
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 pub struct Id {

@@ -143,7 +143,8 @@ pub async fn count(pool: &PgPool, table: &str) -> i64 {
 pub mod new {
     use super::Decimal;
     use korg_core::repo::{
-        NewCard, NewHandoff, NewLink, NewProgram, NewProposal, NewReport, NewSchedule, NewWorkItem,
+        NewAttachment, NewAttachmentVariant, NewCard, NewHandoff, NewLink, NewProgram, NewProposal,
+        NewReport, NewSchedule, NewWorkItem,
     };
 
     pub fn work_item(title: &str) -> NewWorkItem {
@@ -270,6 +271,45 @@ pub mod new {
             body: String::new(),
             related_node_ids: Vec::new(),
             allow_standalone: false,
+        }
+    }
+
+    /// An image attachment, as korg-img would have measured it off a 1200×800
+    /// PNG screenshot (sprint 056).
+    ///
+    /// Metadata only: `create_attachment` records an upload, and the *bytes*
+    /// are korg-api's half. A suite that needs real pixels on disk wants
+    /// `korg-api/tests/images.rs`, which uploads through the router.
+    ///
+    /// `owner_node_id` is `None` — the paste-before-save state — because that
+    /// is the one an attachment test has to opt out of deliberately: an
+    /// unclaimed attachment is what the sweeper collects.
+    pub fn attachment(filename: &str) -> NewAttachment {
+        NewAttachment {
+            filename: filename.into(),
+            mime: "image/png".into(),
+            byte_size: 40_000,
+            width: 1200,
+            height: 800,
+            content_hash: "a".repeat(64),
+            variants: vec![
+                NewAttachmentVariant {
+                    variant: "thumb".into(),
+                    mime: "image/png".into(),
+                    width: 400,
+                    height: 267,
+                    byte_size: 3_000,
+                },
+                NewAttachmentVariant {
+                    variant: "agent".into(),
+                    mime: "image/png".into(),
+                    width: 1200,
+                    height: 800,
+                    byte_size: 30_000,
+                },
+            ],
+            owner_node_id: None,
+            tags: Vec::new(),
         }
     }
 

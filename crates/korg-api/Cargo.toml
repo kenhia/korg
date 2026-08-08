@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 korg-core = { path = "../korg-core" }
 korg-mcp = { path = "../korg-mcp" }
+korg-img = { path = "../korg-img" }
 rmcp = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
@@ -31,4 +32,5 @@ korg-test-support = { workspace = true }
 testcontainers = { workspace = true }
 testcontainers-modules = { workspace = true }
 http-body-util = { workspace = true }
+image = { workspace = true }
 tower = { workspace = true }

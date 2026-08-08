@@ -7,6 +7,7 @@
 //! against a real korg database.
 
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -74,14 +75,32 @@ async fn mcp_http_end_to_end() {
     .await;
     assert_eq!(st, StatusCode::OK);
     let tools = tl["result"]["tools"].as_array().expect("tools array");
-    // 48 once #828 added get_project; 47 since #871 deleted the
-    // `survey_work_items` alias; 50 since #888/#889 added the three disposal
-    // tools (delete_link, update_area, delete_area); 56 since #968/#969 added
-    // the four program tools plus set_awaiting/list_awaiting; 57 since #970
-    // added get_board; 44 since #965 removed the 13 topic and daily-plan
-    // tools with the slots feature; 51 since #581/#950 added the five schedule
-    // tools plus list_report_sources/set_report_source.
-    assert_eq!(tools.len(), 51, "expected 51 tools, got {}", tools.len());
+    // Asserted against the library's own list rather than a literal count.
+    //
+    // This line carried a hand-maintained number and a six-clause changelog of
+    // every sprint that had moved it — the exact "inventory maintained by hand"
+    // that `docs_drift` exists to abolish, sitting in a suite `docs_drift` does
+    // not read. Sprint 056 added two tools and this was the only thing in the
+    // workspace that failed, well after the three *real* inventories (the
+    // catalogue, the README count, the schema snapshot) had already agreed.
+    //
+    // Comparing the sets is also the stronger assertion, and closer to what
+    // this suite is actually for: the subject here is the HTTP transport, and
+    // what it owes is that `tools/list` over JSON-RPC delivers exactly what the
+    // library advertises in-process — not that some number is some other number.
+    let served: BTreeSet<String> = tools
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .map(str::to_string)
+        .collect();
+    let advertised: BTreeSet<String> = korg_mcp::tools::tools()
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    assert_eq!(
+        served, advertised,
+        "the MCP HTTP transport must serve exactly the tools the library advertises"
+    );
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     assert!(names.contains(&"create_work_item"));
     assert!(names.contains(&"list_work_items"));

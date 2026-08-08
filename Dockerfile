@@ -29,6 +29,11 @@ COPY --from=rust /src/target/release/korg-api /app/korg-api
 COPY --from=web /web/build /app/web/build
 ENV KORG_WEB_DIR=/app/web/build
 ENV KORG_LISTEN_ADDR=0.0.0.0:5674
+# Image attachments (sprint 056). Set here rather than in the compose file for
+# the same reason as the two above: the image declares its own in-container
+# paths, and the compose file bind-mounts the host directory onto this one.
+# korg-api's default matches this value, so the two cannot drift apart.
+ENV KORG_IMG_ROOT=/data/images
 # KORG_TIMEZONE is intentionally required at runtime; no geographic default is guessed.
 EXPOSE 5674
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

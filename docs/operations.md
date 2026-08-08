@@ -163,6 +163,7 @@ After a kubsdb rebuild there is neither, and three things must exist before
 | the `korg` **role** | `pg_dump` of a database carries no `CREATE ROLE` — roles are cluster-level, and only `pg_dumpall --roles-only` would carry them. Restoring last night's dump therefore does **not** recreate the role korg authenticates as, and every `GRANT`/`ALTER … OWNER` in the dump fails without it. |
 | the `korg` **database** | Created empty; korg applies its migrations at startup. If you are restoring a dump, create it here and restore *before* starting the container. |
 | `/datastore/korg/korg.env` | Mode 0600, holding `DATABASE_URL` and `KORG_TIMEZONE`. |
+| `/datastore/korg/images` | The image-attachment store (sprint 056), bind-mounted to `/data/images` in the container. Docker creates it root-owned on first `up` if missing, which works — the image declares no `USER`. Nothing else needs doing, and on a host that lost `/datastore` there is nothing to restore into it yet (see Backups). |
 
 [`deploy/cold-start.sh`](../deploy/cold-start.sh) does all three, idempotently.
 It is the **only** korg procedure that reads the password out of k-homelab's age
@@ -249,6 +250,25 @@ gzip stream, and rejects anything under 10 KB before renaming it into place. So
 a file present in `/gratch/backups/korg/` is a file that passed those checks —
 absence, not corruption, is the failure mode to watch for.
 
+**The dump is no longer all of korg's state.** Sprint 056 added image
+attachments (#582/#1119): the metadata is in Postgres like everything else, but
+the *bytes* live on kubsdb's local SSD at `/datastore/korg/images`, bind-mounted
+into the container. That directory has **no second copy yet** — the nightly
+rsync to `/gratch` is slice 3 of the Images program (k-homelab #1122). Until it
+lands:
+
+- A restore from a dump reproduces every attachment *row* and every
+  `has_attachment` edge. If the store was lost with the machine, those rows
+  reference bytes that exist nowhere, and korg serves a 404 saying exactly that
+  (`recorded but its bytes are missing from the store`) rather than a 500.
+- `GET /api/img/stats` reports `total_bytes` as korg *believes* it — summed from
+  recorded sizes. Comparing it against `du -sb /datastore/korg/images` is how you
+  find the gap in either direction: bytes-without-rows are stranded blobs,
+  rows-without-bytes are a store that did not come back.
+
+Losing kubsdb's SSD therefore costs the screenshots and nothing else. That is a
+known, accepted, temporary gap — not a surprise to discover mid-incident.
+
 ### Is the backup current?
 
 ```bash
@@ -281,6 +301,13 @@ Stop the `korg` container first (`docker stop korg`) so nothing writes during
 the restore, and start it after. Note this is `psql`, not `pg_restore` — the
 dumps are plain SQL, not custom-format archives, and reaching for `pg_restore`
 on one produces a confusing error at the worst possible moment.
+
+A restore rewinds the database but **not** `/datastore/korg/images`, which is
+outside Postgres entirely. Rolling back to a dump from before some uploads
+leaves their blobs on disk with no rows pointing at them — harmless, invisible,
+and reconcilable by comparing `GET /api/img/stats` against `du` on the store.
+The reverse (rows without bytes) is the one worth noticing, and it renders as a
+404 naming the problem rather than a broken image with no explanation.
 
 Restoring into a **scratch** database is the same command with a different
 target, and is what you almost always want first:

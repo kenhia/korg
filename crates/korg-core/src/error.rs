@@ -88,9 +88,30 @@ impl ErrorClass for RepoError {
     }
 }
 
+/// Image failures classify the same way (sprint 056). Most of what can go wrong
+/// with an upload is the *caller's* problem — a PDF renamed `.png`, a 40 MB
+/// original, a mistyped `img-` id — and korg has said since #524 that telling a
+/// caller "korg is broken" about their own input is the failure this taxonomy
+/// exists to end. Only the two that genuinely are korg's (an encoder that
+/// refused a decoded image, a store that would not write) stay `internal`.
+impl ErrorClass for korg_img::ImgError {
+    fn code(&self) -> ErrorCode {
+        use korg_img::ImgError::*;
+        match self {
+            Unsupported(_) | Decode(_) | TooLarge { .. } | Empty | BadId(_) | BadVariant(_) => {
+                ErrorCode::InvalidInput
+            }
+            Encode { .. } | Io { .. } => ErrorCode::Internal,
+        }
+    }
+}
+
 impl ErrorClass for anyhow::Error {
     fn code(&self) -> ErrorCode {
         if let Some(e) = self.downcast_ref::<RepoError>() {
+            return e.code();
+        }
+        if let Some(e) = self.downcast_ref::<korg_img::ImgError>() {
             return e.code();
         }
         ErrorCode::Internal

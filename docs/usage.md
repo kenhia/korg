@@ -180,6 +180,12 @@ describing a route that no longer exists.
 | `GET` | `/api/reports/:node_id` | One report with its findings and comments. |
 | `POST` | `/api/handoffs` | Create a handoff and attach it to the nodes it describes (`has_handoff` edges) in one call. |
 | `GET`, `PATCH` | `/api/handoffs/:node_id` | One handoff (Markdown body + the nodes it is attached to), or update title/summary/body/tags/archived. |
+| `POST` | `/api/img` | Upload an image (multipart, one file part, ≤32 MB). `?owner=<node_id>` attaches it immediately; omit it for paste-before-save. Returns the attachment metadata, including its `img-<hex>` id and a `url` per variant. |
+| `GET`, `DELETE` | `/api/img/:id` | Serve the byte-exact original, or discard the attachment — record **and** blobs. `:id` is the display id (`img-c2a`), case-insensitive. |
+| `GET` | `/api/img/:id/:variant` | Serve a generated variant: `thumb` (~400 px) or `agent` (≤1568 px). |
+| `POST` | `/api/img/:id/link` | Attach a pending image to its owner (`{owner_node_id}`) — the save step of paste-before-save. Idempotent. |
+| `GET` | `/api/img/stats` | Store accounting: count, the pending/linked split, and byte totals as korg believes them. What kmon's growth milestones read. |
+| `POST` | `/api/img/sweep` | Run the pending-orphan sweep now. The same work the hourly background task does; exposed so a runbook can force it. |
 
 Example:
 
@@ -224,7 +230,7 @@ retry", for input that would never be accepted.
 Vocabularies are validated in korg-core, so an unknown value comes back as a
 400 naming the whole allowed set rather than a 500 carrying raw Postgres text:
 
-- node `kind`: `workitem`, `card`, `link`, `sprint_proposal`, `report`, `handoff`, `program`, `schedule`
+- node `kind`: `workitem`, `card`, `link`, `sprint_proposal`, `report`, `handoff`, `program`, `schedule`, `attachment`
 - `wi_status`: `open`, `resolved`, `done`, `closed`, `parked`
 - `wi_type`: `task`, `bug`, `chore`, `feature`, `research`, `tweak`, `brainstorm`, `maintenance`
 - `wi_tshirt`: `XS`, `S`, `M`, `L`, `XL`, `Huge`, `Unknown`

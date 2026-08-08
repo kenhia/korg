@@ -214,6 +214,15 @@ async fn every_node_kind_resolves_to_a_real_title() {
                     .unwrap()
                     .node_id
             }
+            "attachment" => {
+                // Unowned on purpose: a preview must render an image nothing
+                // has claimed yet, which is the state a paste lands in and the
+                // one a reader is most likely to be looking at from find-by-ID.
+                korg_core::repo::create_attachment(&pool, new::attachment("screenshot.png"))
+                    .await
+                    .unwrap()
+                    .node_id
+            }
             other => panic!(
                 "`{other}` is in vocab::NODE_KINDS but this fence cannot build one. \
                  Add a write path here, then make sure get_node_preview renders it — \
