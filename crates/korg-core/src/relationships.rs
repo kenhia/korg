@@ -40,7 +40,7 @@ pub struct LabelSpec {
 
 /// Labels korg itself writes or interprets. Free-form labels stay legal —
 /// [`spec`] returns `None` for them and their direction is caller-defined.
-pub const REGISTRY: [LabelSpec; 7] = [
+pub const REGISTRY: [LabelSpec; 8] = [
     LabelSpec {
         label: "covers",
         directed: true,
@@ -126,6 +126,27 @@ pub const REGISTRY: [LabelSpec; 7] = [
         same_project: false,
         reads: "the two nodes collide (same contract / fold on landing; no direction)",
     },
+    LabelSpec {
+        // Sprint 051 (#581): a schedule's generation history. `schedule.last_wi_id`
+        // points at the newest materialisation only — the edges are the record of
+        // every one, which is what makes "when was this drill last actually run?"
+        // answerable from `neighbors` rather than from an audit log korg does not
+        // have.
+        //
+        // `same_project` is false even though a schedule materialises into its OWN
+        // project in every path korg writes. The rule `covers` enforces exists
+        // because a proposal is a single-project *bundle* whose whole meaning is
+        // the grouping; a materialisation edge is provenance, and provenance that
+        // refuses to record a cross-project fact is provenance that lies. If a work
+        // item is later re-filed under another project, the edge should survive
+        // saying where it came from.
+        label: "materializes",
+        directed: true,
+        left_kind: Some("schedule"),
+        right_kind: Some("workitem"),
+        same_project: false,
+        reads: "schedule materialized work item",
+    },
 ];
 
 /// The registry entry for `label`, or `None` if it is a free-form label.
@@ -168,6 +189,10 @@ mod tests {
         assert!(!spec("collides-with").unwrap().directed);
         assert_eq!(spec("collides-with").unwrap().left_kind, None);
         assert_eq!(spec("collides-with").unwrap().right_kind, None);
+        // materializes (sprint 051): schedule -> workitem, both ends pinned.
+        assert!(spec("materializes").unwrap().directed);
+        assert_eq!(spec("materializes").unwrap().left_kind, Some("schedule"));
+        assert_eq!(spec("materializes").unwrap().right_kind, Some("workitem"));
     }
 
     /// The one that would quietly undo sprint 043 if it were ever "tidied up".

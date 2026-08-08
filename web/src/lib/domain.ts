@@ -314,6 +314,7 @@ const LIST_PAGE: Record<string, string> = {
   link: "/reading-list",
   report: "/daily-reports",
   sprint_proposal: "/planning",
+  schedule: "/schedules",
 };
 
 /**
@@ -404,6 +405,52 @@ export function reportStatusPill(status: string): string {
     REPORT_STATUS_STYLE[status] ??
     "bg-[var(--color-surface-hi)] text-[var(--color-muted)] border-[var(--color-border)]";
   return `rounded-full border px-2 py-0.5 text-xs font-medium uppercase tracking-wide ${style}`;
+}
+
+/**
+ * Source-freshness colours (#950).
+ *
+ * `stale` is the only alarming one, and it is deliberately the *same* red a
+ * `problem` report gets: the whole lesson of the July 2026 outage is that a
+ * dead monitor and a monitor reporting a fire deserve the same amount of
+ * attention. `retired` and `unrated` are muted — neither is a problem, and
+ * colouring them would train the eye to skip the panel.
+ */
+const SOURCE_FRESHNESS_STYLE: Record<string, string> = {
+  fresh: "bg-emerald-900/40 text-emerald-300 border-emerald-700",
+  stale: "bg-red-900/40 text-red-300 border-red-700",
+  retired: "bg-[var(--color-surface-hi)] text-[var(--color-muted)] border-[var(--color-border)]",
+  unrated: "bg-[var(--color-surface-hi)] text-[var(--color-muted)] border-[var(--color-border)]",
+};
+
+/** The complete class list for a source-freshness pill. */
+export function sourceFreshnessPill(freshness: string): string {
+  const style =
+    SOURCE_FRESHNESS_STYLE[freshness] ??
+    "bg-[var(--color-surface-hi)] text-[var(--color-muted)] border-[var(--color-border)]";
+  return `rounded-full border px-2 py-0.5 text-xs font-medium uppercase tracking-wide ${style}`;
+}
+
+/**
+ * How a schedule's due-ness reads.
+ *
+ * Three states, not two: `due` wants doing, `outstanding` means it already
+ * produced a work item that is still open (so the *work item* is the surface,
+ * not the schedule), and everything else is simply waiting.
+ */
+export function scheduleDuePill(due: boolean, outstanding: boolean): string {
+  const style = outstanding
+    ? "bg-sky-900/40 text-sky-300 border-sky-700"
+    : due
+      ? "bg-amber-900/40 text-amber-300 border-amber-700"
+      : "bg-[var(--color-surface-hi)] text-[var(--color-muted)] border-[var(--color-border)]";
+  return `rounded-full border px-2 py-0.5 text-xs font-medium uppercase tracking-wide ${style}`;
+}
+
+/** The word that goes in the pill above. */
+export function scheduleDueLabel(due: boolean, outstanding: boolean): string {
+  if (outstanding) return "in flight";
+  return due ? "due" : "waiting";
 }
 
 // --- chips ------------------------------------------------------------------

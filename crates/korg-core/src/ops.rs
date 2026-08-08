@@ -54,6 +54,17 @@ pub(crate) fn default_unknown() -> String {
 pub(crate) fn default_backlog() -> String {
     "Backlog".into()
 }
+/// A schedule's default anchor style (#581). `completed` is the one the WI
+/// listed first and the one maintenance is actually reasoned about in — "it has
+/// been three months since we last *did* it".
+pub(crate) fn default_completed() -> String {
+    "completed".into()
+}
+/// What a materialised work item is filed as unless the schedule says otherwise
+/// — the distinct type #581 asked for so automation can find generated items.
+pub(crate) fn default_maintenance() -> String {
+    "maintenance".into()
+}
 fn default_report_limit() -> i64 {
     30
 }
@@ -186,6 +197,34 @@ pub mod schema {
     }
     pub fn report_status(_: &mut SchemaGenerator) -> Schema {
         enumerated(&vocab::REPORT_STATUSES)
+    }
+    /// An optional RFC 3339 instant. Unlike [`report_date`], which is a calendar
+    /// day, a schedule anchor is a point in time — the interval arithmetic is
+    /// done against `now()`, and a day-granular anchor would make "due" mean
+    /// something different depending on the reader's timezone.
+    pub fn timestamp_opt(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "RFC 3339 timestamp, e.g. 2026-07-08T00:00:00Z",
+        })
+    }
+    pub fn schedule_cadence(_: &mut SchemaGenerator) -> Schema {
+        enumerated(&vocab::SCHEDULE_CADENCES)
+    }
+    pub fn schedule_anchor(_: &mut SchemaGenerator) -> Schema {
+        enumerated(&vocab::SCHEDULE_ANCHORS)
+    }
+    pub fn schedule_status(_: &mut SchemaGenerator) -> Schema {
+        enumerated(&vocab::SCHEDULE_STATUSES)
+    }
+    /// The `list_schedules` row filter (#581). Same shape and same reason as
+    /// `program_status_filter`: omitting it means the live set
+    /// (`active` + `paused`), so `"all"` is the only way to reach `done`.
+    pub fn schedule_status_filter(_: &mut SchemaGenerator) -> Schema {
+        let mut variants = strings(&vocab::SCHEDULE_STATUSES);
+        variants.push(Value::String("all".into()));
+        json_schema!({ "type": ["string", "null"], "enum": variants })
     }
     pub fn project_status(_: &mut SchemaGenerator) -> Schema {
         enumerated(&vocab::PROJECT_STATUSES)
@@ -494,6 +533,44 @@ pub struct ListPrograms {
     #[serde(default = "archived_default")]
     #[schemars(schema_with = "schema::archived_filter")]
     pub archived: ArchivedFilter,
+}
+
+/// `list_schedules` (#581, sprint 051).
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct ListSchedules {
+    #[serde(default)]
+    #[schemars(schema_with = "schema::schedule_status_filter")]
+    pub status: Option<String>,
+    /// Restrict to one project by name.
+    #[serde(default)]
+    pub project: Option<String>,
+    /// Only schedules that are due **right now**. The whole read is a
+    /// read-time predicate, so this is a filter rather than a stored flag —
+    /// see `repo::SCHEDULE_DUE_SQL`.
+    #[serde(default)]
+    pub due_only: bool,
+    #[serde(default = "archived_default")]
+    #[schemars(schema_with = "schema::archived_filter")]
+    pub archived: ArchivedFilter,
+}
+
+/// `materialize_schedule` (#581, sprint 051).
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+pub struct MaterializeSchedule {
+    pub node_id: i64,
+    /// Materialize a schedule that is not yet due — e.g. a restore drill
+    /// brought forward because the schema shape changed. Never lifts the
+    /// outstanding-item check: a second copy of a drill whose first copy is
+    /// still open is not something a caller can want.
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// `set_report_source` (#950, sprint 051) — a source is addressed by name.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct SourceName {
+    #[schemars(schema_with = "schema::non_empty")]
+    pub source: String,
 }
 
 /// A tool that takes no arguments. `list_awaiting` is deliberately one: #969

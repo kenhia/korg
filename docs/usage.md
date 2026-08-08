@@ -150,9 +150,14 @@ describing a route that no longer exists.
 | `GET`, `PATCH` | `/api/proposals/:node_id` | Proposal detail (covered work items + comments), or update status/rank/pinned/archived. |
 | `GET`, `POST` | `/api/programs` | List programs (`{items, omitted}`, live by default), or create one. A program takes **no** project — it is the cross-project layer, and `span` is derived from its slices. |
 | `GET`, `PATCH` | `/api/programs/:node_id` | Program detail — ordered slices with per-slice work-item rollups — or update title/aim/notes/status/rank/pinned/archived. |
+| `GET`, `POST` | `/api/schedules` | List schedules (`{items, omitted}`, live by default, soonest-due first; filters `status`, `project`, `due_only`), or create one. |
+| `GET`, `PATCH` | `/api/schedules/:node_id` | Schedule detail — due-ness, `preview_title`, and every work item it has materialised — or update template/cadence/anchor/status. |
+| `POST` | `/api/schedules/:node_id/materialize` | Turn a due schedule into a work item. `?force=true` brings a not-yet-due one forward; it never lifts the outstanding-item refusal. |
+| `GET` | `/api/report-sources` | Every reporting source with its `freshness` and what it `asserts`. Anything not `fresh` asserts `unknown`, never a last known status. |
+| `PATCH` | `/api/report-sources/:source` | Declare a source's cadence, grace window, retirement or note. Every field is an override; `null` returns it to derivation. |
 | `GET` | `/api/awaiting` | Everything waiting on Ken, oldest ask first, across every node kind. |
 | `PUT` | `/api/nodes/:id/awaiting` | Set or clear the awaiting-Ken marker on any node (`{awaiting, note}`). The UI's one-click clear is this call with `awaiting: false`. |
-| `GET` | `/api/board` | The whole board in one request: active sprints with progress, the ranked queue, programs with slices, the awaiting lane, per-project depth, newest reports. No parameters — see [api.md](api.md#the-board-rollup-970). |
+| `GET` | `/api/board` | The whole board in one request: active sprints with progress, the ranked queue, programs with slices, the awaiting lane, per-project depth, newest reports, and every reporting source's freshness. No parameters — see [api.md](api.md#the-board-rollup-970). |
 | `GET` | `/api/reports` | List agent reports (filters `source`, `limit`; newest first). |
 | `GET` | `/api/reports/:node_id` | One report with its findings and comments. |
 | `POST` | `/api/handoffs` | Create a handoff and attach it to the nodes it describes (`has_handoff` edges) in one call. |
@@ -202,7 +207,7 @@ Vocabularies are validated in korg-core, so an unknown value comes back as a
 400 naming the whole allowed set rather than a 500 carrying raw Postgres text:
 
 - `wi_status`: `open`, `resolved`, `done`, `closed`
-- `wi_type`: `task`, `bug`, `chore`, `feature`, `research`, `tweak`, `brainstorm`
+- `wi_type`: `task`, `bug`, `chore`, `feature`, `research`, `tweak`, `brainstorm`, `maintenance`
 - `wi_tshirt`: `XS`, `S`, `M`, `L`, `XL`, `Huge`, `Unknown`
 - card `status`: `Backlog`, `Research`, `OnDeck`, `Active`, `Done`, `Cut`
 - link `disposition`: `Unread`, `Done`, `Revisit`, `Summarized`, `VaultSaved`
@@ -211,6 +216,12 @@ Vocabularies are validated in korg-core, so an unknown value comes back as a
 - report `status`: `ok`, `attention`, `problem`
 - project `status`: `active`, `archived`
 - project `category`: `AI`, `Dashboard`, `EVAL`, `Fun`, `Infrastructure`, `Ops`, `Other`
+- schedule `cadence`: `once`, `weekly`, `monthly`, `quarterly`, `yearly`
+- schedule `anchor_mode`: `completed`, `created`
+- schedule `status`: `active`, `paused`, `done`
+- schedule substitutions: `YEAR`, `MONTH`, `DAY`, `DATE`, `QUARTER`
+- source `freshness`: `fresh`, `stale`, `retired`, `unrated`
+- source `asserts`: `ok`, `attention`, `problem`, `unknown`
 
 ## MCP endpoint
 

@@ -173,7 +173,19 @@ depth: Array<PlanningRollupRow>,
  * only date in korg that records when something *happened*, which is why
  * this is the whole of the board's event story (D-7).
  */
-reports: Array<ReportRow>, };
+reports: Array<ReportRow>, 
+/**
+ * Sensor Net, the other half (#950, sprint 051): every known reporting
+ * source and whether korg can currently believe it.
+ *
+ * **Unbounded, unlike `reports`.** `BOARD_REPORT_CAP` is defensible because
+ * a board renders a handful of recent lines and the series lives behind
+ * `list_reports`; a cap here would mean a stale source could be pushed off
+ * the board by fresher ones, which is the failure mode inverted. There is
+ * one row per source — single digits — and the ordering already puts every
+ * `stale` row first.
+ */
+sources: Array<SourceHealth>, };
 
 /**
  * A curated synopsis — the newest [`CURATOR_MARKER`]-opened comment on a live
@@ -237,6 +249,20 @@ export type LinkRow = { node_id: number, url: string, title: string | null, read
  * one kind whose whole point is *when did I capture this* unable to say.
  */
 created: string, updated: string, };
+
+/**
+ * What `materialize_schedule` produced.
+ */
+export type Materialized = { 
+/**
+ * The work item that now exists, as a read would return it.
+ */
+work_item: WorkItemRow, 
+/**
+ * The schedule after firing — new `anchor_at` for a `created` anchor, and
+ * `status: "done"` if the cadence was `once`.
+ */
+schedule: ScheduleRow, };
 
 export type Neighbor = { rel_id: number, node_id: number, kind: string, label: string, 
 /**
@@ -721,6 +747,171 @@ export type ReportRow = { node_id: number, source: string, report_date: string, 
  * Comments on this report (WI #535).
  */
 comment_count: number, updated: string, };
+
+/**
+ * A schedule with its comments and edges — the focused read (LB-3), where a
+ * `has_handoff` ref surfaces.
+ */
+export type ScheduleDetail = { 
+/**
+ * Every work item this schedule has materialised, newest first — the
+ * answer to "when was this drill *actually* run?", which `last_wi_number`
+ * alone cannot give.
+ */
+materialized: Array<ScheduleMaterialization>, comments: Array<Comment>, comments_truncated: boolean, related: Array<RelatedRef>, related_truncated: boolean, node_id: number, 
+/**
+ * The template title, verbatim and unsubstituted. `preview_title` is what
+ * it renders to right now.
+ */
+title: string, template: string | null, notes: string | null, cadence: string, anchor_mode: string, status: string, wi_type: string, wi_tshirt: string, project: string | null, anchor_at: string, 
+/**
+ * When this schedule comes due: `anchor_at` + the cadence interval. For a
+ * `once` schedule it equals `anchor_at`.
+ */
+due_at: string, 
+/**
+ * The read-time predicate. See [`SCHEDULE_DUE_SQL`] for the three clauses.
+ */
+due: boolean, 
+/**
+ * The newest materialised work item, or `None` if this has never fired.
+ */
+last_wi_number: number | null, 
+/**
+ * Whether that item is still `open`/`resolved` — the clause that stops a
+ * schedule competing with the work item it already produced.
+ */
+outstanding: boolean, 
+/**
+ * How many work items this schedule has produced, over all time (the
+ * `materializes` edges, not the `last_wi_id` pointer).
+ */
+materialized_count: number, 
+/**
+ * The title as it would render **right now**, substitutions applied. Lets a
+ * UI show what pressing Materialise will actually create without a dry-run
+ * endpoint.
+ */
+preview_title: string, archived: boolean, comment_count: number, tags: Array<string>, category: string | null, created: string, updated: string, };
+
+export type ScheduleList = { items: Array<ScheduleRow>, omitted: ScheduleOmitted, };
+
+/**
+ * One past materialisation of a schedule.
+ */
+export type ScheduleMaterialization = { wi_number: number, title: string, wi_status: string, 
+/**
+ * When the edge was written — i.e. when this schedule fired.
+ */
+materialized: string, };
+
+/**
+ * What `list_schedules`' defaults hid. Same cascade rule as [`ProgramOmitted`].
+ */
+export type ScheduleOmitted = { done: number, archived: number, 
+/**
+ * How many of the **returned** rows are not yet due — the count a
+ * `due_only` read hid. Zero when `due_only` was not asked for, so a
+ * consumer can always tell "nothing is due" from "I filtered it out".
+ */
+not_due: number, };
+
+/**
+ * A schedule row, with due-ness already computed (D-2).
+ *
+ * `due` and `due_at` are **derived on every read**, never stored. A stored
+ * `due` flag is a cached predicate, and a cached predicate over a clock is the
+ * thing that goes stale silently — which is the failure this whole sprint is
+ * about.
+ */
+export type ScheduleRow = { node_id: number, 
+/**
+ * The template title, verbatim and unsubstituted. `preview_title` is what
+ * it renders to right now.
+ */
+title: string, template: string | null, notes: string | null, cadence: string, anchor_mode: string, status: string, wi_type: string, wi_tshirt: string, project: string | null, anchor_at: string, 
+/**
+ * When this schedule comes due: `anchor_at` + the cadence interval. For a
+ * `once` schedule it equals `anchor_at`.
+ */
+due_at: string, 
+/**
+ * The read-time predicate. See [`SCHEDULE_DUE_SQL`] for the three clauses.
+ */
+due: boolean, 
+/**
+ * The newest materialised work item, or `None` if this has never fired.
+ */
+last_wi_number: number | null, 
+/**
+ * Whether that item is still `open`/`resolved` — the clause that stops a
+ * schedule competing with the work item it already produced.
+ */
+outstanding: boolean, 
+/**
+ * How many work items this schedule has produced, over all time (the
+ * `materializes` edges, not the `last_wi_id` pointer).
+ */
+materialized_count: number, 
+/**
+ * The title as it would render **right now**, substitutions applied. Lets a
+ * UI show what pressing Materialise will actually create without a dry-run
+ * endpoint.
+ */
+preview_title: string, archived: boolean, comment_count: number, tags: Array<string>, category: string | null, created: string, updated: string, };
+
+/**
+ * One reporting source's freshness — the #950 projection.
+ *
+ * Read the two state fields together and note what is *not* here: there is no
+ * `last_status` field. The last known status is deliberately unreachable from
+ * this row, because a consumer holding it will eventually render it, and
+ * rendering 2026-07-22's GREEN in a stale card is the precise failure this
+ * exists to end. A caller that genuinely wants the history calls `list_reports`
+ * for the source and knows exactly what it is doing.
+ */
+export type SourceHealth = { source: string, 
+/**
+ * `fresh` | `stale` | `retired` | `unrated` — see [`vocab::SOURCE_FRESHNESS`].
+ */
+freshness: string, 
+/**
+ * `ok` | `attention` | `problem` | `unknown`. **`unknown` unless `fresh`.**
+ */
+asserts: string, 
+/**
+ * The newest report's date, or `None` for a source declared before it has
+ * ever filed.
+ */
+last_report_date: string | null, last_report_node_id: number | null, 
+/**
+ * Whole days between the newest report and today.
+ */
+days_since: number | null, 
+/**
+ * The cadence in use — declared if there is one, else the inferred median
+ * gap, else `None` when neither exists.
+ */
+cadence_days: number | null, 
+/**
+ * True when `cadence_days` came from `report_source`, false when it was
+ * inferred from history. The difference matters when triaging a false
+ * alarm: an inferred cadence is a guess korg made and can be overridden.
+ */
+cadence_declared: boolean, grace_days: number | null, 
+/**
+ * The date by which the next report was expected. `None` when there is no
+ * cadence to project from.
+ */
+due_by: string | null, 
+/**
+ * Days past `due_by`; 0 when not overdue.
+ */
+overdue_days: number, report_count: number, 
+/**
+ * Why this source was retired, or any operator note from `report_source`.
+ */
+note: string | null, };
 
 /**
  * A work item plus its comments, capped (WI #392). The single-item detail

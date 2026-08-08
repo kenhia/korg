@@ -69,21 +69,20 @@ ok()   { echo "  ok   $*"; }
 # ---------------------------------------------------------------------------
 
 counts() {
-  local wi card link topic proposal report project
+  local wi card link proposal report project
   # Enveloped collections carry a filtered total; ask for archived=all so the
   # number is the whole table and not "what is live today".
   wi=$(curl -fsS "$U/api/work-items?archived=all&limit=1" | jq '.total')
   card=$(curl -fsS "$U/api/cards?archived=all&limit=1"    | jq '.total')
   link=$(curl -fsS "$U/api/links?archived=all&limit=1"    | jq '.total')
-  topic=$(curl -fsS "$U/api/topics?archived=all&limit=1"  | jq '.total')
   # These three answer with bare arrays by design (small, hand-ordered).
   proposal=$(curl -fsS "$U/api/proposals" | jq 'length')
   report=$(curl -fsS "$U/api/reports"     | jq 'length')
   project=$(curl -fsS "$U/api/projects"   | jq 'length')
   jq -n --argjson w "$wi" --argjson c "$card" --argjson l "$link" \
-        --argjson t "$topic" --argjson p "$proposal" --argjson r "$report" \
+        --argjson p "$proposal" --argjson r "$report" \
         --argjson j "$project" \
-    '{work_items:$w, cards:$c, links:$l, topics:$t, proposals:$p, reports:$r, projects:$j}'
+    '{work_items:$w, cards:$c, links:$l, proposals:$p, reports:$r, projects:$j}'
 }
 
 # ---------------------------------------------------------------------------

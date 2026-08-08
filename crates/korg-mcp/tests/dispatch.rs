@@ -26,6 +26,7 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::collections::{BTreeMap, BTreeSet};
 use time::macros::date;
+use time::{Duration, OffsetDateTime};
 
 mod common;
 use common::{args, body, server};
@@ -105,6 +106,19 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
     )
     .await
     .expect("program");
+
+    // A schedule that is already due, so `get_schedule`/`update_schedule` have a
+    // target and `materialize_schedule` has something it will actually fire.
+    let schedule = repo::create_schedule(
+        pool,
+        new::schedule(
+            "a drill - {MONTH} {YEAR}",
+            "quarterly",
+            Some(OffsetDateTime::now_utc() - Duration::days(200)),
+        ),
+    )
+    .await
+    .expect("schedule");
 
     let report = repo::upsert_report(
         pool,
@@ -215,6 +229,23 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
             json!({"node_id": wi.node_id, "awaiting": true, "note": "raised by the fence"}),
         ),
         ("list_awaiting", json!({})),
+        // --- schedules and report-source staleness (#581, #950) ---
+        (
+            "create_schedule",
+            json!({"title": "created by the fence", "cadence": "weekly", "project": "korg"}),
+        ),
+        ("list_schedules", json!({})),
+        ("get_schedule", json!({"node_id": schedule.node_id})),
+        (
+            "update_schedule",
+            json!({"node_id": schedule.node_id, "status": "active"}),
+        ),
+        ("materialize_schedule", json!({"node_id": schedule.node_id})),
+        ("list_report_sources", json!({})),
+        (
+            "set_report_source",
+            json!({"source": "kmon", "cadence_days": 1}),
+        ),
         // --- the board rollup (#970) ---
         ("get_board", json!({})),
         // --- handoffs ---
