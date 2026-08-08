@@ -90,7 +90,14 @@ async fn schema_applies_cleanly() {
             .fetch_one(&pool)
             .await
             .expect("seed a project");
-    for kind in ["workitem", "card", "link", "sprint_proposal", "report", "handoff"] {
+    for kind in [
+        "workitem",
+        "card",
+        "link",
+        "sprint_proposal",
+        "report",
+        "handoff",
+    ] {
         sqlx::query("INSERT INTO node (kind, project_id) VALUES ($1, $2)")
             .bind(kind)
             .bind(project)

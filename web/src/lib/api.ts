@@ -13,11 +13,8 @@ import type {
   AwaitingRow,
   CardRow,
   Comment,
-  DailyPlanItem,
   HandoffFull,
-  History,
   LinkRow,
-  MoveOutcome,
   NeighborPage,
   NodePreview,
   Page,
@@ -30,7 +27,6 @@ import type {
   ProposalRow,
   ReportFull,
   ReportRow,
-  Topic,
   WorkItemDetail,
   WorkItemListLean,
   WorkItemRow,
@@ -114,7 +110,6 @@ export interface ListParams {
   offset?: number;
 }
 
-export type HistoryPreset = "week" | "month" | "90days" | "year";
 
 /** `korg_core::repo::LIST_LIMIT_MAX` — the largest page any collection read
  *  will serve, whatever you ask for. Not generated: it is a repo constant, not
@@ -394,61 +389,6 @@ export const api = {
     node_id: number,
     patch: Patch<{ disposition: Disposition; read: boolean; tags: string[] }>,
   ) => http<LinkRow>("PATCH", `/api/links/${node_id}`, patch),
-
-  // topics
-  topics: (query?: string, params: ListParams = {}) =>
-    http<Page<Topic>>(
-      "GET",
-      `/api/topics${listQuery({ q: query, ...params, limit: params.limit ?? 500 })}`,
-    ),
-  topic: (node_id: number) => httpMaybe<Topic>("GET", `/api/topics/${node_id}`),
-  createTopic: (body: {
-    name: string;
-    description?: string;
-    project_id?: number;
-    category?: string;
-    tags?: string[];
-  }) => http<Topic>("POST", "/api/topics", body),
-  updateTopic: (
-    node_id: number,
-    patch: Patch<{
-      name: string;
-      description: string | null;
-      category: string | null;
-      tags: string[];
-    }>,
-  ) => http<Topic>("PATCH", `/api/topics/${node_id}`, patch),
-  archiveTopic: (node_id: number, archived = true) =>
-    http<Topic>("POST", `/api/topics/${node_id}/archive`, { archived }),
-
-  // daily planning
-  dailyPlan: (from: string, to: string) =>
-    http<DailyPlanItem[]>("GET", `/api/daily-plan${listQuery({ from, to })}`),
-  createDailyPlanItem: (source_node_id: number, plan_date: string) =>
-    http<DailyPlanItem>("POST", "/api/daily-plan", {
-      source_node_id,
-      plan_date,
-    }),
-  setDailyPlanCompletion: (node_id: number, completed: boolean) =>
-    http<DailyPlanItem>("PATCH", `/api/daily-plan/${node_id}/completion`, {
-      completed,
-    }),
-  deleteDailyPlanItem: (node_id: number) =>
-    http<{ deleted: boolean }>("DELETE", `/api/daily-plan/${node_id}`),
-  moveDailyPlanItem: (
-    node_id: number,
-    target_date: string,
-    target_position = 0,
-  ) =>
-    http<MoveOutcome>("POST", `/api/daily-plan/${node_id}/move`, {
-      target_date,
-      target_position,
-    }),
-  dailyPlanHistory: (preset: HistoryPreset, source_node_id?: number) =>
-    http<History>(
-      "GET",
-      `/api/daily-plan/history${listQuery({ preset, source_node_id })}`,
-    ),
 
   // relationships
   relate: (left: number, right: number, label: string) =>

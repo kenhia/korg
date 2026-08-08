@@ -96,8 +96,12 @@ async fn mcp_http_end_to_end() {
     assert!(names.contains(&"update_handoff"));
     assert!(!names.contains(&"generate_slots"));
     // The whole daily-slots surface is gone (#965), not merely renamed.
-    for retired in ["create_topic", "search_topics", "create_daily_plan_item", "daily_plan_history"]
-    {
+    for retired in [
+        "create_topic",
+        "search_topics",
+        "create_daily_plan_item",
+        "daily_plan_history",
+    ] {
         assert!(
             !names.contains(&retired),
             "`{retired}` was removed with the slots feature and must not come back"

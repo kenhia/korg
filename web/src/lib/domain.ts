@@ -196,22 +196,6 @@ export function projectRailColor(p: {
   return hue === undefined ? undefined : `hsl(${hue} 55% 62%)`;
 }
 
-// --- daily plan sources -----------------------------------------------------
-
-const KIND_LABELS: Record<string, string> = {
-  workitem: "WI",
-  card: "Card",
-  topic: "Topic",
-  // Plannable since sprint 029 — "which sprint am I pushing on today" is the
-  // same kind of answer as "which card".
-  sprint_proposal: "Sprint",
-};
-
-/** The short chip label for a planned item's source kind. */
-export function kindLabel(kind: string): string {
-  return KIND_LABELS[kind] ?? kind;
-}
-
 // --- IDs, everywhere an agent might cite one (WI #980) -----------------------
 
 /**
@@ -327,11 +311,9 @@ export function nodePage(kind: string, node_id: number): string | null {
  */
 const LIST_PAGE: Record<string, string> = {
   card: "/cards",
-  daily_plan_item: "/plan",
   link: "/reading-list",
   report: "/daily-reports",
   sprint_proposal: "/planning",
-  topic: "/topics",
 };
 
 /**

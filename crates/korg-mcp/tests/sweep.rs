@@ -238,7 +238,6 @@ async fn updating_an_unknown_project_is_not_found() {
     assert!(error_text(&result).contains("not_found"));
 }
 
-
 // --- links, DB-CHECK --------------------------------------------------------
 
 /// The other DB-CHECK path the review asked for: an empty link URL.

@@ -6,15 +6,11 @@
 
   let { children } = $props();
 
-  // History and Topics left the top nav in sprint 029: both are things you
-  // reach *from* planning rather than destinations you start at, and Today now
-  // carries buttons for them. Their routes still exist and still work — they
-  // are just not competing for space with the pages Ken actually starts from.
   // Ordered by how often Ken starts there, not by when each page was built
   // (sprint 029). `Plan` is the dependency graph — a thing you consult, not a
   // place you begin — so it sits at the end. `Link Up` left the bar entirely:
-  // linking nodes and slotting a work item are agent requests, not something
-  // he drives by hand. The route still exists for anyone holding the URL.
+  // linking nodes is an agent request, not something he drives by hand. The
+  // route still exists for anyone holding the URL.
   const nav = [
     { href: "/", label: "Today" },
     { href: "/cards", label: "Cards" },
@@ -36,11 +32,10 @@
     return path === href || path.startsWith(href + "/");
   }
 
-  // Planner, kanban, and Link Up need the full width; other detail/list pages
-  // stay narrow.
+  // Kanban and Link Up need the full width; other detail/list pages stay
+  // narrow — including Today, since sprint 050 slimmed it to lanes and trays.
   const wide = $derived(
-    $page.url.pathname === "/" ||
-      $page.url.pathname.startsWith("/cards") ||
+    $page.url.pathname.startsWith("/cards") ||
       $page.url.pathname.startsWith("/link-up"),
   );
 

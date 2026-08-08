@@ -16,8 +16,6 @@ import AxeBuilder from "@axe-core/playwright";
 
 const ROUTES = [
   "/",
-  "/history",
-  "/topics",
   "/plan",
   "/cards",
   "/work-items",

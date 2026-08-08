@@ -594,13 +594,20 @@ fn pipe_spans_in_docs_are_complete_vocabularies() {
             if !span.contains('|') {
                 continue;
             }
-            let tokens: BTreeSet<String> =
-                span.split('|').map(|t| t.trim().to_string()).collect();
+            let tokens: BTreeSet<String> = span.split('|').map(|t| t.trim().to_string()).collect();
             let touches_a_vocabulary = korg_core::vocab::EXPORTED.iter().any(|(_, _, values)| {
-                tokens.iter().filter(|t| values.contains(&t.as_str())).count() >= 2
+                tokens
+                    .iter()
+                    .filter(|t| values.contains(&t.as_str()))
+                    .count()
+                    >= 2
             });
             let is_a_vocabulary = korg_core::vocab::EXPORTED.iter().any(|(_, _, values)| {
-                tokens == values.iter().map(|v| v.to_string()).collect::<BTreeSet<_>>()
+                tokens
+                    == values
+                        .iter()
+                        .map(|v| v.to_string())
+                        .collect::<BTreeSet<_>>()
             });
             assert!(
                 !touches_a_vocabulary || is_a_vocabulary,
@@ -640,7 +647,10 @@ fn migrations() -> Vec<(u32, PathBuf)> {
         })
         .collect();
     files.sort();
-    assert!(!files.is_empty(), "no migrations found — did the directory move?");
+    assert!(
+        !files.is_empty(),
+        "no migrations found — did the directory move?"
+    );
     files
 }
 
@@ -676,15 +686,19 @@ fn classify_sql(sql: &str) -> (bool, bool) {
         {
             continue;
         }
-        if line.starts_with("DROP TABLE")
-            && temp_tables.iter().any(|t| line.contains(t.as_str()))
-        {
+        if line.starts_with("DROP TABLE") && temp_tables.iter().any(|t| line.contains(t.as_str())) {
             continue;
         }
-        if ["CREATE ", "ALTER ", "DROP "].iter().any(|k| line.starts_with(k)) {
+        if ["CREATE ", "ALTER ", "DROP "]
+            .iter()
+            .any(|k| line.starts_with(k))
+        {
             has_ddl = true;
         }
-        if ["UPDATE ", "INSERT ", "DELETE "].iter().any(|k| line.starts_with(k)) {
+        if ["UPDATE ", "INSERT ", "DELETE "]
+            .iter()
+            .any(|k| line.starts_with(k))
+        {
             has_dml = true;
         }
     }
@@ -713,9 +727,11 @@ fn migration_headers_declare_what_the_sql_actually_is() {
              a restore, the way every migration since 0017 does",
         );
 
-        let claims_ddl = header.contains("DDL ONLY") || header.contains("DDL + DATA")
+        let claims_ddl = header.contains("DDL ONLY")
+            || header.contains("DDL + DATA")
             || header.contains("DATA + DDL");
-        let claims_data = header.contains("DATA ONLY") || header.contains("DDL + DATA")
+        let claims_data = header.contains("DATA ONLY")
+            || header.contains("DDL + DATA")
             || header.contains("DATA + DDL");
         assert!(
             claims_ddl || claims_data,
@@ -726,18 +742,36 @@ fn migration_headers_declare_what_the_sql_actually_is() {
 
         let (has_ddl, has_dml) = classify_sql(&sql);
         assert_eq!(
-            claims_ddl, has_ddl,
+            claims_ddl,
+            has_ddl,
             "{name}: the header {} DDL but the SQL {} — the rollback claim \
              derived from it cannot be trusted",
-            if claims_ddl { "declares" } else { "does not declare" },
-            if has_ddl { "contains some" } else { "contains none" },
+            if claims_ddl {
+                "declares"
+            } else {
+                "does not declare"
+            },
+            if has_ddl {
+                "contains some"
+            } else {
+                "contains none"
+            },
         );
         assert_eq!(
-            claims_data, has_dml,
+            claims_data,
+            has_dml,
             "{name}: the header {} DATA but the SQL {} — the rollback claim \
              derived from it cannot be trusted",
-            if claims_data { "declares" } else { "does not declare" },
-            if has_dml { "contains DML" } else { "contains no DML" },
+            if claims_data {
+                "declares"
+            } else {
+                "does not declare"
+            },
+            if has_dml {
+                "contains DML"
+            } else {
+                "contains no DML"
+            },
         );
     }
 }

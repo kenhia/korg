@@ -28,7 +28,6 @@ use time::macros::date;
 mod common;
 use common::{app, app_with_pool, req, PROJECT};
 
-
 async fn work_item(router: &axum::Router, title: &str, project: Option<&str>) -> (i64, i64) {
     let mut body = json!({"title": title, "content": ""});
     if let Some(p) = project {

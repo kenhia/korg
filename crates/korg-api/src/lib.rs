@@ -172,7 +172,6 @@ fn cors_layer() -> CorsLayer {
     }
 }
 
-
 /// `archived` is tri-state across every collection read (D-3): absent means
 /// `false` — the deliberate default change — `true` means archived only, and
 /// `all` means both. Anything else is a 400 rather than a silent reinterpretation.
