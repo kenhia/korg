@@ -87,8 +87,14 @@
               {s.overdue_days === 1 ? "day" : "days"} past due
             </span>
           {:else if s.freshness === "unrated"}
+            <!-- Say WHY korg declined (#1097). "unrated" with no reason reads as
+                 a bug; with the span it reads as a source that has not yet shown
+                 a pattern — which is exactly what it is. -->
             <span class="text-xs text-[var(--color-muted)]">
-              too little history to judge — declare a cadence to rate it
+              {s.report_count}
+              {s.report_count === 1 ? "report" : "reports"}{s.history_span_days
+                ? ` over ${s.history_span_days} days`
+                : ""} — no cadence korg will believe yet; declare one to rate it
             </span>
           {:else if s.freshness === "retired"}
             <span class="text-xs text-[var(--color-muted)]">

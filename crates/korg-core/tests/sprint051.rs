@@ -578,7 +578,11 @@ async fn a_current_source_asserts_what_it_actually_said() {
     let (_pg, pool) = fresh_korg().await;
 
     let today = OffsetDateTime::now_utc().date();
-    for back in (0..5).rev() {
+    // Long enough to EARN its inferred cadence (#1097, sprint 052): a handful of
+    // reports over a few days is a burst, and korg no longer reads one as a
+    // schedule. Shortening this back to a five-day run is how this test starts
+    // asserting `fresh` about something korg deliberately declines to judge.
+    for back in (0..15).rev() {
         file_report(&pool, "kmon", today - Duration::days(back), "attention").await;
     }
 
@@ -600,8 +604,9 @@ async fn a_daily_source_survives_one_missed_day_and_goes_stale_on_the_third() {
     let (_pg, pool) = fresh_korg().await;
     let today = OffsetDateTime::now_utc().date();
 
-    // History establishing a daily cadence, ending two days ago.
-    for back in 2..8 {
+    // History establishing a daily cadence, ending two days ago. It has to span
+    // at least a week of daily filing to be believed at all (#1097).
+    for back in 2..16 {
         file_report(&pool, "daily", today - Duration::days(back), "ok").await;
     }
     let s = list_report_sources(&pool).await.unwrap();
@@ -618,7 +623,7 @@ async fn a_daily_source_survives_one_missed_day_and_goes_stale_on_the_third() {
     );
 
     // A source whose last report is three days old has crossed the line.
-    for back in 3..9 {
+    for back in 3..17 {
         file_report(&pool, "quiet", today - Duration::days(back), "ok").await;
     }
     let s = list_report_sources(&pool).await.unwrap();
@@ -768,7 +773,9 @@ async fn a_source_can_be_declared_before_its_first_report() {
 async fn clearing_a_declared_cadence_returns_the_source_to_inference() {
     let (_pg, pool) = fresh_korg().await;
     let today = OffsetDateTime::now_utc().date();
-    for back in 0..6 {
+    // Two weeks of daily filing, so there is a real inferred cadence to fall
+    // back to once the override is cleared (#1097).
+    for back in 0..15 {
         file_report(&pool, "kmon", today - Duration::days(back), "ok").await;
     }
 

@@ -909,6 +909,16 @@ due_by: string | null,
  */
 overdue_days: number, report_count: number, 
 /**
+ * Days from the oldest to the newest report korg looked at (#1097).
+ *
+ * Carried so `unrated` is **explicable rather than mysterious**: a source
+ * with five reports and a two-day span is one korg declined to judge, and
+ * this is the field that says so. It is also the number that moves as a new
+ * source earns a cadence, so a consumer can show progress toward being
+ * rated instead of a flat "unknown".
+ */
+history_span_days: number | null, 
+/**
  * Why this source was retired, or any operator note from `report_source`.
  */
 note: string | null, };
