@@ -16,6 +16,12 @@
 //! When one of these fails, the doc is the thing to fix — unless the doc was
 //! right and the code grew something undocumented, which is the interesting
 //! case and the reason this file exists.
+//!
+//! WI #862 extended the suite past `docs/` with the staleness classes the
+//! agent-surface program (816 §6) caught by hand: vocabularies enumerated in
+//! prose against `vocab.rs`, migration-header rollback declarations against
+//! the SQL under them, and the `## Deployed` convention in sprint records.
+//! Same rule throughout: a claim a test can read is a claim a test checks.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -504,4 +510,300 @@ fn the_migration_env_table_covers_every_importer_variable() {
         undocumented.is_empty(),
         "docs/migration.md's environment table is missing {undocumented:?}",
     );
+}
+
+// ---------------------------------------------------------------------------
+// Vocabularies in prose (WI #862)
+// ---------------------------------------------------------------------------
+//
+// 816 found docs/usage.md still describing a four-value project status after
+// 0020 narrowed it to two. A vocabulary enumerated in prose is an inventory
+// like any other: wrong the moment `vocab.rs` changes, and nothing complained.
+
+/// Where docs/usage.md's vocabulary bullet list names each set, keyed by the
+/// literal bullet label. The values come from `korg_core::vocab::EXPORTED`, so
+/// there is one registry and this is a projection of it, not a copy.
+const VOCAB_BULLETS: &[(&str, &str)] = &[
+    ("`wi_status`", "WI_STATUSES"),
+    ("`wi_type`", "WI_TYPES"),
+    ("`wi_tshirt`", "WI_TSHIRTS"),
+    ("card `status`", "CARD_STATUSES"),
+    ("link `disposition`", "LINK_DISPOSITIONS"),
+    ("proposal `status`", "PROPOSAL_STATUSES"),
+    ("program `status`", "PROGRAM_STATUSES"),
+    ("report `status`", "REPORT_STATUSES"),
+    ("project `status`", "PROJECT_STATUSES"),
+    ("project `category`", "PROJECT_CATEGORIES"),
+];
+
+fn vocabulary(const_name: &str) -> &'static [&'static str] {
+    korg_core::vocab::EXPORTED
+        .iter()
+        .find(|(name, _, _)| *name == const_name)
+        .unwrap_or_else(|| panic!("no vocabulary named {const_name} in vocab::EXPORTED"))
+        .2
+}
+
+#[test]
+fn the_usage_vocabulary_list_matches_vocab_rs() {
+    let usage = read("docs/usage.md");
+
+    // Every domain vocabulary has a bullet. ERROR_CODES is the one exemption:
+    // it is not a write-boundary vocabulary, and it has its own table in the
+    // response-contract section.
+    for (name, _, _) in korg_core::vocab::EXPORTED {
+        assert!(
+            name == "ERROR_CODES" || VOCAB_BULLETS.iter().any(|(_, n)| *n == name),
+            "vocab::EXPORTED gained {name} but docs/usage.md's vocabulary list \
+             has no bullet for it — add the bullet and its VOCAB_BULLETS entry",
+        );
+    }
+
+    for (label, const_name) in VOCAB_BULLETS {
+        let expected = vocabulary(const_name);
+        let line = usage
+            .lines()
+            .find_map(|l| l.strip_prefix("- ")?.strip_prefix(label)?.strip_prefix(':'))
+            .unwrap_or_else(|| {
+                panic!("docs/usage.md's vocabulary list has no `- {label}: …` bullet")
+            });
+        let documented = backticked(line);
+        assert_eq!(
+            documented, expected,
+            "docs/usage.md's {label} bullet does not match vocab::{const_name} \
+             (order included — the docs list is the canonical spelling)",
+        );
+    }
+}
+
+/// A backticked `a | b | c` span is an enumeration claim: prose asserting
+/// "these are the values". If two of its members belong to one vocabulary, the
+/// span must BE a vocabulary — the stale four-value project status was exactly
+/// a pipe-span whose extra members had been retired under it.
+#[test]
+fn pipe_spans_in_docs_are_complete_vocabularies() {
+    let files: Vec<PathBuf> = std::fs::read_dir(repo_root().join("docs"))
+        .expect("read docs/")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "md"))
+        .chain([repo_root().join("README.md")])
+        .collect();
+
+    for file in files {
+        let text = std::fs::read_to_string(&file).expect("read doc");
+        for span in backticked(&text) {
+            if !span.contains('|') {
+                continue;
+            }
+            let tokens: BTreeSet<String> =
+                span.split('|').map(|t| t.trim().to_string()).collect();
+            let touches_a_vocabulary = korg_core::vocab::EXPORTED.iter().any(|(_, _, values)| {
+                tokens.iter().filter(|t| values.contains(&t.as_str())).count() >= 2
+            });
+            let is_a_vocabulary = korg_core::vocab::EXPORTED.iter().any(|(_, _, values)| {
+                tokens == values.iter().map(|v| v.to_string()).collect::<BTreeSet<_>>()
+            });
+            assert!(
+                !touches_a_vocabulary || is_a_vocabulary,
+                "{}: `{span}` reads as a vocabulary enumeration but matches no \
+                 vocabulary in vocab.rs — a value was probably added or retired \
+                 without updating this prose",
+                file.display(),
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Migration headers (WI #862)
+// ---------------------------------------------------------------------------
+//
+// Since 0018 every migration header declares what is under it — `DDL ONLY`,
+// `DATA ONLY`, or `DDL + DATA` — because that is the fact the deploy note's
+// rollback claim ("clean re-tag" vs "needs a restore") is derived from.
+// Migration 0020's rollback prose is where a wrong header would have
+// crash-looped an un-hand-fixed database; the declaration is the parseable
+// form of that claim, so it is the part a test can hold to the SQL.
+
+/// The first migration whose header carries the DDL/DATA declaration; the
+/// convention starts there and 0001–0017 predate it.
+const FIRST_DECLARED_MIGRATION: u32 = 18;
+
+fn migrations() -> Vec<(u32, PathBuf)> {
+    let dir = repo_root().join("crates/korg-core/migrations");
+    let mut files: Vec<(u32, PathBuf)> = std::fs::read_dir(&dir)
+        .expect("read migrations/")
+        .flatten()
+        .map(|e| e.path())
+        .filter_map(|p| {
+            let number = p.file_name()?.to_str()?.split('_').next()?.parse().ok()?;
+            Some((number, p))
+        })
+        .collect();
+    files.sort();
+    assert!(!files.is_empty(), "no migrations found — did the directory move?");
+    files
+}
+
+/// Statement-initial keywords over the non-comment lines, with the two shapes
+/// that are neither schema nor data excluded: `CREATE TEMP TABLE` scaffolding
+/// (and the `DROP` that cleans it up — 0018), and transient
+/// `DISABLE TRIGGER`/`ENABLE TRIGGER` toggles around a guarded UPDATE.
+fn classify_sql(sql: &str) -> (bool, bool) {
+    let lines: Vec<&str> = sql
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with("--"))
+        .collect();
+
+    let temp_tables: Vec<String> = lines
+        .iter()
+        .filter_map(|l| l.strip_prefix("CREATE TEMP TABLE "))
+        .map(|rest| {
+            rest.split_whitespace()
+                .next()
+                .expect("a table name follows CREATE TEMP TABLE")
+                .trim_end_matches('(')
+                .to_string()
+        })
+        .collect();
+
+    let mut has_ddl = false;
+    let mut has_dml = false;
+    for line in &lines {
+        if line.starts_with("CREATE TEMP TABLE")
+            || line.contains(" DISABLE TRIGGER ")
+            || line.contains(" ENABLE TRIGGER ")
+        {
+            continue;
+        }
+        if line.starts_with("DROP TABLE")
+            && temp_tables.iter().any(|t| line.contains(t.as_str()))
+        {
+            continue;
+        }
+        if ["CREATE ", "ALTER ", "DROP "].iter().any(|k| line.starts_with(k)) {
+            has_ddl = true;
+        }
+        if ["UPDATE ", "INSERT ", "DELETE "].iter().any(|k| line.starts_with(k)) {
+            has_dml = true;
+        }
+    }
+    (has_ddl, has_dml)
+}
+
+#[test]
+fn migration_headers_declare_what_the_sql_actually_is() {
+    for (number, path) in migrations() {
+        if number < FIRST_DECLARED_MIGRATION {
+            continue;
+        }
+        let sql = std::fs::read_to_string(&path).expect("read migration");
+        let header: String = sql
+            .lines()
+            .take_while(|l| l.trim().is_empty() || l.starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+
+        let lower = header.to_lowercase();
+        assert!(
+            lower.contains("rollback") || lower.contains("re-tag") || lower.contains("restore"),
+            "{name}: the header never states its rollback semantics — say whether \
+             rolling the image back across this deploy is a clean re-tag or needs \
+             a restore, the way every migration since 0017 does",
+        );
+
+        let claims_ddl = header.contains("DDL ONLY") || header.contains("DDL + DATA")
+            || header.contains("DATA + DDL");
+        let claims_data = header.contains("DATA ONLY") || header.contains("DDL + DATA")
+            || header.contains("DATA + DDL");
+        assert!(
+            claims_ddl || claims_data,
+            "{name}: the header carries no `DDL ONLY` / `DATA ONLY` / `DDL + DATA` \
+             declaration — every migration since 0018 states one, because it is \
+             the fact the rollback claim rests on",
+        );
+
+        let (has_ddl, has_dml) = classify_sql(&sql);
+        assert_eq!(
+            claims_ddl, has_ddl,
+            "{name}: the header {} DDL but the SQL {} — the rollback claim \
+             derived from it cannot be trusted",
+            if claims_ddl { "declares" } else { "does not declare" },
+            if has_ddl { "contains some" } else { "contains none" },
+        );
+        assert_eq!(
+            claims_data, has_dml,
+            "{name}: the header {} DATA but the SQL {} — the rollback claim \
+             derived from it cannot be trusted",
+            if claims_data { "declares" } else { "does not declare" },
+            if has_dml { "contains DML" } else { "contains no DML" },
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sprint deploy records (WI #862)
+// ---------------------------------------------------------------------------
+
+/// Sprint 047 is where `.sprint-deploy` landed: from there on, shipping a
+/// sprint deploys it (sprint-ship Phase 7), and Phase 7.2 / deploy-kubsdb
+/// append a `## Deployed` section to the record. Earlier records predate the
+/// declaration and are exempt.
+const FIRST_DECLARED_DEPLOY_SPRINT: u32 = 47;
+
+#[test]
+fn every_shipped_sprint_since_047_records_its_deploy() {
+    if !repo_root().join(".sprint-deploy").exists() {
+        // The repo stopped declaring deploys; the convention this asserts
+        // ended with it.
+        return;
+    }
+
+    // A record is `NNN-name.md` or a `NNN-name/` directory of files.
+    let mut records: Vec<(u32, String, String)> = std::fs::read_dir(repo_root().join("sprints"))
+        .expect("read sprints/")
+        .flatten()
+        .map(|e| e.path())
+        .filter_map(|p| {
+            let name = p.file_name()?.to_str()?.to_string();
+            let number: u32 = name.split('-').next()?.parse().ok()?;
+            let content = if p.is_dir() {
+                std::fs::read_dir(&p)
+                    .ok()?
+                    .flatten()
+                    .map(|f| f.path())
+                    .filter(|f| f.extension().is_some_and(|e| e == "md"))
+                    .filter_map(|f| std::fs::read_to_string(f).ok())
+                    .collect()
+            } else {
+                std::fs::read_to_string(&p).ok()?
+            };
+            Some((number, name, content))
+        })
+        .collect();
+    records.sort_by_key(|(n, _, _)| *n);
+
+    // The highest-numbered record is the sprint in flight: its deploy happens
+    // after merge, so its block cannot exist at PR time. Everything below it
+    // has shipped, and a shipped sprint either deployed or must say why not.
+    let Some(newest) = records.last().map(|(n, _, _)| *n) else {
+        panic!("no sprint records found — did sprints/ move?");
+    };
+    for (number, name, content) in &records {
+        if *number < FIRST_DECLARED_DEPLOY_SPRINT || *number == newest {
+            continue;
+        }
+        assert!(
+            content
+                .lines()
+                .any(|l| l.starts_with("## Deployed") || l.starts_with("## Not deployed")),
+            "sprints/{name} has no `## Deployed` section, but this repo declares \
+             deploys (`.sprint-deploy`) — sprint-ship Phase 7.2 appends one after \
+             the deploy runs. If this sprint deliberately did not deploy, record \
+             that under a `## Not deployed` heading instead",
+        );
+    }
 }

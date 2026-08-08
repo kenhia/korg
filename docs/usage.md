@@ -214,8 +214,10 @@ Vocabularies are validated in korg-core, so an unknown value comes back as a
 - card `status`: `Backlog`, `Research`, `OnDeck`, `Active`, `Done`, `Cut`
 - link `disposition`: `Unread`, `Done`, `Revisit`, `Summarized`, `VaultSaved`
 - proposal `status`: `proposed`, `active`, `done`, `declined`
+- program `status`: `active`, `holding`, `done`
 - report `status`: `ok`, `attention`, `problem`
 - project `status`: `active`, `archived`
+- project `category`: `AI`, `Dashboard`, `EVAL`, `Fun`, `Infrastructure`, `Ops`, `Other`
 
 ## MCP endpoint
 

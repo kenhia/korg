@@ -139,9 +139,9 @@ pub const PROJECT_CATEGORIES: [&str; 7] = [
 /// set here is all it takes for the web app to see it: `just gen` writes them
 /// into `web/src/lib/generated/vocab.ts`, so the UI's status lists stop being a
 /// hand-kept copy that drifts (the old `api.ts` `WI_TYPES` had nine entries,
-/// six of which the server rejects).
-#[cfg(test)]
-const EXPORTED: [(&str, &str, &[&str]); 11] = [
+/// six of which the server rejects). `docs_drift` (korg-mcp) walks it too, so a
+/// vocabulary enumerated in prose is checked against this registry, not a copy.
+pub const EXPORTED: [(&str, &str, &[&str]); 11] = [
     ("WI_STATUSES", "WiStatus", &WI_STATUSES),
     ("WI_TYPES", "WiType", &WI_TYPES),
     ("WI_TSHIRTS", "WiTshirt", &WI_TSHIRTS),
