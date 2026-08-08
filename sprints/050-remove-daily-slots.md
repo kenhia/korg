@@ -127,3 +127,35 @@ of the layout's full-width set; it is lanes and trays now.
 - #862's contract assertions land with the rank-3 read-contract sprint.
 - korg #950's staleness card targets "the Today page", which still exists —
   that coupling held.
+
+## Deployed
+
+Deployed to `kubsdb` 2026-08-08 (post-merge, from `main` @ `9720cba`) — the
+first deploy the new docs_drift deploy-record fence will require a section
+like this one for.
+
+- Image `kubsdb.encke-wahoo.ts.net:5000/korg:9720cbada47a` (also `latest`),
+  revision label asserted by the deploy gate. Rollback target:
+  `korg:13cebc7c96c4` (sprint 049) — but note this deploy crosses a
+  destructive migration boundary, so a true rollback is a restore from the
+  2026-08-08 03:24 UTC dump (which predates the deploy and holds the deleted
+  rows), not a re-tag.
+- **Migration 0024 verified live**: migrations 23 → 24; `node_count`
+  993 → 986 — exactly the −7 predicted (6 daily-plan items + 1 topic);
+  `node_min`/`node_max`/sequence untouched; every surviving REST count
+  identical to the pre-deploy baseline (work_items 740, cards 30, links 4,
+  proposals 169, reports 30, projects 40). Both tables gone from
+  `information_schema`; `node_kind_check` is the seven-kind list.
+- **Removal verified live**: MCP `tools/list` is 44 with none of the 13
+  retired names; the `initialize` instructions no longer mention topics or
+  daily planning; `POST /api/daily-plan` answers 405. GETs of removed routes
+  return the SPA shell with 200 — the same pre-existing WI #284 fallback any
+  unknown path gets (`/api/never-existed` behaves identically), not a
+  regression. `/plan` (the kept dependency-graph view) and `/` (the slim
+  Today) both serve.
+- The stock `scripts/post-deploy-check.sh` still counts `/api/topics`, so
+  the post-deploy compare ran from a patched copy with that count removed;
+  the script fix is filed as korg #1086.
+
+Slice 2 of program korg:1084 (kyac #1082 — retire the two daily-plan tools
+from kyac's allowlist) is unblocked as of this deploy.
