@@ -131,3 +131,42 @@ so a registry addition is only noticed the next time somebody runs the suite.
 - **Paste in the card editor.** The card editor's textareas do not use
   `pasteImages` yet; the action is per-textarea, so it is a two-line change when
   something wants it.
+
+## Deployed
+
+**2026-08-08** — `kubsdb.encke-wahoo.ts.net:5000/korg:7cf580b88991`
+(digest `sha256:00d5f30b…86637`), built from the squash-merge `7cf580b`.
+Rollback target: `korg:e06c77842de3` (sprint 056), confirmed present in the
+registry before building.
+
+**Rollback is a plain re-tag.** This sprint added no migration — `migrations`
+is still 27 on both sides of the deploy — so the previous image runs correctly
+against the current schema, and nothing this sprint wrote to disk is a format
+the old image cannot read.
+
+### Verified live
+
+`post-deploy-check.sh --compare` clean: every row count identical (767 work
+items, 30 cards, 4 links, 175 proposals, 33 reports, 40 projects), node count
+1029 and `node_id_seq` both unmoved, migrations 27 → 27 — the shape a
+no-migration deploy should have.
+
+Then this sprint's own work, which is a *bundle*, so the check is that the
+bundle kubsdb serves is this one:
+
+- **Stylesheet** — the served `assets/0.*.css` carries the `.korg-thumb` rules.
+- **Route bundles** — pulling every `nodes/*.js` chunk and its shared chunks
+  finds `uploading image` (the paste placeholder), `Ctrl-V an image` (the
+  editor hint, twice — content and comment), `korg-thumb`, `open full size`,
+  `not inline` and `lightbox-image`. That is each of the sprint's four surfaces
+  — paste, inline thumbnail, attachment list, lightbox — present in the code
+  actually being served, rather than inferred from the image tag.
+- **Deep links** — `/`, `/work-items`, `/planning`, `/api/health` all 200.
+
+And one live round trip, because the container was **recreated** and the image
+store is a bind mount — the one thing a compose recreate could plausibly get
+wrong. A 1200×600 PNG uploaded to the deployed instance: `img-46a`, `pending`,
+`thumb` 400×200 and `agent` 1200×600 (no upscale, as specified), all three
+served with the right byte counts, then `DELETE` → 404 and
+`/api/img/stats` back to `total_bytes: 0`. Production carries no residue from
+the test.
