@@ -56,7 +56,10 @@ covers:
 - **Planning** — the agent-planning queue: `sprint_proposal` nodes (a title +
   summary bundled with the work items they cover), drag-orderable by rank,
   with pin-to-top. Start/Decline/Done buttons drive the status lifecycle; a
-  copy icon copies a `/start-sprint korg:<node_id>` prompt.
+  copy icon copies a `/start-sprint korg:<node_id>` prompt. Each card carries
+  its tags and `queued <date>`; the **title** opens the proposal's own preview,
+  which is where its comments live — the pre-sprint premise check leaves its
+  findings there, and until sprint 055 nothing in the web app could show them.
 - **Programs** (`/programs`, `/programs/:node_id`) — the layer above Planning
   (#968). A program `includes` sprint proposals, ordered, and is where
   cross-project work is legal; a proposal itself stays single-project. The list
@@ -87,7 +90,7 @@ covers:
 
 ### Behaviour common to every page
 
-Four rules hold across the UI (sprint 019, plus one from 049):
+Five rules hold across the UI (sprint 019, plus one each from 049 and 055):
 
 **Nothing fails silently.** Every mutation reports failure in a toast, and a
 failed *load* renders a distinguishable "couldn't load" state with a retry —
@@ -113,6 +116,21 @@ their id in one shared mono-and-muted style. The reverse direction holds too:
 find-by-ID on Work Items resolves **every** node kind to its real title (a work
 item navigates; anything else previews), and `crates/korg-core/tests/sprint049.rs`
 fails if a kind is ever added without a `get_node_preview` arm to resolve it.
+
+**Every node has comments and timestamps, wherever you can preview it**
+(sprint 055, closing #870's audit punch list). `add_comment`/`list_comments`
+accept any node id and `created`/`updated`/`tags` exist on every kind, so the
+slide-over renders all of them generically rather than per-kind. That is what
+gives sprint proposals, schedules and reading-list links a comment thread — the
+three kinds that had none, despite agents writing to them. A **new node type
+gets a comment surface by existing**, which is the failure this rule exists to
+prevent: `schedule` shipped in sprint 051 and arrived with every one of these
+gaps at once.
+
+What a *list row* shows on top of that is decided per surface, and the
+exceptions are argued in `docs/node-shapes.md` rather than defaulted — a
+Planning card carries `queued <date>` because the queue is rank-ordered and
+nothing else says how long something has waited.
 
 ## REST API
 

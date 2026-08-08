@@ -246,6 +246,45 @@ export function projectRailColor(p: {
  */
 export const ID_CLASS = "font-mono text-xs text-[var(--color-muted)]";
 
+// --- node timestamps (WI #1106) ----------------------------------------------
+
+/**
+ * `created`/`updated` as a reader wants them. Lifted out of the handoff page,
+ * which had the only copy, when the generic preview grew the same need: every
+ * node kind carries these two columns and until #1106 only three surfaces
+ * rendered them, so "when was this queued?" meant an MCP call.
+ *
+ * Locale format rather than the `YYYY-MM-DD` the schedules page slices to —
+ * these answer "how current is this", where the time of day is part of the
+ * answer, whereas a schedule's anchor is a date and never a moment.
+ *
+ * Returns the input unchanged if it does not parse: a visible raw timestamp is
+ * a better failure than `Invalid Date`.
+ */
+export function stamp(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
+/**
+ * `stamp` without the time of day, as `YYYY-MM-DD` in the *reader's* zone.
+ *
+ * Deliberately not `iso.slice(0, 10)`, which is what the schedules page does to
+ * `due_at`. That is correct there and wrong here: `due_at`/`anchor_at` arrive as
+ * `to_char(…, 'YYYY-MM-DD')` date text with no zone to get wrong, whereas
+ * `created`/`updated`/`materialized` are RFC3339 instants in UTC, and slicing
+ * one renders the UTC day — off by one for anybody west of Greenwich for part
+ * of every day. The shape stays `YYYY-MM-DD` so these read as the same kind of
+ * thing as the dates beside them.
+ */
+export function stampDay(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
 // --- program slice progress (WI #980) ----------------------------------------
 
 /** The per-slice work-item rollup `get_board`/`get_program` already carries. */
