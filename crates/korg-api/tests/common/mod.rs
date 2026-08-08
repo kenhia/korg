@@ -19,7 +19,7 @@ use time::macros::datetime;
 use tower::ServiceExt;
 
 /// A router over a fresh korg database, with the clock pinned so date-dependent
-/// endpoints (daily plan, reports) assert against a fixed "today".
+/// endpoints (reports) assert against a fixed "today".
 pub async fn app() -> (impl Sized, axum::Router) {
     let (pg, _pool, router) = app_with_pool().await;
     (pg, router)

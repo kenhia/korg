@@ -396,8 +396,8 @@ script can do for you (`sprint-ship` Phase 7).
 ## Destructive operations
 
 `korg-migrate --reset` runs `TRUNCATE node, project, area … CASCADE`. Read that
-literally: it destroys **every** node kind — work items, cards, links, topics,
-daily plan items, sprint proposals and reports — not merely the entities the
+literally: it destroys **every** node kind — work items, cards, links, sprint
+proposals and reports — not merely the entities the
 legacy import creates. The import it belongs to is one-shot and long finished, so
 a `--reset` against the live database is almost certainly a mistake.
 

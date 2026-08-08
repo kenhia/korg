@@ -78,8 +78,9 @@ async fn mcp_http_end_to_end() {
     // `survey_work_items` alias; 50 since #888/#889 added the three disposal
     // tools (delete_link, update_area, delete_area); 56 since #968/#969 added
     // the four program tools plus set_awaiting/list_awaiting; 57 since #970
-    // added get_board.
-    assert_eq!(tools.len(), 57, "expected 57 tools, got {}", tools.len());
+    // added get_board; 44 since #965 removed the 13 topic and daily-plan
+    // tools with the slots feature.
+    assert_eq!(tools.len(), 44, "expected 44 tools, got {}", tools.len());
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     assert!(names.contains(&"create_work_item"));
     assert!(names.contains(&"list_work_items"));
@@ -90,23 +91,18 @@ async fn mcp_http_end_to_end() {
     assert!(names.contains(&"update_card"));
     assert!(names.contains(&"unrelate"));
     assert!(names.contains(&"add_comment"));
-    assert!(names.contains(&"create_topic"));
-    assert!(names.contains(&"create_daily_plan_item"));
-    assert!(names.contains(&"daily_plan_history"));
     assert!(names.contains(&"create_handoff"));
     assert!(names.contains(&"get_handoff"));
     assert!(names.contains(&"update_handoff"));
     assert!(!names.contains(&"generate_slots"));
-    let create_plan = tools
-        .iter()
-        .find(|tool| tool["name"] == "create_daily_plan_item")
-        .unwrap();
-    let properties = create_plan["inputSchema"]["properties"]
-        .as_object()
-        .unwrap();
-    assert!(!properties.contains_key("display"));
-    assert!(!properties.contains_key("source_snapshot"));
-    assert!(!properties.contains_key("completed_at"));
+    // The whole daily-slots surface is gone (#965), not merely renamed.
+    for retired in ["create_topic", "search_topics", "create_daily_plan_item", "daily_plan_history"]
+    {
+        assert!(
+            !names.contains(&retired),
+            "`{retired}` was removed with the slots feature and must not come back"
+        );
+    }
 
     // 3. tools/call create_work_item — a mutating tool over the wire.
     let (st, created) = rpc(

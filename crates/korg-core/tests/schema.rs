@@ -29,8 +29,6 @@ async fn schema_applies_cleanly() {
         "comment",
         "relationship",
         "link",
-        "topic",
-        "daily_plan_item",
     ] {
         let exists: bool = sqlx::query(
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
@@ -68,7 +66,9 @@ async fn schema_applies_cleanly() {
         "workitem_wi_number_seq should be dropped by 0009_identity"
     );
 
-    for removed in ["slot_template", "slot"] {
+    // 0003's timebox slots went in 0012; 0012's own daily planning went in
+    // 0024 (WI #965). All four tables must stay gone.
+    for removed in ["slot_template", "slot", "topic", "daily_plan_item"] {
         let exists: bool = sqlx::query(
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
              WHERE table_schema = 'public' AND table_name = $1)",
@@ -90,15 +90,7 @@ async fn schema_applies_cleanly() {
             .fetch_one(&pool)
             .await
             .expect("seed a project");
-    for kind in [
-        "workitem",
-        "card",
-        "link",
-        "sprint_proposal",
-        "report",
-        "topic",
-        "daily_plan_item",
-    ] {
+    for kind in ["workitem", "card", "link", "sprint_proposal", "report", "handoff"] {
         sqlx::query("INSERT INTO node (kind, project_id) VALUES ($1, $2)")
             .bind(kind)
             .bind(project)
@@ -106,6 +98,11 @@ async fn schema_applies_cleanly() {
             .await
             .unwrap_or_else(|e| panic!("kind `{kind}` should be accepted: {e}"));
     }
+    // A program is the one kind that must NOT carry a project (0023 §3).
+    sqlx::query("INSERT INTO node (kind) VALUES ('program')")
+        .execute(&pool)
+        .await
+        .expect("kind `program` should be accepted without a project");
     // …and the new constraint is real: a proposal node with no project is
     // refused at the database, not only by core (0022 §2).
     assert!(
@@ -115,11 +112,14 @@ async fn schema_applies_cleanly() {
             .is_err(),
         "a sprint_proposal node must carry a project (#967)"
     );
-    assert!(
-        sqlx::query("INSERT INTO node (kind) VALUES ('slot')")
-            .execute(&pool)
-            .await
-            .is_err(),
-        "slot must no longer be an accepted node kind"
-    );
+    for retired in ["slot", "topic", "daily_plan_item"] {
+        assert!(
+            sqlx::query("INSERT INTO node (kind) VALUES ($1)")
+                .bind(retired)
+                .execute(&pool)
+                .await
+                .is_err(),
+            "{retired} must no longer be an accepted node kind"
+        );
+    }
 }

@@ -66,12 +66,6 @@ async fn missing_entities_are_404_not_success_or_500() {
         "not_found",
         "GET missing node",
     );
-    assert_error(
-        req(&router, "GET", "/api/topics/9999", None).await,
-        StatusCode::NOT_FOUND,
-        "not_found",
-        "GET missing topic",
-    );
     // …and reports, which used to be a 500 (F-02).
     assert_error(
         req(&router, "GET", "/api/reports/9999", None).await,
@@ -116,18 +110,6 @@ async fn missing_entities_are_404_not_success_or_500() {
         StatusCode::NOT_FOUND,
         "not_found",
         "PATCH missing comment",
-    );
-    assert_error(
-        req(
-            &router,
-            "PATCH",
-            "/api/topics/9999",
-            Some(json!({"name":"ghost"})),
-        )
-        .await,
-        StatusCode::NOT_FOUND,
-        "not_found",
-        "PATCH missing topic",
     );
     assert_error(
         req(
@@ -205,31 +187,6 @@ async fn bad_input_is_400_not_500() {
         "invalid_input",
         "unknown link disposition",
     );
-    assert_error(
-        req(
-            &router,
-            "GET",
-            "/api/daily-plan?from=notadate&to=2026-07-11",
-            None,
-        )
-        .await,
-        StatusCode::BAD_REQUEST,
-        "invalid_input",
-        "unparseable date",
-    );
-    assert_error(
-        req(
-            &router,
-            "GET",
-            "/api/daily-plan/history?preset=fortnight",
-            None,
-        )
-        .await,
-        StatusCode::BAD_REQUEST,
-        "invalid_input",
-        "unknown history preset",
-    );
-
     // A parent that doesn't resolve used to silently CLEAR the parent (F-06).
     assert_error(
         req(
@@ -405,18 +362,6 @@ async fn mutations_return_the_updated_entity() {
     .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(activated["status"], "active");
-
-    let (_st, topic) = req(&router, "POST", "/api/topics", Some(json!({"name":"T"}))).await;
-    let tnode = topic["node_id"].as_i64().unwrap();
-    let (st, archived) = req(
-        &router,
-        "POST",
-        &format!("/api/topics/{tnode}/archive"),
-        Some(json!({"archived": true})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK);
-    assert_eq!(archived["archived"], true);
 
     let (_st, link) = req(
         &router,
@@ -669,7 +614,6 @@ async fn commentable_rows_signal_discussion_and_detail_inlines_it() {
     let (_c, router) = app().await;
     let wi = work_item(&router, "discussed").await;
     let (_st, card) = req(&router, "POST", "/api/cards", Some(json!({"title":"c"}))).await;
-    let (_st, topic) = req(&router, "POST", "/api/topics", Some(json!({"name":"t"}))).await;
     let (_st, proposal) = req(
         &router,
         "POST",
@@ -681,7 +625,6 @@ async fn commentable_rows_signal_discussion_and_detail_inlines_it() {
     for node in [
         wi,
         card["node_id"].as_i64().unwrap(),
-        topic["node_id"].as_i64().unwrap(),
         proposal["node_id"].as_i64().unwrap(),
     ] {
         req(
@@ -695,8 +638,6 @@ async fn commentable_rows_signal_discussion_and_detail_inlines_it() {
 
     let (_st, cards) = req(&router, "GET", "/api/cards", None).await;
     assert_eq!(cards["items"][0]["comment_count"], 1);
-    let (_st, topics) = req(&router, "GET", "/api/topics", None).await;
-    assert_eq!(topics["items"][0]["comment_count"], 1);
     let (_st, proposals) = req(&router, "GET", "/api/proposals", None).await;
     assert_eq!(proposals[0]["comment_count"], 1);
     assert_eq!(

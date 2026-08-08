@@ -14,9 +14,8 @@
 //!
 //! Flags:
 //!   --reset             TRUNCATE **every node kind** plus projects and areas
-//!                       first — work items, cards, links, topics, daily plan
-//!                       items, sprint proposals and reports all go. The import
-//!                       is one-shot and long done, so in practice --reset is
+//!                       first — work items, cards, links, sprint proposals
+//!                       and reports all go. The import is one-shot and long done, so in practice --reset is
 //!                       only ever reached by mistake; it refuses to run unless
 //!                       KORG_RESET_CONFIRM=yes.
 
@@ -94,9 +93,8 @@ async fn guard_reset(korg: &PgPool) -> Result<()> {
     if std::env::var("KORG_RESET_CONFIRM").as_deref() != Ok("yes") {
         bail!(
             "--reset would TRUNCATE every node kind plus projects and areas \
-             (currently: {inventory}). This destroys topics, daily plans, sprint \
-             proposals, reports and reading-list links as well as work items and \
-             cards. Set KORG_RESET_CONFIRM=yes to proceed."
+             (currently: {inventory}). This destroys sprint proposals, reports and \
+             reading-list links as well as work items and cards. Set KORG_RESET_CONFIRM=yes to proceed."
         );
     }
     eprintln!(">> --reset confirmed; destroying: {inventory}");

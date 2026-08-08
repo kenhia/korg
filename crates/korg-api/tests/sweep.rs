@@ -1,14 +1,13 @@
 //! The REST routes and node-preview kinds nothing had ever requested
 //! (WI #551).
 //!
-//! Five routes had no test at all:
+//! Five routes had no test at all (two of them, the daily-plan mutations,
+//! left with the feature in sprint 050):
 //!
 //! ```text
 //! GET    /api/areas
 //! GET    /api/projects/:name/plan      ← sole caller of repo::project_edges
 //! GET    /api/reports
-//! PUT    /api/daily-plan/:plan_date/order
-//! DELETE /api/daily-plan/:node_id
 //! ```
 //!
 //! `/api/projects/:name/plan` is the one that mattered. It is the only caller
@@ -29,8 +28,6 @@ use time::macros::date;
 mod common;
 use common::{app, app_with_pool, req, PROJECT};
 
-/// The clock `common::app` pins, so plan dates are not in the past.
-const TODAY: &str = "2026-07-11";
 
 async fn work_item(router: &axum::Router, title: &str, project: Option<&str>) -> (i64, i64) {
     let mut body = json!({"title": title, "content": ""});
@@ -255,95 +252,6 @@ async fn reports_can_be_read_over_rest() {
     assert_eq!(missing["code"], "not_found");
 }
 
-// --- daily plan: the two mutating routes ------------------------------------
-
-/// `PUT /api/daily-plan/:plan_date/order` renumbers a day, and
-/// `DELETE /api/daily-plan/:node_id` removes one item and closes the gap.
-#[tokio::test]
-async fn a_day_can_be_reordered_and_items_deleted() {
-    let (_pg, router) = app().await;
-
-    let mut ids = Vec::new();
-    for title in ["first", "second", "third"] {
-        let (_, node_id) = work_item(&router, title, None).await;
-        let (st, item) = req(
-            &router,
-            "POST",
-            "/api/daily-plan",
-            Some(json!({"source_node_id": node_id, "plan_date": TODAY})),
-        )
-        .await;
-        assert_eq!(st, StatusCode::OK, "plan item: {item:?}");
-        ids.push(item["node_id"].as_i64().expect("node_id"));
-    }
-
-    let (st, reordered) = req(
-        &router,
-        "PUT",
-        &format!("/api/daily-plan/{TODAY}/order"),
-        Some(json!({"node_ids": [ids[2], ids[1], ids[0]]})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "reorder: {reordered:?}");
-    let order: Vec<i64> = reordered
-        .as_array()
-        .expect("array")
-        .iter()
-        .map(|i| i["node_id"].as_i64().expect("node_id"))
-        .collect();
-    assert_eq!(order, vec![ids[2], ids[1], ids[0]]);
-
-    // A reorder that omits an item is a conflict, not a silent partial write.
-    let (st, err) = req(
-        &router,
-        "PUT",
-        &format!("/api/daily-plan/{TODAY}/order"),
-        Some(json!({"node_ids": [ids[0]]})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::CONFLICT, "partial reorder: {err:?}");
-    assert_eq!(err["code"], "conflict");
-
-    let (st, deleted) = req(
-        &router,
-        "DELETE",
-        &format!("/api/daily-plan/{}", ids[1]),
-        None,
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "delete: {deleted:?}");
-    assert_eq!(deleted["deleted"], true);
-
-    let (st, day) = req(
-        &router,
-        "GET",
-        &format!("/api/daily-plan?from={TODAY}&to={TODAY}"),
-        None,
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK);
-    let positions: Vec<i64> = day
-        .as_array()
-        .expect("array")
-        .iter()
-        .map(|i| i["position"].as_i64().expect("position"))
-        .collect();
-    assert_eq!(positions, vec![0, 1], "the gap is closed, not left sparse");
-
-    let (st, gone) = req(
-        &router,
-        "DELETE",
-        &format!("/api/daily-plan/{}", ids[1]),
-        None,
-    )
-    .await;
-    assert_eq!(
-        st,
-        StatusCode::NOT_FOUND,
-        "deleting twice must 404, not report success again: {gone:?}"
-    );
-}
-
 // --- node previews ----------------------------------------------------------
 
 /// `GET /api/nodes/:id` resolves any node id to a uniform preview. `api.rs`
@@ -430,58 +338,6 @@ async fn every_node_kind_previews_with_its_own_shape() {
     assert_eq!(p["badges"], json!(["proposed", "pinned"]));
     assert_eq!(p["body"], "what this sprint is");
     assert_eq!(p["body_label"], "Summary");
-
-    // --- topic ---
-    let (st, topic) = req(
-        &router,
-        "POST",
-        "/api/topics",
-        Some(json!({"name": "a topic", "description": "what it is about"})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "create topic: {topic:?}");
-    let p = preview(topic["node_id"].as_i64().expect("node_id")).await;
-    assert_eq!(p["kind"], "topic");
-    assert_eq!(p["title"], "a topic");
-    assert_eq!(p["body"], "what it is about");
-    assert_eq!(p["body_label"], "Description");
-
-    // --- daily_plan_item ---
-    let (_, source) = work_item(&router, "planned work", None).await;
-    let (st, item) = req(
-        &router,
-        "POST",
-        "/api/daily-plan",
-        Some(json!({"source_node_id": source, "plan_date": TODAY})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "plan item: {item:?}");
-    let item_id = item["node_id"].as_i64().expect("node_id");
-    let p = preview(item_id).await;
-    assert_eq!(p["kind"], "daily_plan_item");
-    assert_eq!(p["title"], "planned work", "it previews its display text");
-    assert_eq!(field(&p, "Date").as_deref(), Some(TODAY));
-    assert_eq!(
-        field(&p, "Source").as_deref(),
-        Some(format!("#{source}").as_str())
-    );
-    assert_eq!(
-        p["badges"],
-        json!([]),
-        "an incomplete item carries no completion badge"
-    );
-
-    // Completing it adds the badge — the one preview field that changes.
-    let (st, done) = req(
-        &router,
-        "PATCH",
-        &format!("/api/daily-plan/{item_id}/completion"),
-        Some(json!({"completed": true})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "complete: {done:?}");
-    let p = preview(item_id).await;
-    assert_eq!(p["badges"], json!(["complete"]));
 }
 
 /// No node has this id, and the preview says so rather than inventing one.

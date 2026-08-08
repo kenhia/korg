@@ -27,8 +27,6 @@ enumerates the tools a third time. All three are drift-tested against
 | Comments | `add_comment`, `list_comments`, `update_comment`, `delete_comment` |
 | Reading-list links | `create_link`, `list_links`, `update_link`, `delete_link`, `mark_link_read` |
 | Relationships | `relate`, `unrelate`, `neighbors` |
-| Topics | `create_topic`, `get_topic`, `update_topic`, `list_topics`, `search_topics`, `archive_topic` |
-| Daily planning | `create_daily_plan_item`, `list_daily_plan`, `move_daily_plan_item`, `reorder_daily_plan`, `set_daily_plan_completion`, `delete_daily_plan_item`, `daily_plan_history` |
 | Sprint proposals | `propose_sprint`, `list_proposals`, `get_proposal`, `update_proposal` |
 | Programs | `create_program`, `get_program`, `list_programs`, `update_program` |
 | Awaiting Ken | `set_awaiting`, `list_awaiting` |
@@ -78,7 +76,7 @@ other surfaces are derived from it:
 
 | Surface | Source |
 |---|---|
-| REST request bodies | the `korg-core` struct itself — `NewWorkItem`, `WorkItemPatch`, `NewCard`, `CardPatch`, `NewLink`, `LinkPatch`, `NewProposal`, `ProposalPatch`, `ProjectPatch`, `NewTopic`, `TopicPatch`, `NewReport`, plus the operations in `korg_core::ops` |
+| REST request bodies | the `korg-core` struct itself — `NewWorkItem`, `WorkItemPatch`, `NewCard`, `CardPatch`, `NewLink`, `LinkPatch`, `NewProposal`, `ProposalPatch`, `ProjectPatch`, `NewReport`, plus the operations in `korg_core::ops` |
 | MCP tool input schemas | derived from those same structs via `schemars`; enum lists come from `korg_core::vocab` |
 | TypeScript in `web/src/lib/generated/` | derived from the response rows via `ts-rs`, plus the vocabularies |
 
@@ -102,7 +100,7 @@ stale. See [setup.md](setup.md#generated-files).
 Writes that target a project take **either** `project_id` **or** `project` (the
 name); writes that target an area take **either** `area_id` **or** `area`. This
 applies to `create_work_item`, `update_work_item`, `create_card`, `update_card`,
-`create_link`, `create_topic` and `propose_sprint`, on both transports.
+`create_link` and `propose_sprint`, on both transports.
 
 Three rules, and each exists because of a specific failure:
 
@@ -158,18 +156,16 @@ the same envelope", which was true of four of them:
 
 | Shape | Reads |
 |---|---|
-| `{items, total, limit, offset}` | `list_work_items`, `list_cards`, `list_links`, `list_topics` |
+| `{items, total, limit, offset}` | `list_work_items`, `list_cards`, `list_links` |
 | `{items, total, limit, truncated}` | `neighbors` (`truncated`, not `offset` — it caps rather than pages) |
-| `{from, to, total, completed, items}` | `daily_plan_history` |
-| bare array | `list_reports`, `list_areas`, `list_comments`, `list_daily_plan`, `list_awaiting` |
+| bare array | `list_reports`, `list_areas`, `list_comments`, `list_awaiting` |
 | `{items, omitted}` | `list_proposals`, `list_programs`, `list_projects` |
 
 (`omitted` counts the rows a read's own defaults hid. `list_work_items` carries
 it *in addition to* the paginated envelope.)
 
 The bare-array reads are the ones with no natural paging story — a project has a
-handful of areas, a node has a handful of comments, a day has a handful of plan
-items.
+handful of areas, a node has a handful of comments.
 
 `list_projects` and `list_proposals` are the exceptions, and for a reason that is
 not paging: both **filter rows by default** (WI #828, WI #852), so a bare array
@@ -213,12 +209,12 @@ so. `list_proposals` had no `archived` predicate at all. Both were brought into
 line, which is part of why the survey alias had nothing left of its own to
 justify it (deleted in #871).
 
-The bare-array reads (`list_reports`, `list_areas`, `list_comments`,
-`list_daily_plan`) have **no** `archived` filter — areas and comments are not
-nodes and have no archived state, and reports and plan items have never exposed
-one. `docs_drift.rs::the_archived_affordance_matches_the_instructions` fences
-that split against the derived schemas, so a read cannot quietly join or leave
-the class.
+The bare-array reads (`list_reports`, `list_areas`, `list_comments`) have
+**no** `archived` filter — areas and comments are not nodes and have no
+archived state, and reports have never exposed one.
+`docs_drift.rs::the_archived_affordance_matches_the_instructions` fences that
+split against the derived schemas, so a read cannot quietly join or leave the
+class.
 
 ### Disposal semantics (WI #855)
 
@@ -239,11 +235,11 @@ three different claims is how a corpus drifts.
 
 | Kind | Ending | Why |
 |---|---|---|
-| work items, cards, proposals, topics, reports, handoffs | `archived` only | each carries a thread and a decision history |
+| work items, cards, proposals, reports, handoffs | `archived` only | each carries a thread and a decision history |
 | projects | `archived` only (#828) | a project is the routing target for real work; `archived` already means "not a target for new work", so a delete would have nothing left to mean |
 | links | `archived` **or** `delete_link` | a capture is either something you decided about or something you mistyped |
 | areas | `delete_area` only | an area is a label with a description, not a record — nothing accumulates on it, so there is no history to archive |
-| comments, daily-plan items, edges | delete only | correcting them *is* the edit |
+| comments, edges | delete only | correcting them *is* the edit |
 
 **The refuse-if-referenced clause is the load-bearing half.** Without it the
 schema answers the question instead, and answers it wrongly in both directions:
@@ -266,7 +262,6 @@ everything and sifting:
 | `list_work_items` | `project` (name), `wi_status` (+ `"all"`), `archived` | `wi_number` |
 | `list_cards` | `status`, `project`, `archived` | `status`, `rank`, `node_id` |
 | `list_links` | `disposition`, `read`, `archived` | `node_id` |
-| `list_topics` | `q` (name/description), `archived` | `name`, `node_id` |
 | `list_proposals` | `status` (+ `"all"`), `project`, `archived`, `detail` | pinned, `rank`, `node_id` |
 | `neighbors` | `label`, `kind` | `node_id`, `rel_id` |
 
@@ -393,8 +388,8 @@ you asked to see that class.
 ## Two-level reads
 
 Collections say **whether** there is discussion; focused reads **inline** it.
-Every commentable row (`WorkItemRow`, `CardRow`, `ProposalRow`, `ReportRow`,
-`Topic`) carries an exact `comment_count`, and `ProposalRow` also carries
+Every commentable row (`WorkItemRow`, `CardRow`, `ProposalRow`, `ReportRow`)
+carries an exact `comment_count`, and `ProposalRow` also carries
 `covered_count`.
 
 Focused reads inline up to 10 comments with a `comments_truncated` flag; page

@@ -72,8 +72,6 @@ const CATEGORIES: &[&str] = &[
     "Comments",
     "Reading-list links",
     "Relationships",
-    "Topics",
-    "Daily planning",
     "Sprint proposals",
     "Programs",
     "Awaiting Ken",
@@ -197,8 +195,8 @@ fn the_collection_read_shapes_agree_across_docs_and_instructions() {
         let (Some(shape), Some(reads)) = (cells.next(), cells.next()) else {
             continue;
         };
-        // The other two rows (neighbors, daily_plan_history) carry their own
-        // shapes and are deliberately not summarised in the instructions.
+        // The remaining row (neighbors) carries its own shape and is
+        // deliberately not summarised in the instructions.
         if shape.contains("items, total, limit, offset") {
             documented_paginated = backticked(reads).into_iter().collect();
         } else if shape.contains("bare array") {

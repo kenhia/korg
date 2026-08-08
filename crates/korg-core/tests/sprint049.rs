@@ -10,14 +10,12 @@
 //!   The two are the same number since the 0009 identity migration, so an agent
 //!   holding either was holding the right one.
 
-use korg_core::daily_plan::{self, LifecycleContext};
 use korg_core::ops::WorkItemSelector;
 use korg_core::repo::{
     create_card, create_handoff, create_link, create_program, create_project, create_proposal,
     create_work_item, get_node_preview, get_work_item_detail, upsert_report, NewHandoff,
     NewProgram,
 };
-use korg_core::topics::{create_topic, NewTopic};
 use korg_test_support::{fresh_korg, new, test_project, TEST_PROJECT};
 use sqlx::PgPool;
 
@@ -168,41 +166,13 @@ async fn every_node_kind_resolves_to_a_real_title() {
         .await
         .unwrap()
         .node_id;
-    let topic = create_topic(
-        &pool,
-        NewTopic {
-            project_id: None,
-            project: None,
-            category: None,
-            tags: Vec::new(),
-            name: "a topic".into(),
-            description: None,
-        },
-    )
-    .await
-    .unwrap()
-    .node_id;
     let today = time::OffsetDateTime::now_utc().date();
     let report = upsert_report(&pool, new::report("a-source", today))
         .await
         .unwrap()
         .node_id;
-    let plan_item = daily_plan::create_item(
-        &pool,
-        wi,
-        today,
-        &LifecycleContext {
-            today,
-            now: time::OffsetDateTime::now_utc(),
-        },
-    )
-    .await
-    .unwrap()
-    .node_id;
 
-    for id in [
-        wi, proposal, program, handoff, card, link, topic, report, plan_item,
-    ] {
+    for id in [wi, proposal, program, handoff, card, link, report] {
         let preview = get_node_preview(&pool, id)
             .await
             .unwrap()

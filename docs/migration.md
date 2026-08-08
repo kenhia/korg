@@ -66,7 +66,7 @@ Flags:
 
 - `--reset` — `TRUNCATE node, project, area … CASCADE` before importing. Read
   that literally: it destroys **every** node kind — work items, cards,
-  reading-list links, topics, daily plan items, sprint proposals and reports —
+  reading-list links, sprint proposals and reports —
   not just the entities this import creates. The import is one-shot and long
   finished, so a `--reset` against a live korg database is almost certainly a
   mistake; korg-migrate refuses unless `KORG_RESET_CONFIRM=yes` and prints the

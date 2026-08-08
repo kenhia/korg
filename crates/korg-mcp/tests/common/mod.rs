@@ -15,18 +15,10 @@ use korg_mcp::tools::KorgServer;
 use rmcp::model::{CallToolResult, JsonObject};
 use serde_json::Value;
 use sqlx::PgPool;
-use std::sync::Arc;
-use time::macros::datetime;
 
-/// A server over `pool`, with the clock pinned so date-dependent tools
-/// (daily plan, reports) assert against a fixed "today".
+/// A server over `pool`.
 pub fn server(pool: PgPool) -> KorgServer {
-    KorgServer::new(
-        pool,
-        Arc::new(
-            korg_core::config::KorgConfig::fixed("UTC", datetime!(2026-07-11 12:00 UTC)).unwrap(),
-        ),
-    )
+    KorgServer::new(pool)
 }
 
 /// Tool arguments, as MCP delivers them: a JSON object, not a bare value.

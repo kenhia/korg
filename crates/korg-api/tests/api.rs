@@ -165,97 +165,21 @@ async fn api_end_to_end() {
     assert_eq!(links["items"][0]["disposition"], "Revisit");
     assert_eq!(links["items"][0]["tags"][0], "read");
 
-    // Topics: create, search, update. Daily planning snapshots display server-side.
-    let (st, topic) = req(
-        &router,
-        "POST",
-        "/api/topics",
-        Some(json!({"name":"Backend architecture","description":"explore"})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK);
-    let topic_node = topic["node_id"].as_i64().unwrap();
-    let (_st, found) = req(&router, "GET", "/api/topics?q=ARCH", None).await;
-    assert_eq!(found["items"].as_array().unwrap().len(), 1);
-    assert_eq!(found["total"], 1);
-    let (st, _) = req(
-        &router,
-        "PATCH",
-        &format!("/api/topics/{topic_node}"),
-        Some(json!({"name":"Backend systems"})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK);
-
-    let (st, planned) = req(
-        &router,
-        "POST",
-        "/api/daily-plan",
-        Some(json!({"source_node_id":topic_node,"plan_date":"2026-07-11"})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK);
-    let planned_node = planned["node_id"].as_i64().unwrap();
-    let (_st, day) = req(
-        &router,
-        "GET",
-        "/api/daily-plan?from=2026-07-11&to=2026-07-11",
-        None,
-    )
-    .await;
-    assert_eq!(day.as_array().unwrap().len(), 1);
-    assert_eq!(day[0]["display"], "Backend systems");
-    let (st, _) = req(
-        &router,
-        "PATCH",
-        &format!("/api/daily-plan/{planned_node}/completion"),
-        Some(json!({"completed":true})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK);
-    let (st, moved) = req(
-        &router,
-        "POST",
-        &format!("/api/daily-plan/{planned_node}/move"),
-        Some(json!({"target_date":"2026-07-12","target_position":0})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK);
-    assert_eq!(moved["copied"], false);
-    let (st, historical) = req(&router, "GET", "/api/daily-plan/history?preset=week", None).await;
-    assert_eq!(st, StatusCode::OK);
-    assert_eq!(historical["total"], 0);
-    let (st, _) = req(
-        &router,
-        "POST",
-        &format!("/api/topics/{topic_node}/archive"),
-        Some(json!({"archived":true})),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK);
-    let (_st, topics) = req(&router, "GET", "/api/topics", None).await;
-    assert!(
-        topics["items"].as_array().unwrap().is_empty(),
-        "archived topics are excluded by default"
-    );
-    let (_st, all) = req(&router, "GET", "/api/topics?archived=all", None).await;
-    assert_eq!(all["total"], 1, "…but still reachable with archived=all");
-
-    // Daily plan items remain ordinary nodes for generalized relationships.
-    // The label must be a registry entry now (LB-2); related-to permits any
-    // node kinds on either end.
+    // Links remain ordinary nodes for generalized relationships. The label
+    // must be a registry entry (LB-2); related-to permits any node kinds on
+    // either end.
     let (st, _) = req(
         &router,
         "POST",
         "/api/relationships",
-        Some(json!({"left":planned_node,"right":card_node,"label":"related-to"})),
+        Some(json!({"left":link_node,"right":card_node,"label":"related-to"})),
     )
     .await;
     assert_eq!(st, StatusCode::OK);
     let (_st, ns) = req(
         &router,
         "GET",
-        &format!("/api/nodes/{planned_node}/neighbors"),
+        &format!("/api/nodes/{link_node}/neighbors"),
         None,
     )
     .await;
@@ -336,7 +260,7 @@ async fn api_end_to_end() {
     let (_st, ns) = req(
         &router,
         "GET",
-        &format!("/api/nodes/{planned_node}/neighbors"),
+        &format!("/api/nodes/{link_node}/neighbors"),
         None,
     )
     .await;
@@ -352,7 +276,7 @@ async fn api_end_to_end() {
     let (_st, ns2) = req(
         &router,
         "GET",
-        &format!("/api/nodes/{planned_node}/neighbors"),
+        &format!("/api/nodes/{link_node}/neighbors"),
         None,
     )
     .await;

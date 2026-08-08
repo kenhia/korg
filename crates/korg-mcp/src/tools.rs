@@ -1,7 +1,7 @@
 //! MCP tool implementations backed by `korg-core`.
 //!
 //! Exposes work items, cards, reading-list links, generalized relationships,
-//! topics, and source-linked daily planning to AI agents over MCP.
+//! proposals, programs, reports and handoffs to AI agents over MCP.
 //!
 //! Every tool's input schema is **derived** from the struct its handler
 //! deserializes (WI #540). There are no hand-written `json!` schema literals
@@ -12,14 +12,12 @@
 //! `survey_work_items` archived-default lie and the drifted vocabularies the
 //! review found (F-22) cannot recur.
 
-use korg_core::config::KorgConfig;
 use korg_core::error::{ErrorClass, ErrorCode};
 use korg_core::ops;
 use korg_core::repo::{
     self, CardPatch, HandoffPatch, LinkPatch, NewCard, NewHandoff, NewLink, NewProgram,
     NewProposal, NewReport, NewWorkItem, ProgramPatch, ProjectPatch, ProposalPatch, WorkItemPatch,
 };
-use korg_core::{daily_plan, topics};
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, Content, ErrorData, Implementation,
@@ -31,19 +29,15 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use std::sync::Arc;
-use time::macros::format_description;
-use time::Date;
 
 #[derive(Clone)]
 pub struct KorgServer {
     pub pool: PgPool,
-    pub config: Arc<KorgConfig>,
 }
 
 impl KorgServer {
-    pub fn new(pool: PgPool, config: Arc<KorgConfig>) -> Self {
-        Self { pool, config }
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 }
 
@@ -194,24 +188,11 @@ pub fn tools() -> Vec<Tool> {
         tool::<NewLink>("create_link", "Capture a reading-list URL. Returns the created link row."),
         tool::<ops::ListLinks>("list_links", "List reading-list links as {items, total, limit, offset}, ordered by node_id. Archived links are EXCLUDED by default. Each row carries `created` and `updated`, so capture recency is readable without a second call."),
         tool2::<ops::NodeId, LinkPatch>("update_link", "Update a reading-list link in ONE transaction: disposition, read flag, tags, archived -- any combination. This is how an agent records what it decided about a captured URL (migration 0004's intended workflow), and `archived` is its lifecycle end: the disposal list_links has always excluded by default. Returns the updated link; isError `not_found` if the node is missing or is not a link; an invalid disposition changes nothing."),
-        tool::<ops::NodeId>("delete_link", "Hard-delete a captured URL -- the disposal for a link that was never real (a probe, a mistyped capture). For a link that WAS real, archive it with update_link instead; delete is irreversible. REFUSES with `conflict` if the link has any relationship edge, comment, or daily-plan reference, naming what points at it -- anything referenced has a history, and resolving that reference is your decision, not the database's. Returns {deleted: bool} -- false means there was no such link."),
+        tool::<ops::NodeId>("delete_link", "Hard-delete a captured URL -- the disposal for a link that was never real (a probe, a mistyped capture). For a link that WAS real, archive it with update_link instead; delete is irreversible. REFUSES with `conflict` if the link has any relationship edge or comment, naming what points at it -- anything referenced has a history, and resolving that reference is your decision, not the database's. Returns {deleted: bool} -- false means there was no such link."),
         tool::<MarkLinkReadArgs>("mark_link_read", "DEPRECATED -- use update_link, which does this plus disposition and tags in one transaction. Marks a reading-list link read or unread; returns the updated link."),
         tool::<ops::Relate>("relate", "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these seven labels and no others: `covers` (proposal -> work item), `includes` (program -> proposal), `finding` (report -> work item), `depends_on` (dependent -> dependency), and `has_handoff` (node -> handoff; normally written by create_handoff, but relate attaches an existing handoff to another node) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` (the two nodes are related) and `collides-with` (same contract / fold on landing -- the kfdc curator's mined collisions, korg #1002) are UNDIRECTED -- orientation is stored but meaningless, so read them symmetrically. An unregistered label is invalid_input naming the registry and the near-miss; `covers`, `includes`, `finding`, and `has_handoff` also validate endpoint kinds (`has_handoff`'s right end must be a handoff), and `covers` additionally requires BOTH ENDS IN THE SAME PROJECT -- a proposal bundles work from one project, and cross-project work belongs to a program, the layer above proposals (korg #968). `includes` is the layer where cross-project work is legal, so it has NO same-project rule; `depends_on` across projects likewise stays legal and is the normal case. Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `rank` -- the position of the right endpoint within the left one, which is how a program's slices are ordered; re-relating an existing edge WITH a rank moves it in place and keeps its provenance, and re-relating without one leaves the position alone (so reordering never needs unrelate + relate). Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected)."),
         tool2::<ops::NodeId, ops::Neighbors>("neighbors", "List the nodes linked to a node (any kind), with labels. Returns {items, total, limit, truncated}. Each item has `rel_id` (pass to `unrelate`), `direction` (\"out\" = the queried node is the edge's left, so the label reads queried->neighbor; \"in\" = the reverse) and `directed` -- when `directed` is false the label is registry-undirected (e.g. related-to) and you MUST treat the edge as symmetric, ignoring `direction`. Filter server-side with `label` and/or `kind` instead of pulling every edge: e.g. label=\"covers\", kind=\"workitem\" for a proposal's work items. Ordering is neighbor node_id then rel_id."),
         tool::<ops::Id>("unrelate", "Remove a relationship edge by its id (the `rel_id` from `neighbors`, or the id returned by `relate`). Returns {deleted: bool} — false means there was no such edge."),
-        tool::<topics::NewTopic>("create_topic", "Create a reusable planning topic. Returns the created topic."),
-        tool::<ops::NodeId>("get_topic", "Fetch a topic by node_id, including archived topics. isError with code `not_found` if there is none."),
-        tool::<ops::ListTopics>("list_topics", "List topics as {items, total, limit, offset}, ordered by name. Pass `q` to match name/description. Each row includes `comment_count`. Archived topics are EXCLUDED by default."),
-        tool::<ops::ListTopics>("search_topics", "Alias for list_topics with a `q` filter; same {items, total, limit, offset} shape. Prefer list_topics."),
-        tool2::<ops::NodeId, topics::TopicPatch>("update_topic", "Partially update a topic; returns the updated topic."),
-        tool2::<ops::NodeId, ops::ArchiveTopic>("archive_topic", "Archive or restore a topic; returns the updated topic."),
-        tool::<ops::DateRange>("list_daily_plan", "List daily plan items in an inclusive date range with snapshots and current source titles."),
-        tool::<ops::CreateDailyPlanItem>("create_daily_plan_item", "Plan a work item, card, topic, or sprint proposal. Display is resolved and snapshotted server-side. Returns the created item. `plan_date` must be the server's local today or later -- that date is derived from the server's configured timezone, NOT from your clock, and a refusal names it."),
-        tool2::<ops::NodeId, ops::SetCompletion>("set_daily_plan_completion", "Complete or uncomplete any daily plan item; timestamp is server-authoritative. Returns the updated item."),
-        tool::<ops::NodeId>("delete_daily_plan_item", "Delete an item from an open day; past structure is frozen -- a day before the server's local today is a sealed record and is refused with conflict, naming that date. Returns {deleted: true}."),
-        tool2::<ReorderPlanDate, ops::ReorderDailyPlan>("reorder_daily_plan", "Replace the complete order for an open day -- the server's local today or later; a past day is frozen (conflict, naming the date). Returns the day in its new order."),
-        tool2::<ops::NodeId, ops::MoveDailyPlanItem>("move_daily_plan_item", "Move an item to the server's local today or a future day (a past target is refused, naming that date). Open sources transfer; past sources copy and remain unchanged."),
-        tool::<ops::HistoryRange>("daily_plan_history", "Return all complete and incomplete historical items plus completion totals/rate. End must be before the server's local today, which is derived from its configured timezone rather than your clock; a refusal names that date."),
         tool::<NewProposal>("propose_sprint", "Propose a sprint: bundle a title + summary with the work items it covers, in one call. `project` (or `project_id`) is REQUIRED, and every covered work item must be in it -- a proposal is a single-project bundle, so one from another project is invalid_input naming both projects, not a silent drop. Cross-project work is bundled by a program, the layer above proposals (korg #968). `summary` is a routing contract capped at 500 characters -- what the bundle is, why now, roughly how big -- and the analysis goes in `notes`, which is unbounded; an over-long summary is invalid_input, not a truncation. Returns the created proposal plus `covered` -- which of the given wi_numbers actually resolved. Numbers that do not resolve are dropped, so compare `covered` against your request."),
         tool::<NewReport>("create_report", "Create or replace the daily report for (source, report_date). Same-day re-runs REPLACE both the content and the finding set -- findings you omit are unlinked -- but keep the node_id (links/comments survive). `findings_linked` echoes the wi_numbers that resolved; numbers that do not resolve are dropped, so compare it against your request."),
         tool::<ops::ListReports>("list_reports", "List daily reports, newest first (summary fields only). Pass `source` to filter."),
@@ -248,13 +229,6 @@ struct MarkLinkReadArgs {
     read: bool,
 }
 
-/// `reorder_daily_plan` selects the day rather than a node.
-#[derive(serde::Deserialize, JsonSchema)]
-struct ReorderPlanDate {
-    #[schemars(schema_with = "ops::schema::date")]
-    plan_date: String,
-}
-
 // --- responses --------------------------------------------------------------
 
 fn ok_json(v: Value) -> Result<CallToolResult, ErrorData> {
@@ -283,8 +257,7 @@ fn err_with_code(message: String, code: ErrorCode) -> CallToolResult {
 }
 
 /// A repo result as a tool result: the entity on success, `{message, code}` on
-/// failure. Every tool ends this way, over both `anyhow::Error` (repo) and
-/// `PlanningError` (daily plan) — the two carry the same `code` classification.
+/// failure. Every tool ends this way.
 fn respond<T, E>(r: Result<T, E>) -> Result<CallToolResult, ErrorData>
 where
     T: Serialize,
@@ -337,21 +310,9 @@ where
     Ok((selector, body))
 }
 
-fn parse_date(s: &str) -> Result<Date, ErrorData> {
-    let fmt = format_description!("[year]-[month]-[day]");
-    Date::parse(s, &fmt)
-        .map_err(|e| ErrorData::invalid_params(format!("invalid date `{s}`: {e}"), None))
-}
-
 // --- dispatch ---------------------------------------------------------------
 
 impl KorgServer {
-    fn context(&self) -> Result<daily_plan::LifecycleContext, ErrorData> {
-        self.config
-            .lifecycle_context()
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))
-    }
-
     pub async fn call(
         &self,
         name: &str,
@@ -485,107 +446,6 @@ impl KorgServer {
                     Ok(deleted) => ok_json(json!({ "deleted": deleted })),
                     Err(e) => Ok(to_err(e)),
                 }
-            }
-
-            // --- topics ---
-            "create_topic" => {
-                let new: topics::NewTopic = parse_args(args)?;
-                respond(topics::create_topic(pool, new).await)
-            }
-            "get_topic" => {
-                let a: ops::NodeId = parse_args(args)?;
-                respond_found(topics::get_topic(pool, a.node_id).await, || {
-                    format!("no topic with node_id {}", a.node_id)
-                })
-            }
-            // search_topics is list_topics with a `q` filter; both names stay
-            // registered, one implementation (WI #534).
-            "list_topics" | "search_topics" => {
-                let a: ops::ListTopics = parse_args(args)?;
-                respond(topics::list_topics(pool, a.into()).await)
-            }
-            "update_topic" => {
-                let (a, patch) = parse_args2::<ops::NodeId, topics::TopicPatch>(args)?;
-                respond(topics::update_topic(pool, a.node_id, patch).await)
-            }
-            "archive_topic" => {
-                let (a, b) = parse_args2::<ops::NodeId, ops::ArchiveTopic>(args)?;
-                respond(topics::archive_topic(pool, a.node_id, b.archived).await)
-            }
-
-            // --- daily planning ---
-            "list_daily_plan" => {
-                let a: ops::DateRange = parse_args(args)?;
-                respond(
-                    daily_plan::list_items(pool, parse_date(&a.from)?, parse_date(&a.to)?).await,
-                )
-            }
-            "create_daily_plan_item" => {
-                let a: ops::CreateDailyPlanItem = parse_args(args)?;
-                let context = self.context()?;
-                respond(
-                    daily_plan::create_item(
-                        pool,
-                        a.source_node_id,
-                        parse_date(&a.plan_date)?,
-                        &context,
-                    )
-                    .await,
-                )
-            }
-            "set_daily_plan_completion" => {
-                let (a, b) = parse_args2::<ops::NodeId, ops::SetCompletion>(args)?;
-                let context = self.context()?;
-                respond(daily_plan::set_completion(pool, a.node_id, b.completed, &context).await)
-            }
-            "delete_daily_plan_item" => {
-                let a: ops::NodeId = parse_args(args)?;
-                let context = self.context()?;
-                match daily_plan::delete_item(pool, a.node_id, &context).await {
-                    Ok(()) => ok_json(json!({ "deleted": true })),
-                    Err(e) => Ok(to_err(e)),
-                }
-            }
-            "reorder_daily_plan" => {
-                let (day, b) = parse_args2::<ReorderPlanDate, ops::ReorderDailyPlan>(args)?;
-                let context = self.context()?;
-                respond(
-                    daily_plan::reorder_day(
-                        pool,
-                        parse_date(&day.plan_date)?,
-                        &b.node_ids,
-                        &context,
-                    )
-                    .await,
-                )
-            }
-            "move_daily_plan_item" => {
-                let (a, b) = parse_args2::<ops::NodeId, ops::MoveDailyPlanItem>(args)?;
-                let context = self.context()?;
-                respond(
-                    daily_plan::move_item(
-                        pool,
-                        a.node_id,
-                        parse_date(&b.target_date)?,
-                        b.target_position,
-                        &context,
-                    )
-                    .await,
-                )
-            }
-            "daily_plan_history" => {
-                let a: ops::HistoryRange = parse_args(args)?;
-                let context = self.context()?;
-                respond(
-                    daily_plan::history(
-                        pool,
-                        parse_date(&a.from)?,
-                        parse_date(&a.to)?,
-                        a.source_node_id,
-                        &context,
-                    )
-                    .await,
-                )
             }
 
             // --- daily reports ---

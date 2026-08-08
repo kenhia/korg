@@ -19,38 +19,28 @@
 //! something; `server.rs` and `reports.rs` prove the interesting ones are
 //! right. Adding a tool to this file is the floor, not the job.
 
+use korg_core::relationships;
 use korg_core::repo::{self, NewReport};
-use korg_core::topics::{self, NewTopic};
-use korg_core::{daily_plan, relationships};
 use korg_test_support::{fresh_korg, new};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use std::collections::{BTreeMap, BTreeSet};
 use time::macros::date;
-use time::Date;
 
 mod common;
 use common::{args, body, server};
 
-/// The pinned "today" — `common::server` fixes the clock here, and the daily
-/// plan refuses to write to dates in the past, so every plan date below is on
-/// or after it.
+/// The "today" the report fixtures write against.
 const TODAY: &str = "2026-07-11";
 
 /// Build one database holding an instance of everything the tool surface can
 /// address, and return the argument object for each tool.
 ///
-/// Destructive tools (`delete_comment`, `unrelate`, `delete_daily_plan_item`)
-/// each get their **own** entity, and each daily-plan tool its own date, so
-/// that the order the tools happen to be dispatched in cannot matter. A fixture
-/// table whose correctness depends on iteration order is a trap for whoever
-/// adds the 45th tool.
+/// Destructive tools (`delete_comment`, `unrelate`, `delete_link`) each get
+/// their **own** entity, so that the order the tools happen to be dispatched
+/// in cannot matter. A fixture table whose correctness depends on iteration
+/// order is a trap for whoever adds the 45th tool.
 async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
-    let ctx = daily_plan::LifecycleContext {
-        today: date!(2026 - 07 - 11),
-        now: time::macros::datetime!(2026-07-11 12:00 UTC),
-    };
-
     repo::create_project(pool, "korg").await.expect("project");
     repo::create_area(pool, "korg", "core", None)
         .await
@@ -94,34 +84,6 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
         .await
         .expect("doomed comment");
 
-    // Two topics: one to patch, one to archive.
-    let topic = topics::create_topic(
-        pool,
-        NewTopic {
-            project_id: None,
-            project: None,
-            category: None,
-            tags: Vec::new(),
-            name: "a topic".into(),
-            description: None,
-        },
-    )
-    .await
-    .expect("topic");
-    let doomed_topic = topics::create_topic(
-        pool,
-        NewTopic {
-            project_id: None,
-            project: None,
-            category: None,
-            tags: Vec::new(),
-            name: "topic to archive".into(),
-            description: None,
-        },
-    )
-    .await
-    .expect("archivable topic");
-
     // A relationship to delete, and a label from the registry so `relate`'s
     // fixture cannot drift out of the vocabulary.
     let doomed_rel = repo::relate(pool, wi.node_id, card.node_id, "related-to", None, None)
@@ -160,25 +122,6 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
     let handoff = repo::create_handoff(pool, new_handoff)
         .await
         .expect("handoff");
-
-    // One daily-plan item per tool that mutates one, each on its own day, so
-    // `reorder` sees exactly the day it owns and `delete` cannot strand `move`.
-    async fn plan(
-        pool: &PgPool,
-        date: Date,
-        source: i64,
-        ctx: &daily_plan::LifecycleContext,
-    ) -> i64 {
-        daily_plan::create_item(pool, source, date, ctx)
-            .await
-            .expect("plan item")
-            .node_id
-    }
-    let completable = plan(pool, date!(2026 - 07 - 11), wi.node_id, &ctx).await;
-    let doomed_item = plan(pool, date!(2026 - 07 - 13), card.node_id, &ctx).await;
-    let movable = plan(pool, date!(2026 - 07 - 14), finding.node_id, &ctx).await;
-    let ordered_a = plan(pool, date!(2026 - 07 - 16), wi.node_id, &ctx).await;
-    let ordered_b = plan(pool, date!(2026 - 07 - 16), card.node_id, &ctx).await;
 
     BTreeMap::from([
         // --- work items ---
@@ -232,46 +175,6 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
         ),
         ("neighbors", json!({"node_id": wi.node_id})),
         ("unrelate", json!({"id": doomed_rel})),
-        // --- topics ---
-        ("create_topic", json!({"name": "created topic"})),
-        ("get_topic", json!({"node_id": topic.node_id})),
-        ("list_topics", json!({})),
-        ("search_topics", json!({"q": "topic"})),
-        (
-            "update_topic",
-            json!({"node_id": topic.node_id, "name": "renamed topic"}),
-        ),
-        (
-            "archive_topic",
-            json!({"node_id": doomed_topic.node_id, "archived": true}),
-        ),
-        // --- daily planning ---
-        (
-            "list_daily_plan",
-            json!({"from": TODAY, "to": "2026-07-20"}),
-        ),
-        (
-            "create_daily_plan_item",
-            json!({"source_node_id": finding.node_id, "plan_date": "2026-07-17"}),
-        ),
-        (
-            "set_daily_plan_completion",
-            json!({"node_id": completable, "completed": true}),
-        ),
-        ("delete_daily_plan_item", json!({"node_id": doomed_item})),
-        (
-            "reorder_daily_plan",
-            json!({"plan_date": "2026-07-16", "node_ids": [ordered_b, ordered_a]}),
-        ),
-        (
-            "move_daily_plan_item",
-            json!({"node_id": movable, "target_date": "2026-07-15"}),
-        ),
-        // History is strictly the past: the range must end before today.
-        (
-            "daily_plan_history",
-            json!({"from": "2026-07-01", "to": "2026-07-10"}),
-        ),
         // --- reports ---
         (
             "create_report",
@@ -467,8 +370,8 @@ async fn collection_reads_return_the_shape_the_instructions_promise() {
 
     // The `list_*` tools are exactly the collection reads the instructions
     // summarise, now that the `survey_work_items` alias is gone (#871).
-    // `neighbors` and `daily_plan_history` carry their own shapes and are named
-    // in docs/api.md's four-shape table instead.
+    // `neighbors` carries its own shape and is named in docs/api.md's shape
+    // table instead.
     let classified: BTreeSet<&str> = paginated
         .iter()
         .chain(bare.iter())
