@@ -10,6 +10,7 @@
 
 import type {
   AreaRow,
+  AttachmentRow,
   AwaitingRow,
   CardRow,
   Comment,
@@ -537,4 +538,27 @@ export const api = {
       awaiting,
       ...(awaiting && note ? { note } : {}),
     }),
+
+  // images — bytes over REST (#1119, handoff D6). The bytes never travel as
+  // JSON, so `uploadImage` builds its own request rather than going through
+  // `http`: `FormData` sets its own multipart content-type, boundary included,
+  // and a hand-set header would produce a body the server cannot parse.
+  //
+  // `owner` is omitted for paste-before-save, which creates the attachment
+  // `pending`; `linkImage` is the save step. An upload nothing ever links is
+  // swept 24 hours later, which is what makes Cancel free.
+  uploadImage: async (file: File | Blob, owner?: number) => {
+    const form = new FormData();
+    form.append("file", file, file instanceof File ? file.name : "pasted.png");
+    const path = `/api/img${owner != null ? `?owner=${owner}` : ""}`;
+    const res = await send("POST", path, { method: "POST", body: form });
+    if (!res.ok) throw await failure("POST", path, res);
+    return (await res.json()) as AttachmentRow;
+  },
+  /** Claim a pending attachment for the node that now owns it. Idempotent. */
+  linkImage: (img_id: string, owner_node_id: number) =>
+    http<AttachmentRow>("POST", `/api/img/${img_id}/link`, { owner_node_id }),
+  /** The explicit discard: the record and every blob, not an archive. */
+  deleteImage: (img_id: string) =>
+    http<{ deleted: boolean }>("DELETE", `/api/img/${img_id}`),
 };

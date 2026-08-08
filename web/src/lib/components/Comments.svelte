@@ -1,13 +1,40 @@
 <script lang="ts">
   import { api, type Comment } from "$lib/api";
   import { attempt } from "$lib/toast.svelte";
+  import { PasteUploads, pasteImages } from "$lib/imagePaste.svelte";
   import ErrorNotice from "./ErrorNotice.svelte";
   import ConfirmButton from "./ConfirmButton.svelte";
+  import CommentBody from "./CommentBody.svelte";
+  import Lightbox from "./Lightbox.svelte";
 
   // `comments` is bindable so a parent can read the loaded bodies (e.g. to
   // extract launch URLs) without owning the fetch/add/delete logic.
-  let { node_id, comments = $bindable([]) }: { node_id: number; comments?: Comment[] } =
-    $props();
+  let {
+    node_id,
+    comments = $bindable([]),
+    onAttachmentsChanged,
+  }: {
+    node_id: number;
+    comments?: Comment[];
+    /** An image was pasted into a comment and now belongs to this node — the
+     *  parent's attachment list is stale. Optional: only surfaces that show
+     *  one care. */
+    onAttachmentsChanged?: () => void;
+  } = $props();
+
+  // A comment is not a node (0001/0007), so an image pasted into one is owned
+  // by the node the comment hangs off — handoff I3. That is also why one
+  // upload ledger serves the whole thread: every image in it lands on the same
+  // owner, and the attachment list is per node.
+  const uploads = new PasteUploads();
+  let lightbox = $state<string | null>(null);
+
+  // Posting or editing a comment is the save step for anything pasted into it.
+  async function claimUploads() {
+    if (uploads.pending.length === 0) return;
+    await uploads.linkAll(node_id);
+    onAttachmentsChanged?.();
+  }
 
   let newComment = $state("");
   let loadError = $state<unknown>(null);
@@ -47,6 +74,7 @@
     if (c) {
       comments = [...comments, c];
       newComment = "";
+      await claimUploads();
     }
   }
 
@@ -76,6 +104,7 @@
     if (updated) {
       comments = comments.map((c) => (c.id === updated.id ? updated : c));
       editingId = null;
+      await claimUploads();
     }
   }
 </script>
@@ -94,11 +123,11 @@
         <li class="flex items-start gap-2 rounded bg-[var(--color-bg)] px-2 py-1 text-sm">
           {#if editingId === c.id}
             <label class="sr-only" for={`comment-edit-${c.id}`}>Edit comment</label>
-            <textarea id={`comment-edit-${c.id}`} class="min-h-[3rem] flex-1 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={editBuf} onkeydown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveEdit(); if (e.key === "Escape") editingId = null; }}></textarea>
+            <textarea id={`comment-edit-${c.id}`} class="min-h-[3rem] flex-1 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={editBuf} use:pasteImages={uploads} onkeydown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveEdit(); if (e.key === "Escape") editingId = null; }}></textarea>
             <button class="text-xs text-[var(--color-accent)] hover:underline" onclick={saveEdit}>Save</button>
             <button class="text-xs text-[var(--color-muted)] hover:underline" onclick={() => (editingId = null)}>Cancel</button>
           {:else}
-            <span class="flex-1 whitespace-pre-wrap">{c.body}</span>
+            <CommentBody body={c.body} onOpen={(id) => (lightbox = id)} />
             <button class="text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]" aria-label="Edit comment" title="Edit" onclick={() => startEdit(c)}>✎</button>
             <!-- Deleting a comment cannot be undone from the UI, so it confirms
                  rather than offering an undo (WI #549). -->
@@ -121,7 +150,9 @@
   {/if}
   <div class="mt-2 flex gap-2">
     <label class="sr-only" for={`comment-new-${node_id}`}>Add a comment</label>
-    <textarea id={`comment-new-${node_id}`} class="min-h-[3rem] flex-1 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" placeholder="Add a comment… (Ctrl/⌘-Enter to post)" data-testid="comment-input" bind:value={newComment} onkeydown={(e) => (e.key === "Enter" && (e.ctrlKey || e.metaKey)) && addComment()}></textarea>
+    <textarea id={`comment-new-${node_id}`} class="min-h-[3rem] flex-1 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" placeholder="Add a comment… (Ctrl/⌘-Enter to post, Ctrl-V an image)" data-testid="comment-input" bind:value={newComment} use:pasteImages={uploads} onkeydown={(e) => (e.key === "Enter" && (e.ctrlKey || e.metaKey)) && addComment()}></textarea>
     <button class="self-start rounded bg-[var(--color-surface-hi)] px-3 py-1 text-sm hover:bg-[var(--color-accent-soft)]" onclick={addComment}>Add</button>
   </div>
 </div>
+
+<Lightbox imgId={lightbox} onClose={() => (lightbox = null)} />

@@ -2,7 +2,7 @@
   import { api, type ReportFull, type ReportRow, type SourceHealth } from "$lib/api";
   import Comments from "$lib/components/Comments.svelte";
   import NodePreview from "$lib/components/NodePreview.svelte";
-  import { renderMarkdown } from "$lib/markdown";
+  import MarkdownView from "$lib/components/MarkdownView.svelte";
   import { ID_CLASS, reportStatusPill, sourceFreshnessPill } from "$lib/domain";
 
   let rows = $state<ReportRow[]>([]);
@@ -142,10 +142,7 @@
         <div class="border-t border-[var(--color-border)] px-4 py-4">
           {#if full[r.node_id]}
             {@const f = full[r.node_id]}
-            <article class="prose prose-invert prose-sm max-w-none">
-              <!-- eslint-disable-next-line svelte/no-at-html-tags — sanitized in renderMarkdown -->
-              {@html renderMarkdown(f.body)}
-            </article>
+            <MarkdownView src={f.body} class="prose prose-invert prose-sm max-w-none" />
 
             {#if f.findings.length > 0}
               <div class="mt-4">

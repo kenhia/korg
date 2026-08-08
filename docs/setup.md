@@ -214,6 +214,12 @@ npx playwright install chromium                       # once
 KORG_E2E_URL=http://127.0.0.1:8090 npx playwright test
 ```
 
+**Give that API a `KORG_IMG_ROOT` it can write to** (sprint 057). The default is
+the container's `/data/images`, which a dev box has neither, so the image specs
+fail on a permission error that says nothing about images. `playwright.config.ts`
+sets it for the server it starts itself; an API you started by hand needs it
+passed. Any writable path does — the store is created at startup.
+
 Run it against a **production-sized** database — a restored nightly dump is
 ideal (`/gratch/backups/korg/` on the homelab; see
 [operations.md](operations.md)). A fresh, empty one is the state bugs hide in:

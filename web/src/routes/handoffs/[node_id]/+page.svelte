@@ -19,7 +19,8 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { api, type HandoffFull, type RelatedRef } from "$lib/api";
-  import { renderMarkdown } from "$lib/markdown";
+  import MarkdownView from "$lib/components/MarkdownView.svelte";
+  import { modalOpen } from "$lib/components/Dialog.svelte";
   import { chip, stamp } from "$lib/domain";
   import Comments from "$lib/components/Comments.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
@@ -86,6 +87,9 @@
   }
 
   function onKeyDown(e: KeyboardEvent) {
+    // Nor while a modal is open — Escape closes that, and closing it must not
+    // also navigate away from the page underneath (#1121).
+    if (modalOpen()) return;
     // Not while typing a comment — Escape belongs to the textarea then.
     const tag = (e.target as HTMLElement)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
@@ -176,10 +180,7 @@
       </section>
     {/if}
 
-    <article class="prose prose-invert max-w-none">
-      <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
-      {@html renderMarkdown(handoff.body)}
-    </article>
+    <MarkdownView src={handoff.body} class="prose prose-invert max-w-none" />
 
     <!-- Nodes are comment-generic (0007), so the shared thread works here with
          no handoff-specific backend. This is the one thing a reader can write. -->

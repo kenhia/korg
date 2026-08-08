@@ -801,6 +801,13 @@ it cannot own an edge. An image pasted into a comment is owned by the **node**
 that comment is on, and appears in that node's `attachments`; the comment body
 carries the token.
 
+**The token an agent should write** is `![img-<hex>](/api/img/img-<hex>/thumb)`
+— the alt text is the id, and the URL points at the thumbnail. The web UI
+writes exactly this on paste (sprint 057) and renders any such token as a
+thumbnail that opens full resolution. It recognises the image by the **alt
+text**, so a token whose URL points somewhere else still displays, but writing
+the `thumb` URL is what keeps a body of a dozen screenshots cheap to render.
+
 ### Storage accounting
 
 `GET /api/img/stats` reports `count`, the `pending`/`linked` split,

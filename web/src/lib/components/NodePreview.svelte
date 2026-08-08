@@ -15,7 +15,7 @@
   // three gaps. Rendering them here means the *next* kind gets them for free
   // rather than filing punch-list items 6-10.
   import { api, type NodePreview } from "$lib/api";
-  import { renderMarkdown } from "$lib/markdown";
+  import MarkdownView from "./MarkdownView.svelte";
   import { chip, nodePage, stamp } from "$lib/domain";
   import Comments from "./Comments.svelte";
   import Dialog from "./Dialog.svelte";
@@ -153,10 +153,7 @@
             >
               {node.body_label}
             </h4>{/if}
-          <div class="prose prose-invert max-w-none text-sm">
-            <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
-            {@html renderMarkdown(node.body)}
-          </div>
+          <MarkdownView src={node.body} />
         </section>
       {/if}
 
@@ -167,13 +164,11 @@
           >
             Details
           </h4>
-          <div
+          <MarkdownView
+            src={node.details}
             class="prose prose-invert max-w-none rounded p-2 text-sm"
             style="background: color-mix(in oklch, var(--color-surface) 75%, var(--color-accent) 25%)"
-          >
-            <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized markdown -->
-            {@html renderMarkdown(node.details)}
-          </div>
+          />
         </section>
       {/if}
 

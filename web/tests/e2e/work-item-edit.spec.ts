@@ -46,7 +46,8 @@ test("edit, archive, and relate a work item", async ({ page }) => {
   // someone runs the suite by hand. `has_handoff` joined in sprint 025 (H-1),
   // caught in 028; `includes` and `collides-with` joined in 044, caught in 049;
   // `materializes` joined in 051 and was caught *in* 051, by reading this
-  // comment during the ship rather than by a later run.
+  // comment during the ship rather than by a later run; `has_attachment`
+  // joined in 056 and was caught by the first suite run afterwards, in 057.
   await expect(labelPicker.locator("option")).toHaveText([
     "covers",
     "finding",
@@ -56,6 +57,7 @@ test("edit, archive, and relate a work item", async ({ page }) => {
     "includes",
     "collides-with",
     "materializes",
+    "has_attachment",
   ]);
   await labelPicker.selectOption({ label: "depends_on" });
   await page.getByPlaceholder("42").fill(bId);
