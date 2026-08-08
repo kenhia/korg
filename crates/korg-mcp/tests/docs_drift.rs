@@ -77,6 +77,7 @@ const CATEGORIES: &[&str] = &[
     "Awaiting Ken",
     "Board",
     "Reports",
+    "Schedules",
     "Handoffs",
     "Projects and areas",
 ];
@@ -532,6 +533,12 @@ const VOCAB_BULLETS: &[(&str, &str)] = &[
     ("report `status`", "REPORT_STATUSES"),
     ("project `status`", "PROJECT_STATUSES"),
     ("project `category`", "PROJECT_CATEGORIES"),
+    ("schedule `cadence`", "SCHEDULE_CADENCES"),
+    ("schedule `anchor_mode`", "SCHEDULE_ANCHORS"),
+    ("schedule `status`", "SCHEDULE_STATUSES"),
+    ("schedule substitutions", "SCHEDULE_SUBSTITUTIONS"),
+    ("source `freshness`", "SOURCE_FRESHNESS"),
+    ("source `asserts`", "SOURCE_ASSERTIONS"),
 ];
 
 fn vocabulary(const_name: &str) -> &'static [&'static str] {

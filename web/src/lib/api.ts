@@ -27,6 +27,10 @@ import type {
   ProposalRow,
   ReportFull,
   ReportRow,
+  ScheduleDetail,
+  ScheduleList,
+  ScheduleRow,
+  SourceHealth,
   WorkItemDetail,
   WorkItemListLean,
   WorkItemRow,
@@ -37,6 +41,11 @@ import type {
   ErrorCode,
   ProgramStatus,
   ProposalStatus,
+  ScheduleAnchor,
+  ScheduleCadence,
+  ScheduleStatus,
+  WiTshirt,
+  WiType,
 } from "./generated/vocab";
 import { ERROR_CODES } from "./generated/vocab";
 
@@ -462,6 +471,62 @@ export const api = {
       tags: string[];
     }>,
   ) => http<ProgramRow>("PATCH", `/api/programs/${node_id}`, patch),
+
+  // schedules — work that a date makes appear (#581). `due` is computed on
+  // every read, so nothing here caches it; a stale due flag over a clock is
+  // precisely the failure this feature exists to remove.
+  schedules: (opts?: {
+    status?: ScheduleStatus | "all";
+    project?: string;
+    due_only?: boolean;
+  }) =>
+    http<ScheduleList>(
+      "GET",
+      `/api/schedules${listQuery({
+        status: opts?.status,
+        project: opts?.project,
+        due_only: opts?.due_only ? "true" : undefined,
+      })}`,
+    ),
+  schedule: (node_id: number) =>
+    httpMaybe<ScheduleDetail>("GET", `/api/schedules/${node_id}`),
+  updateSchedule: (
+    node_id: number,
+    patch: Patch<{
+      title: string;
+      template: string | null;
+      notes: string | null;
+      cadence: ScheduleCadence;
+      anchor_mode: ScheduleAnchor;
+      anchor_at: string;
+      status: ScheduleStatus;
+      wi_type: WiType;
+      wi_tshirt: WiTshirt;
+      archived: boolean;
+      tags: string[];
+    }>,
+  ) => http<ScheduleRow>("PATCH", `/api/schedules/${node_id}`, patch),
+  /** Turn a due schedule into a work item. `force` brings a not-yet-due one
+   *  forward; it never lifts the outstanding-item refusal. */
+  materializeSchedule: (node_id: number, force = false) =>
+    http<{ work_item: WorkItemRow; schedule: ScheduleRow }>(
+      "POST",
+      `/api/schedules/${node_id}/materialize${force ? "?force=true" : ""}`,
+    ),
+
+  // report-source staleness (#950). A bare array by design — one row per
+  // source, and capping it could push a stale source off the end behind
+  // fresher ones, which inverts the failure it exists to catch.
+  reportSources: () => http<SourceHealth[]>("GET", "/api/report-sources"),
+  setReportSource: (
+    source: string,
+    patch: Patch<{
+      cadence_days: number | null;
+      grace_days: number | null;
+      retired: boolean;
+      note: string | null;
+    }>,
+  ) => http<SourceHealth>("PATCH", `/api/report-sources/${source}`, patch),
 
   // the awaiting-Ken lane (#969). `setAwaiting(id, false)` is the one-click
   // clear — the same core path an agent uses, not a second one that could

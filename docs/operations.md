@@ -393,6 +393,23 @@ and says so.
 Beyond that, verify what the *sprint* changed — that is per-sprint work no fixed
 script can do for you (`sprint-ship` Phase 7).
 
+### When a sprint removes a surface
+
+**Sweep `scripts/` too.** Sprint 050 removed `/api/topics` and inventoried
+crates, web and docs — but not `scripts/`, so `post-deploy-check.sh` kept curling
+the dead route under `set -euo pipefail` and the stock script failed against
+every post-050 build. That deploy ran from a hand-patched copy, and the fix
+landed a sprint later as korg #1086.
+
+One line in this checklist rather than a `docs_drift`-style fence: there is a
+single call site, and a test that parses shell to find retired routes would cost
+more than it protects. The pattern to look for is any script that asserts a
+surface exists — a count, a curl, a grep of `tools/list`.
+
+A baseline JSON captured before the removal still carries the retired key; the
+compare loop iterates the *after* snapshot's keys, so an absent key is simply not
+compared rather than reported as a loss.
+
 ## Destructive operations
 
 `korg-migrate --reset` runs `TRUNCATE node, project, area … CASCADE`. Read that

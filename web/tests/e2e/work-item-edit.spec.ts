@@ -41,10 +41,12 @@ test("edit, archive, and relate a work item", async ({ page }) => {
   const labelPicker = page.getByLabel("Relationship label");
   await expect(labelPicker).toHaveValue("related-to");
   // Exactly the registry, in registry order. This list has now gone stale
-  // twice for the same structural reason — e2e is out of CI (docs/setup.md),
-  // so a registry addition is only noticed the next time someone runs the
-  // suite by hand. `has_handoff` joined in sprint 025 (H-1), caught in 028;
-  // `includes` and `collides-with` joined in 044, caught in 049.
+  // three times for the same structural reason — e2e is out of CI
+  // (docs/setup.md), so a registry addition is only noticed the next time
+  // someone runs the suite by hand. `has_handoff` joined in sprint 025 (H-1),
+  // caught in 028; `includes` and `collides-with` joined in 044, caught in 049;
+  // `materializes` joined in 051 and was caught *in* 051, by reading this
+  // comment during the ship rather than by a later run.
   await expect(labelPicker.locator("option")).toHaveText([
     "covers",
     "finding",
@@ -53,6 +55,7 @@ test("edit, archive, and relate a work item", async ({ page }) => {
     "has_handoff",
     "includes",
     "collides-with",
+    "materializes",
   ]);
   await labelPicker.selectOption({ label: "depends_on" });
   await page.getByPlaceholder("42").fill(bId);

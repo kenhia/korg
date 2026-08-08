@@ -21,7 +21,11 @@ const ROUTES = [
   "/work-items",
   "/work-items/review",
   "/planning",
+  // /programs joined the nav in sprint 044 and was never added here; /schedules
+  // in 051. Same out-of-CI drift the relationship-label list keeps hitting.
+  "/programs",
   "/daily-reports",
+  "/schedules",
   "/reading-list",
   "/link-up",
 ];

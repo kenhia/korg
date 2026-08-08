@@ -18,7 +18,8 @@ use korg_core::config::KorgConfig;
 use korg_core::ops;
 use korg_core::repo::{
     self, CardPatch, HandoffPatch, LinkPatch, NewCard, NewHandoff, NewLink, NewProgram,
-    NewProposal, NewWorkItem, ProgramPatch, ProjectPatch, ProposalPatch, WorkItemPatch,
+    NewProposal, NewSchedule, NewWorkItem, ProgramPatch, ProjectPatch, ProposalPatch,
+    ReportSourcePatch, SchedulePatch, WorkItemPatch,
 };
 use korg_mcp::tools::KorgServer;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -85,6 +86,17 @@ pub fn build_router(state: AppState) -> Router {
             "/api/programs/:node_id",
             get(get_program).patch(update_program),
         )
+        .route("/api/schedules", get(list_schedules).post(create_schedule))
+        .route(
+            "/api/schedules/:node_id",
+            get(get_schedule).patch(update_schedule),
+        )
+        .route(
+            "/api/schedules/:node_id/materialize",
+            post(materialize_schedule),
+        )
+        .route("/api/report-sources", get(list_report_sources))
+        .route("/api/report-sources/:source", patch(set_report_source))
         .route("/api/awaiting", get(list_awaiting))
         .route("/api/board", get(board))
         .route("/api/nodes/:id/awaiting", put(set_awaiting))
@@ -602,6 +614,85 @@ async fn update_program(
 ) -> ApiResult {
     Ok(Json(json!(
         repo::update_program(&s.pool, node_id, patch).await?
+    )))
+}
+
+// --- schedules: work a date makes appear (#581) -----------------------------
+
+async fn list_schedules(
+    State(s): State<AppState>,
+    Query(q): Query<ops::ListSchedules>,
+) -> ApiResult {
+    Ok(Json(json!(
+        repo::list_schedules(
+            &s.pool,
+            q.status.as_deref(),
+            q.project.as_deref(),
+            q.due_only,
+            q.archived,
+        )
+        .await?
+    )))
+}
+
+/// The focused read: the schedule, its due-ness, and every work item it has
+/// materialised — so a UI answers "when was this drill last actually run?"
+/// without walking the `materializes` edges itself.
+async fn get_schedule(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
+    match repo::get_schedule_detail(&s.pool, node_id).await? {
+        Some(detail) => Ok(Json(json!(detail))),
+        None => Err(not_found(format!("no schedule with node_id {node_id}"))),
+    }
+}
+
+async fn create_schedule(State(s): State<AppState>, Json(b): Json<NewSchedule>) -> ApiResult {
+    Ok(Json(json!(repo::create_schedule(&s.pool, b).await?)))
+}
+
+async fn update_schedule(
+    State(s): State<AppState>,
+    Path(node_id): Path<i64>,
+    Json(patch): Json<SchedulePatch>,
+) -> ApiResult {
+    Ok(Json(json!(
+        repo::update_schedule(&s.pool, node_id, patch).await?
+    )))
+}
+
+/// POST rather than PATCH: this **creates** a work item. The `force` flag is a
+/// query parameter so the body can stay empty for the ordinary case.
+async fn materialize_schedule(
+    State(s): State<AppState>,
+    Path(node_id): Path<i64>,
+    Query(q): Query<MaterializeQuery>,
+) -> ApiResult {
+    Ok(Json(json!(
+        repo::materialize_schedule(&s.pool, node_id, q.force).await?
+    )))
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct MaterializeQuery {
+    #[serde(default)]
+    force: bool,
+}
+
+// --- report-source staleness (#950) -----------------------------------------
+
+/// Every known source and whether korg can currently believe it. See
+/// `repo::list_report_sources` — most-alarming first, and nothing but a `fresh`
+/// source ever carries a real status.
+async fn list_report_sources(State(s): State<AppState>) -> ApiResult {
+    Ok(Json(json!(repo::list_report_sources(&s.pool).await?)))
+}
+
+async fn set_report_source(
+    State(s): State<AppState>,
+    Path(source): Path<String>,
+    Json(patch): Json<ReportSourcePatch>,
+) -> ApiResult {
+    Ok(Json(json!(
+        repo::set_report_source(&s.pool, &source, patch).await?
     )))
 }
 

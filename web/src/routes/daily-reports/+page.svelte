@@ -1,11 +1,15 @@
 <script lang="ts">
-  import { api, type ReportFull, type ReportRow } from "$lib/api";
+  import { api, type ReportFull, type ReportRow, type SourceHealth } from "$lib/api";
   import Comments from "$lib/components/Comments.svelte";
   import NodePreview from "$lib/components/NodePreview.svelte";
   import { renderMarkdown } from "$lib/markdown";
-  import { ID_CLASS, reportStatusPill } from "$lib/domain";
+  import { ID_CLASS, reportStatusPill, sourceFreshnessPill } from "$lib/domain";
 
   let rows = $state<ReportRow[]>([]);
+  // #950: the sources themselves, above the reports. A source that filed daily
+  // and stopped is the alert, and it has to sit on the surface a real problem
+  // would use — a channel nobody looks at is not a channel.
+  let sources = $state<SourceHealth[]>([]);
   let expanded = $state<Set<number>>(new Set());
   let full = $state<Record<number, ReportFull>>({});
   let error = $state<string | null>(null);
@@ -15,7 +19,7 @@
 
   async function load() {
     try {
-      rows = await api.reports();
+      [rows, sources] = await Promise.all([api.reports(), api.reportSources()]);
       // Leaderboard UX: the latest report arrives pre-expanded.
       if (rows.length > 0) await toggle(rows[0].node_id, true);
     } catch (e) {
@@ -49,13 +53,57 @@
 <h1 class="mb-1 text-xl font-semibold">Daily reports</h1>
 <p class="mb-4 text-sm text-[var(--color-muted)]">
   What the monitors saw, newest first. Findings link to work items; comments stick to the
-  report.
+  report. A source that stopped filing is itself an alert — anything not
+  <span class="font-medium">fresh</span> reports <span class="font-medium">unknown</span>,
+  never its last known status.
 </p>
 
 {#if error}
   <p class="mb-4 rounded border border-red-700 bg-red-900/30 px-3 py-2 text-sm text-red-300">
     {error}
   </p>
+{/if}
+
+{#if sources.length > 0}
+  <section class="mb-5">
+    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+      Sources
+    </h2>
+    <ul class="space-y-1">
+      {#each sources as s (s.source)}
+        <li
+          class="flex flex-wrap items-center gap-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
+        >
+          <span class="font-mono">{s.source}</span>
+          <span class={sourceFreshnessPill(s.freshness)}>{s.freshness}</span>
+          <!-- The #950 rule, rendered: a source that is not fresh asserts
+               `unknown`, and the API gives us nothing else to show. Restating a
+               stale GREEN here is the failure this whole panel exists to end. -->
+          <span class={reportStatusPill(s.asserts)}>{s.asserts}</span>
+          <span class="flex-1"></span>
+          {#if s.freshness === "stale"}
+            <span class="text-xs text-red-300">
+              nothing since {s.last_report_date} — {s.overdue_days}
+              {s.overdue_days === 1 ? "day" : "days"} past due
+            </span>
+          {:else if s.freshness === "unrated"}
+            <span class="text-xs text-[var(--color-muted)]">
+              too little history to judge — declare a cadence to rate it
+            </span>
+          {:else if s.freshness === "retired"}
+            <span class="text-xs text-[var(--color-muted)]">
+              retired{s.note ? ` — ${s.note}` : ""}
+            </span>
+          {:else}
+            <span class="text-xs text-[var(--color-muted)]">
+              last filed {s.last_report_date} · every {s.cadence_days}
+              {s.cadence_days === 1 ? "day" : "days"}{s.cadence_declared ? " (declared)" : ""}
+            </span>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+  </section>
 {/if}
 
 {#if rows.length === 0 && !error}

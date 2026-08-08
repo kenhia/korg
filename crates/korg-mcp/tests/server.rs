@@ -21,8 +21,9 @@ async fn mcp_surface_end_to_end() {
     let server = server(pool);
 
     // Tool descriptors are stable. (57 until #965 retired the 13 topic and
-    // daily-plan tools with the slots feature.)
-    assert_eq!(tools().len(), 44, "expected 44 tools");
+    // daily-plan tools with the slots feature; 44 until #581/#950 added the
+    // five schedule tools and the two report-source ones.)
+    assert_eq!(tools().len(), 51, "expected 51 tools");
 
     // Create a work item.
     let wi = body(

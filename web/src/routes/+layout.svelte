@@ -21,6 +21,10 @@
     // (sprint 044).
     { href: "/programs", label: "Programs" },
     { href: "/daily-reports", label: "Reports" },
+    // Schedules sit beside Reports because both are korg's time-derived state
+    // (sprint 051): one is a date arriving, the other a date passing with no
+    // write. Nothing on either page runs on its own.
+    { href: "/schedules", label: "Schedules" },
     { href: "/reading-list", label: "Reading" },
     { href: "/plan", label: "Plan" },
   ];

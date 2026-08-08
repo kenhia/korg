@@ -79,8 +79,9 @@ async fn mcp_http_end_to_end() {
     // tools (delete_link, update_area, delete_area); 56 since #968/#969 added
     // the four program tools plus set_awaiting/list_awaiting; 57 since #970
     // added get_board; 44 since #965 removed the 13 topic and daily-plan
-    // tools with the slots feature.
-    assert_eq!(tools.len(), 44, "expected 44 tools, got {}", tools.len());
+    // tools with the slots feature; 51 since #581/#950 added the five schedule
+    // tools plus list_report_sources/set_report_source.
+    assert_eq!(tools.len(), 51, "expected 51 tools, got {}", tools.len());
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     assert!(names.contains(&"create_work_item"));
     assert!(names.contains(&"list_work_items"));

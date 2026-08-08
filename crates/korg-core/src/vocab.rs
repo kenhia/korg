@@ -34,7 +34,13 @@ pub const WI_TERMINAL_STATUSES: [&str; 1] = ["closed"];
 
 /// Work-item types (D-2). `brainstorm` is deliberate: half-formed ideas get
 /// filed as work items rather than lost.
-pub const WI_TYPES: [&str; 7] = [
+///
+/// `maintenance` (sprint 051, #581) is the type a [`schedule`](SCHEDULE_CADENCES)
+/// materialises into. The WI asked for "its own type" so kmon and other
+/// automation can find generated items as a group — a vocabulary value rather
+/// than a title convention, because a convention is not something a query can
+/// filter on.
+pub const WI_TYPES: [&str; 8] = [
     "task",
     "bug",
     "chore",
@@ -42,6 +48,7 @@ pub const WI_TYPES: [&str; 7] = [
     "research",
     "tweak",
     "brainstorm",
+    "maintenance",
 ];
 
 /// T-shirt sizes; mirrors the `wi_tshirt` CHECK in migration 0001.
@@ -89,6 +96,90 @@ pub const PROGRAM_TERMINAL_STATUSES: [&str; 1] = ["done"];
 
 /// Daily-report statuses; mirrors the `report.status` CHECK (0010).
 pub const REPORT_STATUSES: [&str; 3] = ["ok", "attention", "problem"];
+
+// --- time-derived surfacing (sprint 051: #581 + #950) -----------------------
+
+/// How often a [`schedule`] comes round again; mirrors the `schedule.cadence`
+/// CHECK (0025). The four recurring values are #581's own list.
+///
+/// `once` is not a special case with its own storage — it is the cadence whose
+/// interval is **zero**, so `schedule.anchor_at` simply *is* the fire date.
+/// That is what let the one-shot (Ken's DST-recheck example) and the quarterly
+/// restore drill share one node shape instead of two, which korg:1079 argued
+/// was the real cost of the slice that was rejected.
+pub const SCHEDULE_CADENCES: [&str; 5] = ["once", "weekly", "monthly", "quarterly", "yearly"];
+
+/// Which event advances `schedule.anchor_at` — #581's "two styles", named.
+///
+/// * `completed` — duration from the last time the maintenance was *done*.
+///   Advanced by a korg-core write rule when the materialised work item reaches
+///   a completed status, never by a trigger (0023's precedent for the awaiting
+///   marker: lifecycle rules live in the one path both transports share).
+/// * `created` — duration from the last time the work item was *created*.
+///   Advanced by `materialize_schedule` itself.
+///
+/// Both are one column. The styles differ only in which event moves it, which
+/// is why the second one was not the seam korg:1079 said to cut if scope had to
+/// give.
+pub const SCHEDULE_ANCHORS: [&str; 2] = ["completed", "created"];
+
+/// Schedule lifecycle; mirrors the `schedule.status` CHECK (0025).
+///
+/// `paused` is the schedule-side analogue of a retired report source: a drill
+/// that should stop surfacing for a while without losing its history or its
+/// anchor. `done` is terminal and is where a `once` schedule lands the moment it
+/// materialises.
+pub const SCHEDULE_STATUSES: [&str; 3] = ["active", "paused", "done"];
+
+/// The schedules a list read means by default — same split as proposals,
+/// programs and work items, fenced by the same partition test.
+pub const SCHEDULE_LIVE_STATUSES: [&str; 2] = ["active", "paused"];
+
+/// The complement of [`SCHEDULE_LIVE_STATUSES`] — excluded from a default
+/// `list_schedules` and counted in its `omitted`.
+pub const SCHEDULE_TERMINAL_STATUSES: [&str; 1] = ["done"];
+
+/// The closed set of template substitutions (#581, D-6).
+///
+/// Ken was explicit that `"korg restore drill - {MONTH} {YEAR} (Quarterly)"`
+/// conveys the *need* and is not the spec, so this stays a small closed set
+/// rather than growing a template syntax. An unrecognised placeholder is
+/// rejected at write time with this list in the message: the alternative is a
+/// typo rendering literally into a work-item title months later, which is the
+/// exact class of silent wrong this sprint exists to remove.
+pub const SCHEDULE_SUBSTITUTIONS: [&str; 5] = ["YEAR", "MONTH", "DAY", "DATE", "QUARTER"];
+
+/// Whether korg can currently believe what a report source last said (#950).
+///
+/// * `fresh` — filed within its cadence plus grace.
+/// * `stale` — overdue. **The alert.** A source that filed daily and stopped is
+///   itself the signal, because absence of a write is precisely what a broken
+///   tool can never report about itself.
+/// * `retired` — declared ended (`report_source.retired`). Deliberately stopped,
+///   so not an alert. An explicit declaration is the only thing that keeps "we
+///   turned this off" distinguishable from "this died"; silence cannot.
+/// * `unrated` — too little history to infer a cadence and none declared.
+///
+/// `unrated` exists because both available guesses are bad. Calling an unknown
+/// source `fresh` rebuilds the July 2026 failure this WI is about; calling it
+/// `stale` cries wolf on every one-off report and trains people to ignore the
+/// panel — and a channel nobody looks at is not a channel. Declaring a cadence
+/// is how a real source leaves this state on its first day.
+pub const SOURCE_FRESHNESS: [&str; 4] = ["fresh", "stale", "retired", "unrated"];
+
+/// What a report source currently asserts about its subject — [`REPORT_STATUSES`]
+/// plus `unknown`.
+///
+/// **The rule #950 exists for**: anything but `fresh` asserts `unknown`, never
+/// the last known status. In July 2026 korg served a GREEN from 2026-07-22 for
+/// eleven days *because* the thing checking the fleet was broken; restating a
+/// last-known status in a stale card reproduces that failure exactly.
+/// `source_asserts_extends_report_statuses` keeps the two lists from drifting.
+pub const SOURCE_ASSERTIONS: [&str; 4] = ["ok", "attention", "problem", "unknown"];
+
+/// What a source asserts when korg cannot vouch for it — the value that must
+/// appear on every non-`fresh` row.
+pub const SOURCE_ASSERTS_UNKNOWN: &str = SOURCE_ASSERTIONS[3];
 
 /// Project lifecycle statuses (WI #246, narrowed to two by #828). Default
 /// WI-page rail shows only `active` unless "show all" is on.
@@ -141,7 +232,7 @@ pub const PROJECT_CATEGORIES: [&str; 7] = [
 /// hand-kept copy that drifts (the old `api.ts` `WI_TYPES` had nine entries,
 /// six of which the server rejects). `docs_drift` (korg-mcp) walks it too, so a
 /// vocabulary enumerated in prose is checked against this registry, not a copy.
-pub const EXPORTED: [(&str, &str, &[&str]); 11] = [
+pub const EXPORTED: [(&str, &str, &[&str]); 17] = [
     ("WI_STATUSES", "WiStatus", &WI_STATUSES),
     ("WI_TYPES", "WiType", &WI_TYPES),
     ("WI_TSHIRTS", "WiTshirt", &WI_TSHIRTS),
@@ -152,6 +243,16 @@ pub const EXPORTED: [(&str, &str, &[&str]); 11] = [
     ("REPORT_STATUSES", "ReportStatus", &REPORT_STATUSES),
     ("PROJECT_STATUSES", "ProjectStatus", &PROJECT_STATUSES),
     ("PROJECT_CATEGORIES", "ProjectCategory", &PROJECT_CATEGORIES),
+    ("SCHEDULE_CADENCES", "ScheduleCadence", &SCHEDULE_CADENCES),
+    ("SCHEDULE_ANCHORS", "ScheduleAnchor", &SCHEDULE_ANCHORS),
+    ("SCHEDULE_STATUSES", "ScheduleStatus", &SCHEDULE_STATUSES),
+    (
+        "SCHEDULE_SUBSTITUTIONS",
+        "ScheduleSubstitution",
+        &SCHEDULE_SUBSTITUTIONS,
+    ),
+    ("SOURCE_FRESHNESS", "SourceFreshness", &SOURCE_FRESHNESS),
+    ("SOURCE_ASSERTIONS", "SourceAssertion", &SOURCE_ASSERTIONS),
     // Not a domain vocabulary but the same kind of fact: a closed set the
     // client must agree with. The web app branches on it to tell "you typed
     // something wrong" from "korg broke" (sprint 019).
@@ -183,8 +284,9 @@ pub fn validate(value: &str, allowed: &[&str], what: &str) -> Result<(), RepoErr
 mod partition {
     use super::{
         PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES, PROGRAM_TERMINAL_STATUSES, PROPOSAL_LIVE_STATUSES,
-        PROPOSAL_STATUSES, PROPOSAL_TERMINAL_STATUSES, WI_LIVE_STATUSES, WI_STATUSES,
-        WI_TERMINAL_STATUSES,
+        PROPOSAL_STATUSES, PROPOSAL_TERMINAL_STATUSES, REPORT_STATUSES, SCHEDULE_LIVE_STATUSES,
+        SCHEDULE_STATUSES, SCHEDULE_TERMINAL_STATUSES, SOURCE_ASSERTIONS, SOURCE_ASSERTS_UNKNOWN,
+        SOURCE_FRESHNESS, WI_LIVE_STATUSES, WI_STATUSES, WI_TERMINAL_STATUSES,
     };
     use std::collections::BTreeSet;
 
@@ -250,6 +352,67 @@ mod partition {
             live.union(&terminal).copied().collect::<BTreeSet<&str>>(),
             "every program status must be classified live or terminal — \
              list_programs' default and its `omitted` counts both depend on it"
+        );
+    }
+
+    /// And for schedules (sprint 051, #581). `paused` is the value this fence
+    /// exists for — it is neither running nor finished, exactly the ambiguity
+    /// `holding` has for programs, and a fourth status sharing it must not be
+    /// able to slip in unclassified.
+    #[test]
+    fn schedule_statuses_partition_cleanly() {
+        let all: BTreeSet<&str> = SCHEDULE_STATUSES.into_iter().collect();
+        let live: BTreeSet<&str> = SCHEDULE_LIVE_STATUSES.into_iter().collect();
+        let terminal: BTreeSet<&str> = SCHEDULE_TERMINAL_STATUSES.into_iter().collect();
+        assert!(
+            live.is_disjoint(&terminal),
+            "a schedule status is both live and terminal: {:?}",
+            live.intersection(&terminal).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            all,
+            live.union(&terminal).copied().collect::<BTreeSet<&str>>(),
+            "every schedule status must be classified live or terminal — \
+             list_schedules' default and its `omitted` counts both depend on it"
+        );
+    }
+
+    /// A source asserts a report status, or it asserts `unknown` — nothing
+    /// else. A sixth report status added without touching [`SOURCE_ASSERTIONS`]
+    /// would leave a fresh source asserting a value outside its own declared
+    /// vocabulary, which is the sort of drift a generated TypeScript union
+    /// turns into a compile error in the web app and a silent lie in an agent.
+    #[test]
+    fn source_asserts_extends_report_statuses() {
+        let asserts: BTreeSet<&str> = SOURCE_ASSERTIONS.into_iter().collect();
+        let expected: BTreeSet<&str> = REPORT_STATUSES
+            .into_iter()
+            .chain([SOURCE_ASSERTS_UNKNOWN])
+            .collect();
+        assert_eq!(
+            asserts, expected,
+            "SOURCE_ASSERTIONS must be exactly REPORT_STATUSES + '{SOURCE_ASSERTS_UNKNOWN}'"
+        );
+        assert!(
+            !REPORT_STATUSES.contains(&SOURCE_ASSERTS_UNKNOWN),
+            "'{SOURCE_ASSERTS_UNKNOWN}' must not also be a report status — the whole \
+             point is that it is the value korg substitutes when it cannot vouch \
+             for what a source last said (#950)"
+        );
+    }
+
+    /// Exactly one freshness value is the alert (#950). If a future edit made
+    /// `retired` or `unrated` alert too, the panel starts crying wolf and a
+    /// channel nobody looks at is not a channel — which is the failure mode the
+    /// WI names directly.
+    #[test]
+    fn exactly_one_freshness_is_the_alert() {
+        assert!(SOURCE_FRESHNESS.contains(&"stale"));
+        assert_eq!(
+            SOURCE_FRESHNESS.len(),
+            4,
+            "adding a freshness value means deciding whether it alerts — see \
+             `SourceHealth::alerts` in repo.rs, which this list feeds"
         );
     }
 }

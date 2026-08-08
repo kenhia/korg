@@ -31,7 +31,8 @@ enumerates the tools a third time. All three are drift-tested against
 | Programs | `create_program`, `get_program`, `list_programs`, `update_program` |
 | Awaiting Ken | `set_awaiting`, `list_awaiting` |
 | Board | `get_board` |
-| Reports | `create_report`, `list_reports`, `get_report` |
+| Reports | `create_report`, `list_reports`, `get_report`, `list_report_sources`, `set_report_source` |
+| Schedules | `create_schedule`, `get_schedule`, `list_schedules`, `update_schedule`, `materialize_schedule` |
 | Handoffs | `create_handoff`, `get_handoff`, `update_handoff` |
 | Projects and areas | `list_projects`, `get_project`, `create_project`, `update_project`, `list_areas`, `create_area`, `update_area`, `delete_area` |
 
@@ -158,14 +159,17 @@ the same envelope", which was true of four of them:
 |---|---|
 | `{items, total, limit, offset}` | `list_work_items`, `list_cards`, `list_links` |
 | `{items, total, limit, truncated}` | `neighbors` (`truncated`, not `offset` — it caps rather than pages) |
-| bare array | `list_reports`, `list_areas`, `list_comments`, `list_awaiting` |
-| `{items, omitted}` | `list_proposals`, `list_programs`, `list_projects` |
+| bare array | `list_reports`, `list_areas`, `list_comments`, `list_awaiting`, `list_report_sources` |
+| `{items, omitted}` | `list_proposals`, `list_programs`, `list_projects`, `list_schedules` |
 
 (`omitted` counts the rows a read's own defaults hid. `list_work_items` carries
 it *in addition to* the paginated envelope.)
 
 The bare-array reads are the ones with no natural paging story — a project has a
-handful of areas, a node has a handful of comments.
+handful of areas, a node has a handful of comments, and there is one
+`list_report_sources` row per reporting source. That last one is also the one
+read where a cap would be a *bug*: truncating it could push a stale source off
+the end behind fresher ones, which inverts the failure #950 exists to catch.
 
 `list_projects` and `list_proposals` are the exceptions, and for a reason that is
 not paging: both **filter rows by default** (WI #828, WI #852), so a bare array
@@ -505,6 +509,84 @@ Consumers: **kfdc** (`kai:~/src/tools/kfdc`, the widescreen overseer board) and
 **korg-dash** (the kdeskdash Pi feed, which derives its panel counts from this
 read rather than growing its own queries).
 
+## Time-derived surfacing (#581, #950)
+
+korg holds two kinds of state that a **date** changes rather than a write:
+a schedule that comes *due*, and a report source that goes *stale*. Both are
+**read-time predicates**. korg runs no scheduler, no timer and no daily tick, and
+that is a contract rather than an omission — #950 exists precisely because an
+unattended scheduled thing died quietly for eleven days, so korg's answer to time
+must not itself be one. It also removes missed-tick recovery and the
+duplicate-materialisation failure a double firing creates.
+
+### Schedules
+
+A `schedule` node is a work-item template plus a `cadence` and an `anchor_at`.
+
+```
+due  ⟺  status = 'active'
+    ∧  no outstanding materialisation
+    ∧  anchor_at + interval(cadence) ≤ now()
+```
+
+- **`once` is not a special case.** It is the cadence whose interval is zero, so
+  `anchor_at` *is* the fire date. The one-shot ("recheck the timers after the DST
+  transition") and the quarterly restore drill are one node shape.
+- **The outstanding clause is the anti-duplicate rule**, and the honest one:
+  while the drill's work item is open, that item *is* the schedule's surface.
+  `resolved` counts as outstanding here specifically — a drill that "may still
+  need a user test" has not been performed.
+- **`anchor_mode`** picks which event advances the anchor: `created` (at
+  materialisation) or `completed` (when the item reaches `done`/`closed`, a
+  korg-core write rule, never a trigger). One column serves both styles.
+- **Seed `anchor_at` with the real last-done date.** A quarterly drill last run
+  2026-07-08 anchored there comes due 2026-10-08 rather than the day it is filed.
+- **Substitutions** are a closed set — `{YEAR}`, `{MONTH}`, `{DAY}`, `{DATE}`,
+  `{QUARTER}` — rendered from Postgres's clock. An unrecognised placeholder is
+  refused at write time rather than rendering literally into a title months
+  later.
+- `materialize_schedule` writes a `materializes` edge, so "when was this drill
+  actually run?" is answerable from the graph. `schedule.last_wi_id` is only the
+  pointer to the newest one.
+
+### Report-source staleness
+
+A source that filed on a cadence and then stopped is itself the alert, because
+the absence of a write is exactly what a broken tool can never report about
+itself. In July 2026 kmon crashed 1s into collection for 11 consecutive days and
+korg kept serving its last GREEN, so the fleet read healthy *because* the thing
+checking it was broken.
+
+`list_report_sources` derives, per source: the cadence (the **median** gap
+between its own `report_date`s, or a declared override), a grace window
+(defaulting to the cadence, floor one day), and:
+
+| `freshness` | meaning | alerts |
+|---|---|---|
+| `fresh` | filed within cadence + grace | no |
+| `stale` | overdue | **yes** |
+| `retired` | declared ended (`set_report_source`) | no |
+| `unrated` | under three reports and no declared cadence | no |
+
+**The rule the feature exists for: anything not `fresh` asserts `unknown`.**
+Never the last known status — there is deliberately no field on the row that
+could carry it. Restating a stale GREEN is the exact failure this ends.
+
+`unrated` is a fourth value because both available guesses are bad: `fresh`
+rebuilds the July failure, and `stale` cries wolf on every one-off report, which
+trains people to ignore the panel — and a channel nobody looks at is not a
+channel. Declaring a cadence is how a real source leaves that state on day one;
+declarations may be written before a source's first report.
+
+`retired` is what lets a deliberately-stopped source go quiet **without** the
+same mechanism silencing a broken one. It is an explicit declaration, so "we
+turned this off" stays distinguishable from "this died", which silence alone
+never can.
+
+Both surfaces ride `get_board`: `sources` sits beside `reports` in Sensor Net,
+uncapped, alert-first. Rendering on korg-dash's Today page is a separate
+project's concern — the derivation lives here and korg-dash consumes it.
+
 ## Relationships
 
 Any node can link to any other through a single `relationship` edge:
@@ -527,6 +609,7 @@ label not in it.
 | `related-to` | **undirected** | the two nodes are related | any → any | no |
 | `collides-with` | **undirected** | the two nodes collide (same contract / fold on landing) | any → any | no |
 | `has_handoff` | directed | node **has** handoff | any → `handoff` | no |
+| `materializes` | directed | schedule **materialized** work item | `schedule` → `workitem` | no |
 
 **Directed** means the stored orientation carries meaning, so the reverse edge
 is a *different* fact: `A depends_on B` and `B depends_on A` together are a

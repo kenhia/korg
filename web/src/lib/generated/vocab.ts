@@ -3,7 +3,7 @@
 export const WI_STATUSES = ["open", "resolved", "done", "closed"] as const;
 export type WiStatus = (typeof WI_STATUSES)[number];
 
-export const WI_TYPES = ["task", "bug", "chore", "feature", "research", "tweak", "brainstorm"] as const;
+export const WI_TYPES = ["task", "bug", "chore", "feature", "research", "tweak", "brainstorm", "maintenance"] as const;
 export type WiType = (typeof WI_TYPES)[number];
 
 export const WI_TSHIRTS = ["XS", "S", "M", "L", "XL", "Huge", "Unknown"] as const;
@@ -30,6 +30,24 @@ export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 export const PROJECT_CATEGORIES = ["AI", "Dashboard", "EVAL", "Fun", "Infrastructure", "Ops", "Other"] as const;
 export type ProjectCategory = (typeof PROJECT_CATEGORIES)[number];
 
+export const SCHEDULE_CADENCES = ["once", "weekly", "monthly", "quarterly", "yearly"] as const;
+export type ScheduleCadence = (typeof SCHEDULE_CADENCES)[number];
+
+export const SCHEDULE_ANCHORS = ["completed", "created"] as const;
+export type ScheduleAnchor = (typeof SCHEDULE_ANCHORS)[number];
+
+export const SCHEDULE_STATUSES = ["active", "paused", "done"] as const;
+export type ScheduleStatus = (typeof SCHEDULE_STATUSES)[number];
+
+export const SCHEDULE_SUBSTITUTIONS = ["YEAR", "MONTH", "DAY", "DATE", "QUARTER"] as const;
+export type ScheduleSubstitution = (typeof SCHEDULE_SUBSTITUTIONS)[number];
+
+export const SOURCE_FRESHNESS = ["fresh", "stale", "retired", "unrated"] as const;
+export type SourceFreshness = (typeof SOURCE_FRESHNESS)[number];
+
+export const SOURCE_ASSERTIONS = ["ok", "attention", "problem", "unknown"] as const;
+export type SourceAssertion = (typeof SOURCE_ASSERTIONS)[number];
+
 export const ERROR_CODES = ["invalid_input", "not_found", "conflict", "internal"] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
@@ -44,5 +62,6 @@ export const RELATIONSHIP_LABELS = [
   { label: "has_handoff", directed: true, reads: "node has handoff" },
   { label: "includes", directed: true, reads: "program includes proposal as a slice" },
   { label: "collides-with", directed: false, reads: "the two nodes collide (same contract / fold on landing; no direction)" },
+  { label: "materializes", directed: true, reads: "schedule materialized work item" },
 ] as const;
 export type RelationshipLabel = (typeof RELATIONSHIP_LABELS)[number]["label"];

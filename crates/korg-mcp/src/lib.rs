@@ -13,7 +13,7 @@ pub mod tools;
 pub fn server_instructions() -> &'static str {
     "korg MCP server — one typed-node data model over Postgres covering work items, cards, \
      comments, reading-list links, generalized relationships, \
-     sprint proposals, programs, reports, handoffs, projects and areas, and a one-call \
+     sprint proposals, programs, reports, handoffs, schedules, projects and areas, and a one-call \
      Board rollup. \
      Mutations validate their target and return the updated entity; errors are isError \
      results carrying {message, code} where code is one of invalid_input, not_found, \
@@ -22,9 +22,9 @@ pub fn server_instructions() -> &'static str {
      whole filtered corpus on every page — including one whose offset overshot the last \
      row, which returns no items and the same total; \
      the unpaginated ones (list_reports, list_areas, \
-     list_comments, list_awaiting) return a bare array and have no archived \
+     list_comments, list_awaiting, list_report_sources) return a bare array and have no archived \
      filter; and the filtered ones \
-     (list_proposals, list_programs, list_projects) return {items, omitted}, where `omitted` counts \
+     (list_proposals, list_programs, list_projects, list_schedules) return {items, omitted}, where `omitted` counts \
      the rows their defaults hid — so a narrowed view can never be mistaken for the \
      whole corpus. list_work_items carries `omitted` too, for the \
      same reason: it is lean by default (no content/details) and hides `closed` \
@@ -42,6 +42,14 @@ pub fn server_instructions() -> &'static str {
      perform, a review — mark it Awaiting Ken with set_awaiting rather than burying it \
      in a comment, and clear it yourself once you have the answer; list_awaiting is the \
      whole lane in one call. \
+     Work that a DATE makes appear is a schedule, not a work item filed early: \
+     recurring maintenance and one-shot \"look at this again after X\" both go to \
+     create_schedule, and list_schedules(due_only:true) is what is due now. korg runs \
+     no scheduler — due-ness is computed on read and materialize_schedule is an \
+     explicit write. \
+     A report source that filed on a cadence and then stopped is itself an alert: \
+     list_report_sources says whether korg can still believe each one, and anything \
+     not `fresh` asserts `unknown` rather than its last known status. \
      When you want the WHOLE state of the work — what is being worked, what is queued, \
      what spans repos, what is waiting on Ken — call get_board once instead of walking \
      the queue proposal by proposal; it takes no arguments and is the read that exists \

@@ -143,7 +143,7 @@ pub async fn count(pool: &PgPool, table: &str) -> i64 {
 pub mod new {
     use super::Decimal;
     use korg_core::repo::{
-        NewCard, NewHandoff, NewLink, NewProgram, NewProposal, NewReport, NewWorkItem,
+        NewCard, NewHandoff, NewLink, NewProgram, NewProposal, NewReport, NewSchedule, NewWorkItem,
     };
 
     pub fn work_item(title: &str) -> NewWorkItem {
@@ -194,6 +194,30 @@ pub mod new {
     /// made `project` mandatory, so the honest default is the project the
     /// suite will have created with [`test_project`](super::test_project).
     /// Use [`proposal_in`] when the project is what the test is about.
+    /// A schedule in [`TEST_PROJECT`], anchored `now` unless the caller moves it.
+    /// `cadence` and `anchor_at` are the two fields every schedule test is
+    /// actually about, so they are the arguments; everything else defaults.
+    pub fn schedule(
+        title: &str,
+        cadence: &str,
+        anchor_at: Option<time::OffsetDateTime>,
+    ) -> NewSchedule {
+        NewSchedule {
+            title: title.into(),
+            template: None,
+            notes: None,
+            cadence: cadence.into(),
+            anchor_mode: "completed".into(),
+            anchor_at,
+            wi_type: "maintenance".into(),
+            wi_tshirt: "Unknown".into(),
+            project_id: None,
+            project: Some(super::TEST_PROJECT.into()),
+            category: None,
+            tags: Vec::new(),
+        }
+    }
+
     pub fn proposal(title: &str) -> NewProposal {
         proposal_in(super::TEST_PROJECT, title)
     }

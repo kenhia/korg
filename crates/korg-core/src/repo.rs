@@ -4171,6 +4171,825 @@ pub async fn update_program(
         .ok_or_else(|| RepoError::NotFound(format!("no program with node_id {node_id}")).into())
 }
 
+// === schedules: work that a date makes appear (#581, sprint 051) ============
+//
+// korg had no time-derived state at all. A quarterly restore drill, a monthly
+// check, a one-shot "look at this again after the DST transition" — each could
+// only be written as prose on a node that was often already `done`, i.e. out of
+// every default view. #1036 needed a whole work item created just to keep
+// "deploy this board later" alive after its proposal closed.
+//
+// The durable thing is the SCHEDULE: a work-item template, a cadence, and an
+// anchor. **"Due" is a read-time predicate** — `anchor_at + interval <= now()`
+// — and materialising the work item is an explicit write (D-2). #581's own
+// sketch assumed a daily engine; korg:1079 argued that out, and the argument is
+// worth keeping in front of whoever changes this: #950, the work item this one
+// shipped beside, exists precisely because an unattended scheduled thing died
+// quietly for eleven days. Building korg's answer to time on another unattended
+// tick would be an uncomfortable joke, and it would add the duplicate-
+// materialisation failure a double firing creates.
+
+/// How long each cadence waits lives **only** in the SQL `CASE` below and in
+/// [`schedule_select`], deliberately: a Rust-side lookup table would be a second
+/// home for one fact, and the two would drift the way every hand-kept copy in
+/// this codebase has. `once` is **zero**, which is the whole reason the one-shot
+/// needed no second storage shape — its `anchor_at` simply *is* its fire date.
+///
+/// The exhaustiveness risk is real and is fenced by a test rather than by the
+/// type system: a cadence added to [`vocab::SCHEDULE_CADENCES`] without a `CASE`
+/// arm here makes `due_at` NULL, which would fail to deserialize rather than
+/// quietly mis-sort. `every_cadence_has_an_interval` (sprint051) drives every
+/// vocabulary value through the real query.
+///
+/// The SQL fragment that decides due-ness, shared by every read so the
+/// definition cannot fork. Depends on `s` (schedule) and a `now` expression.
+///
+/// Three clauses, and the middle one is the interesting one:
+///
+/// 1. the schedule is `active` — `paused` and `done` never come due;
+/// 2. no **outstanding** materialisation — while the drill's work item is open,
+///    the drill has already surfaced, and the work item IS the surface. This is
+///    the anti-duplicate rule and the honesty rule at once;
+/// 3. the interval has elapsed since `anchor_at`.
+///
+/// `resolved` counts as outstanding here, unlike everywhere else in korg. A
+/// restore drill that is "implemented, may still need a user test" has not been
+/// performed, and re-raising it because the status *looks* terminal would be the
+/// feature nagging about work already in flight.
+const SCHEDULE_DUE_SQL: &str = "s.status = 'active' \
+     AND NOT EXISTS (SELECT 1 FROM workitem lw WHERE lw.node_id = s.last_wi_id \
+                       AND lw.wi_status IN ('open', 'resolved')) \
+     AND s.anchor_at + (CASE s.cadence \
+            WHEN 'once'      THEN interval '0 days' \
+            WHEN 'weekly'    THEN interval '7 days' \
+            WHEN 'monthly'   THEN interval '1 month' \
+            WHEN 'quarterly' THEN interval '3 months' \
+            WHEN 'yearly'    THEN interval '1 year' \
+         END) <= now()";
+
+/// `create_schedule` / `POST /api/schedules`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct NewSchedule {
+    /// The **template** title of the work item this materialises. May carry the
+    /// substitutions in [`vocab::SCHEDULE_SUBSTITUTIONS`], e.g.
+    /// `"korg restore drill - {MONTH} {YEAR} (Quarterly)"`. An unrecognised
+    /// `{PLACEHOLDER}` is refused, not rendered literally.
+    #[schemars(schema_with = "schema::non_empty")]
+    pub title: String,
+    /// The template body of the materialised work item — the checklist, the
+    /// procedure, the link to the runbook. Substituted the same way.
+    #[serde(default)]
+    pub template: Option<String>,
+    /// Why this schedule exists and what "done" means for it. Stays on the
+    /// schedule; not copied into the materialised item.
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[schemars(schema_with = "schema::schedule_cadence")]
+    pub cadence: String,
+    /// Which event advances the anchor — see [`vocab::SCHEDULE_ANCHORS`].
+    /// Defaults to `completed`, the style #581 listed first and the one that
+    /// matches how maintenance is actually reasoned about ("it's been three
+    /// months since we last *did* it").
+    #[serde(default = "ops::default_completed")]
+    #[schemars(schema_with = "schema::schedule_anchor")]
+    pub anchor_mode: String,
+    /// When the interval starts counting. **Seed this with the real last-done
+    /// date** — the restore drill was last verified 2026-07-08, so a quarterly
+    /// schedule anchored there comes due 2026-10-08 rather than immediately.
+    /// Omitted means now, which is right for something being started today and
+    /// wrong for anything with history.
+    ///
+    /// For cadence `once` this IS the fire date.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    #[schemars(schema_with = "schema::timestamp_opt")]
+    pub anchor_at: Option<OffsetDateTime>,
+    /// What the materialised item is filed as. Defaults to `maintenance`, the
+    /// type #581 asked for so automation can find generated items as a group.
+    #[serde(default = "ops::default_maintenance")]
+    #[schemars(schema_with = "schema::wi_type")]
+    pub wi_type: String,
+    #[serde(default = "ops::default_unknown")]
+    #[schemars(schema_with = "schema::wi_tshirt")]
+    pub wi_tshirt: String,
+    #[serde(default)]
+    pub project_id: Option<i64>,
+    /// Project name — the alternative to `project_id`, never both. A schedule
+    /// carries a project (unlike a program): maintenance is maintenance *of*
+    /// something.
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::tags")]
+    pub tags: Vec<String>,
+}
+
+/// A schedule row, with due-ness already computed (D-2).
+///
+/// `due` and `due_at` are **derived on every read**, never stored. A stored
+/// `due` flag is a cached predicate, and a cached predicate over a clock is the
+/// thing that goes stale silently — which is the failure this whole sprint is
+/// about.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ScheduleRow {
+    pub node_id: i64,
+    /// The template title, verbatim and unsubstituted. `preview_title` is what
+    /// it renders to right now.
+    pub title: String,
+    pub template: Option<String>,
+    pub notes: Option<String>,
+    pub cadence: String,
+    pub anchor_mode: String,
+    pub status: String,
+    pub wi_type: String,
+    pub wi_tshirt: String,
+    pub project: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub anchor_at: OffsetDateTime,
+    /// When this schedule comes due: `anchor_at` + the cadence interval. For a
+    /// `once` schedule it equals `anchor_at`.
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub due_at: OffsetDateTime,
+    /// The read-time predicate. See [`SCHEDULE_DUE_SQL`] for the three clauses.
+    pub due: bool,
+    /// The newest materialised work item, or `None` if this has never fired.
+    pub last_wi_number: Option<i64>,
+    /// Whether that item is still `open`/`resolved` — the clause that stops a
+    /// schedule competing with the work item it already produced.
+    pub outstanding: bool,
+    /// How many work items this schedule has produced, over all time (the
+    /// `materializes` edges, not the `last_wi_id` pointer).
+    pub materialized_count: i64,
+    /// The title as it would render **right now**, substitutions applied. Lets a
+    /// UI show what pressing Materialise will actually create without a dry-run
+    /// endpoint.
+    pub preview_title: String,
+    pub archived: bool,
+    pub comment_count: i64,
+    pub tags: Vec<String>,
+    pub category: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub created: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub updated: OffsetDateTime,
+}
+
+/// The `replace(...)` nest that renders [`vocab::SCHEDULE_SUBSTITUTIONS`] over a
+/// column, from **Postgres's** `now()`.
+///
+/// Rendered database-side for the reason [`BoardRollup::generated`] gives: a
+/// date derived from a different clock than the rows beside it goes subtly wrong
+/// on a cached or proxied consumer. `{MONTH}` uses `to_char(…,'Month')`, which
+/// blank-pads to nine characters, hence the `trim`.
+fn substituted(column: &str) -> String {
+    format!(
+        "replace(replace(replace(replace(replace({column}, \
+            '{{YEAR}}',    to_char(now(), 'YYYY')), \
+            '{{MONTH}}',   trim(to_char(now(), 'Month'))), \
+            '{{DAY}}',     to_char(now(), 'DD')), \
+            '{{DATE}}',    to_char(now(), 'YYYY-MM-DD')), \
+            '{{QUARTER}}', 'Q' || to_char(now(), 'Q'))"
+    )
+}
+
+/// Every schedule read goes through this projection, so `due` has exactly one
+/// definition.
+fn schedule_select() -> String {
+    format!(
+        "SELECT s.node_id, s.title, s.template, s.notes, s.cadence, s.anchor_mode, \
+                s.status, s.wi_type, s.wi_tshirt, pj.name AS project, s.anchor_at, \
+                s.anchor_at + (CASE s.cadence \
+                    WHEN 'once'      THEN interval '0 days' \
+                    WHEN 'weekly'    THEN interval '7 days' \
+                    WHEN 'monthly'   THEN interval '1 month' \
+                    WHEN 'quarterly' THEN interval '3 months' \
+                    WHEN 'yearly'    THEN interval '1 year' \
+                 END) AS due_at, \
+                ({SCHEDULE_DUE_SQL}) AS due, \
+                lw.wi_number AS last_wi_number, \
+                coalesce(lw.wi_status IN ('open', 'resolved'), false) AS outstanding, \
+                (SELECT count(*) FROM relationship mr \
+                  WHERE mr.left_id = s.node_id AND mr.relationship = 'materializes') \
+                  AS materialized_count, \
+                {} AS preview_title, \
+                n.archived, \
+                (SELECT count(*) FROM comment cm WHERE cm.node_id = s.node_id) AS comment_count, \
+                n.tags, n.category, n.created, n.updated \
+         FROM schedule s \
+         JOIN node n ON n.id = s.node_id \
+         LEFT JOIN project pj ON pj.id = n.project_id \
+         LEFT JOIN workitem lw ON lw.node_id = s.last_wi_id",
+        substituted("s.title")
+    )
+}
+
+/// Reject a template that uses a placeholder korg does not know (D-6).
+///
+/// The alternative — rendering `{MONTL}` literally into a work-item title three
+/// months from now — is exactly the silent-wrong class this sprint removes.
+/// Anything that is not `{ALLCAPS_}` is left alone: prose legitimately contains
+/// braces, and a JSON snippet in a template body must not become unwritable.
+fn check_substitutions(template: &str, what: &str) -> Result<()> {
+    let bytes = template.as_bytes();
+    let mut i = 0;
+    while let Some(open) = template[i..].find('{').map(|p| p + i) {
+        let Some(close) = template[open..].find('}').map(|p| p + open) else {
+            break;
+        };
+        let name = &template[open + 1..close];
+        let placeholder_shaped = !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b == b'_' || b.is_ascii_digit());
+        if placeholder_shaped && !vocab::SCHEDULE_SUBSTITUTIONS.contains(&name) {
+            return Err(RepoError::InvalidInput(format!(
+                "unknown substitution '{{{name}}}' in {what} — korg substitutes exactly: {}. \
+                 A placeholder korg does not know would render literally into a work-item \
+                 title months from now, so it is refused here instead.",
+                vocab::SCHEDULE_SUBSTITUTIONS
+                    .iter()
+                    .map(|s| format!("{{{s}}}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+            .into());
+        }
+        i = close + 1;
+        let _ = bytes;
+    }
+    Ok(())
+}
+
+/// Create a schedule. Nothing is materialised here — a schedule that is already
+/// due on the day it is filed still waits for an explicit `materialize_schedule`.
+pub async fn create_schedule(pool: &PgPool, new: NewSchedule) -> Result<ScheduleRow> {
+    require_non_empty(&new.title, "title")?;
+    validate_status(&new.cadence, &vocab::SCHEDULE_CADENCES, "cadence")?;
+    validate_status(&new.anchor_mode, &vocab::SCHEDULE_ANCHORS, "anchor_mode")?;
+    validate_status(&new.wi_type, &vocab::WI_TYPES, "wi_type")?;
+    validate_status(&new.wi_tshirt, &vocab::WI_TSHIRTS, "wi_tshirt")?;
+    check_substitutions(&new.title, "title")?;
+    if let Some(body) = &new.template {
+        check_substitutions(body, "template")?;
+    }
+    let project_id = resolve_project(pool, new.project_id, new.project.as_deref()).await?;
+
+    let mut tx = pool.begin().await?;
+    let node_id: i64 = sqlx::query(
+        "INSERT INTO node (kind, project_id, category, tags) \
+         VALUES ('schedule', $1, $2, $3) RETURNING id",
+    )
+    .bind(project_id)
+    .bind(&new.category)
+    .bind(&new.tags)
+    .fetch_one(&mut *tx)
+    .await?
+    .get("id");
+
+    // `coalesce($6, now())` rather than a Rust-side default: the anchor and the
+    // predicate that reads it must come from the same clock.
+    sqlx::query(
+        "INSERT INTO schedule \
+         (node_id, title, template, notes, cadence, anchor_mode, anchor_at, wi_type, wi_tshirt) \
+         VALUES ($1, $2, $3, $4, $5, $6, coalesce($7, now()), $8, $9)",
+    )
+    .bind(node_id)
+    .bind(&new.title)
+    .bind(&new.template)
+    .bind(&new.notes)
+    .bind(&new.cadence)
+    .bind(&new.anchor_mode)
+    .bind(new.anchor_at)
+    .bind(&new.wi_type)
+    .bind(&new.wi_tshirt)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    get_schedule(pool, node_id)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no schedule with node_id {node_id}")).into())
+}
+
+/// One schedule, or `None`.
+pub async fn get_schedule(pool: &PgPool, node_id: i64) -> Result<Option<ScheduleRow>> {
+    Ok(
+        sqlx::query_as::<_, ScheduleRow>(&format!("{} WHERE s.node_id = $1", schedule_select()))
+            .bind(node_id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+/// A schedule with its comments and edges — the focused read (LB-3), where a
+/// `has_handoff` ref surfaces.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ScheduleDetail {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub schedule: ScheduleRow,
+    /// Every work item this schedule has materialised, newest first — the
+    /// answer to "when was this drill *actually* run?", which `last_wi_number`
+    /// alone cannot give.
+    pub materialized: Vec<ScheduleMaterialization>,
+    pub comments: Vec<Comment>,
+    pub comments_truncated: bool,
+    pub related: Vec<RelatedRef>,
+    pub related_truncated: bool,
+}
+
+/// One past materialisation of a schedule.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ScheduleMaterialization {
+    pub wi_number: i64,
+    pub title: String,
+    pub wi_status: String,
+    /// When the edge was written — i.e. when this schedule fired.
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub materialized: OffsetDateTime,
+}
+
+/// `get_schedule` — the focused read.
+pub async fn get_schedule_detail(pool: &PgPool, node_id: i64) -> Result<Option<ScheduleDetail>> {
+    let Some(schedule) = get_schedule(pool, node_id).await? else {
+        return Ok(None);
+    };
+    let materialized = sqlx::query_as::<_, ScheduleMaterialization>(
+        "SELECT w.wi_number, w.title, w.wi_status, r.created AS materialized \
+         FROM relationship r JOIN workitem w ON w.node_id = r.right_id \
+         WHERE r.left_id = $1 AND r.relationship = 'materializes' \
+         ORDER BY r.created DESC, w.wi_number DESC",
+    )
+    .bind(node_id)
+    .fetch_all(pool)
+    .await?;
+    let comments = sqlx::query_as::<_, Comment>(
+        "SELECT id, node_id, body, created, updated FROM comment \
+         WHERE node_id = $1 ORDER BY created LIMIT $2",
+    )
+    .bind(node_id)
+    .bind(WORKITEM_COMMENT_CAP)
+    .fetch_all(pool)
+    .await?;
+    let comments_truncated = schedule.comment_count > WORKITEM_COMMENT_CAP;
+    let (related, related_truncated) = related_context(pool, node_id, Some("materializes")).await?;
+    Ok(Some(ScheduleDetail {
+        schedule,
+        materialized,
+        comments,
+        comments_truncated,
+        related,
+        related_truncated,
+    }))
+}
+
+/// What `list_schedules`' defaults hid. Same cascade rule as [`ProgramOmitted`].
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ScheduleOmitted {
+    pub done: i64,
+    pub archived: i64,
+    /// How many of the **returned** rows are not yet due — the count a
+    /// `due_only` read hid. Zero when `due_only` was not asked for, so a
+    /// consumer can always tell "nothing is due" from "I filtered it out".
+    pub not_due: i64,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ScheduleList {
+    pub items: Vec<ScheduleRow>,
+    pub omitted: ScheduleOmitted,
+}
+
+/// List schedules, live-by-default, **soonest-due first**.
+///
+/// The ordering is the feature: the first row is the next thing that wants
+/// doing, and everything already due sorts above everything that does not.
+pub async fn list_schedules(
+    pool: &PgPool,
+    status: Option<&str>,
+    project: Option<&str>,
+    due_only: bool,
+    archived: ArchivedFilter,
+) -> Result<ScheduleList> {
+    let shown = schedule_status_predicate(status)?;
+    let items = sqlx::query_as::<_, ScheduleRow>(&format!(
+        "{} WHERE ($1::text[] IS NULL OR s.status = ANY($1)) \
+            AND ($2::bool IS NULL OR n.archived = $2) \
+            AND ($3::text IS NULL OR pj.name = $3) \
+            AND (NOT $4::bool OR ({SCHEDULE_DUE_SQL})) \
+          ORDER BY due_at ASC, s.node_id ASC",
+        schedule_select()
+    ))
+    .bind(shown.as_deref())
+    .bind(archived)
+    .bind(project)
+    .bind(due_only)
+    .fetch_all(pool)
+    .await?;
+
+    let (archived_hidden, done, not_due) = sqlx::query_as::<_, (i64, i64, i64)>(&format!(
+        "SELECT count(*) FILTER (WHERE n.archived AND $1::bool IS NOT NULL AND NOT $1), \
+                count(*) FILTER (WHERE ($1::bool IS NULL OR n.archived = $1) \
+                                   AND s.status = 'done'), \
+                count(*) FILTER (WHERE ($1::bool IS NULL OR n.archived = $1) \
+                                   AND ($2::text[] IS NULL OR s.status = ANY($2)) \
+                                   AND ($3::text IS NULL OR pj.name = $3) \
+                                   AND $4::bool AND NOT ({SCHEDULE_DUE_SQL})) \
+         FROM schedule s JOIN node n ON n.id = s.node_id \
+         LEFT JOIN project pj ON pj.id = n.project_id"
+    ))
+    .bind(archived)
+    .bind(shown.as_deref())
+    .bind(project)
+    .bind(due_only)
+    .fetch_one(pool)
+    .await?;
+    let done_hidden = match shown.as_deref() {
+        Some(list) if list.iter().any(|s| s == "done") => 0,
+        None => 0,
+        _ => done,
+    };
+    Ok(ScheduleList {
+        items,
+        omitted: ScheduleOmitted {
+            done: done_hidden,
+            archived: archived_hidden,
+            not_due,
+        },
+    })
+}
+
+/// Absent → the live set (`active` + `paused`); `"all"` → no filter; anything
+/// else validated and returned alone. Same contract as
+/// [`program_status_predicate`].
+fn schedule_status_predicate(status: Option<&str>) -> Result<Option<Vec<String>>> {
+    match status {
+        None => Ok(Some(
+            vocab::SCHEDULE_LIVE_STATUSES
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        )),
+        Some("all") => Ok(None),
+        Some(s) => {
+            validate_status(s, &vocab::SCHEDULE_STATUSES, "schedule status")?;
+            Ok(Some(vec![s.to_string()]))
+        }
+    }
+}
+
+/// `update_schedule` / `PATCH /api/schedules/:node_id`.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub struct SchedulePatch {
+    #[serde(default)]
+    #[schemars(schema_with = "schema::non_empty_opt")]
+    pub title: Option<String>,
+    #[serde(default, deserialize_with = "ops::double_option")]
+    pub template: Option<Option<String>>,
+    #[serde(default, deserialize_with = "ops::double_option")]
+    pub notes: Option<Option<String>>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::schedule_cadence")]
+    pub cadence: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::schedule_anchor")]
+    pub anchor_mode: Option<String>,
+    /// Move the anchor by hand — e.g. after doing the maintenance outside korg,
+    /// or to defer a drill a fortnight without touching its cadence.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    #[schemars(schema_with = "schema::timestamp_opt")]
+    pub anchor_at: Option<OffsetDateTime>,
+    /// `paused` is how a schedule stops surfacing without losing its anchor or
+    /// its history.
+    #[serde(default)]
+    #[schemars(schema_with = "schema::schedule_status")]
+    pub status: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::wi_type")]
+    pub wi_type: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::wi_tshirt")]
+    pub wi_tshirt: Option<String>,
+    #[serde(default)]
+    pub archived: Option<bool>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::tags")]
+    pub tags: Option<Vec<String>>,
+}
+
+pub async fn update_schedule(
+    pool: &PgPool,
+    node_id: i64,
+    patch: SchedulePatch,
+) -> Result<ScheduleRow> {
+    if let Some(v) = &patch.title {
+        require_non_empty(v, "title")?;
+        check_substitutions(v, "title")?;
+    }
+    if let Some(Some(v)) = &patch.template {
+        check_substitutions(v, "template")?;
+    }
+    if let Some(v) = &patch.cadence {
+        validate_status(v, &vocab::SCHEDULE_CADENCES, "cadence")?;
+    }
+    if let Some(v) = &patch.anchor_mode {
+        validate_status(v, &vocab::SCHEDULE_ANCHORS, "anchor_mode")?;
+    }
+    if let Some(v) = &patch.status {
+        validate_status(v, &vocab::SCHEDULE_STATUSES, "schedule status")?;
+    }
+    if let Some(v) = &patch.wi_type {
+        validate_status(v, &vocab::WI_TYPES, "wi_type")?;
+    }
+    if let Some(v) = &patch.wi_tshirt {
+        validate_status(v, &vocab::WI_TSHIRTS, "wi_tshirt")?;
+    }
+
+    let mut tx = pool.begin().await?;
+    require_kind(&mut *tx, node_id, "schedule", "schedule").await?;
+    if let Some(v) = &patch.title {
+        sqlx::query("UPDATE schedule SET title = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.template {
+        sqlx::query("UPDATE schedule SET template = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v.as_deref())
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.notes {
+        sqlx::query("UPDATE schedule SET notes = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v.as_deref())
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.cadence {
+        sqlx::query("UPDATE schedule SET cadence = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.anchor_mode {
+        sqlx::query("UPDATE schedule SET anchor_mode = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = patch.anchor_at {
+        sqlx::query("UPDATE schedule SET anchor_at = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.status {
+        sqlx::query("UPDATE schedule SET status = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.wi_type {
+        sqlx::query("UPDATE schedule SET wi_type = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.wi_tshirt {
+        sqlx::query("UPDATE schedule SET wi_tshirt = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = patch.archived {
+        sqlx::query("UPDATE node SET archived = $2 WHERE id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.tags {
+        sqlx::query("UPDATE node SET tags = $2 WHERE id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    settle_awaiting(&mut *tx, node_id).await?;
+    touch_node(&mut *tx, node_id).await?;
+    tx.commit().await?;
+    get_schedule(pool, node_id)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no schedule with node_id {node_id}")).into())
+}
+
+/// What `materialize_schedule` produced.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct Materialized {
+    /// The work item that now exists, as a read would return it.
+    pub work_item: WorkItemRow,
+    /// The schedule after firing — new `anchor_at` for a `created` anchor, and
+    /// `status: "done"` if the cadence was `once`.
+    pub schedule: ScheduleRow,
+}
+
+/// Turn a due schedule into a work item (D-2) — the explicit write that stands
+/// in for the daily tick #581 sketched.
+///
+/// `force` materialises a schedule that is not yet due. It exists for the
+/// "we're doing the drill early because the schema just changed" case that
+/// `docs/operations.md` names as a second trigger, and it is a parameter rather
+/// than a separate tool so the refusal can *say* what would lift it. It never
+/// bypasses the outstanding-item check: producing a second copy of a drill whose
+/// first copy is still open is not something a caller can want, and that is the
+/// duplicate-materialisation failure a scheduler would have had.
+pub async fn materialize_schedule(
+    pool: &PgPool,
+    node_id: i64,
+    force: bool,
+) -> Result<Materialized> {
+    let Some(schedule) = get_schedule(pool, node_id).await? else {
+        return Err(RepoError::NotFound(format!("no schedule with node_id {node_id}")).into());
+    };
+    if schedule.outstanding {
+        return Err(RepoError::InvalidInput(format!(
+            "schedule {node_id} already materialized work item #{} and it is still \
+             {} — that item IS this schedule's current surface. Close it before \
+             materializing again; `force` deliberately does not lift this.",
+            schedule.last_wi_number.unwrap_or_default(),
+            if schedule.last_wi_number.is_some() {
+                "open"
+            } else {
+                "outstanding"
+            }
+        ))
+        .into());
+    }
+    if schedule.status != "active" {
+        return Err(RepoError::InvalidInput(format!(
+            "schedule {node_id} is '{}', not 'active' — a paused schedule is one \
+             deliberately not surfacing, and a done one has already fired its \
+             single occurrence. Set status back to 'active' to resume it.",
+            schedule.status
+        ))
+        .into());
+    }
+    if !schedule.due && !force {
+        return Err(RepoError::InvalidInput(format!(
+            "schedule {node_id} is not due until {} (cadence '{}', anchored {}). \
+             Pass force:true to materialize it early — e.g. a restore drill \
+             brought forward because the schema shape changed.",
+            schedule.due_at, schedule.cadence, schedule.anchor_at
+        ))
+        .into());
+    }
+
+    let mut tx = pool.begin().await?;
+    // Rendered by Postgres, from the same clock the predicate above read. The
+    // template columns are substituted identically; `template` may be NULL, in
+    // which case the item's content falls back to naming its origin.
+    let (title, content): (String, Option<String>) = sqlx::query_as(
+        "SELECT replace(replace(replace(replace(replace(s.title, \
+             '{YEAR}',    to_char(now(), 'YYYY')), \
+             '{MONTH}',   trim(to_char(now(), 'Month'))), \
+             '{DAY}',     to_char(now(), 'DD')), \
+             '{DATE}',    to_char(now(), 'YYYY-MM-DD')), \
+             '{QUARTER}', 'Q' || to_char(now(), 'Q')), \
+                replace(replace(replace(replace(replace(s.template, \
+             '{YEAR}',    to_char(now(), 'YYYY')), \
+             '{MONTH}',   trim(to_char(now(), 'Month'))), \
+             '{DAY}',     to_char(now(), 'DD')), \
+             '{DATE}',    to_char(now(), 'YYYY-MM-DD')), \
+             '{QUARTER}', 'Q' || to_char(now(), 'Q')) \
+         FROM schedule s WHERE s.node_id = $1 FOR UPDATE",
+    )
+    .bind(node_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let project_id: Option<i64> = sqlx::query_scalar("SELECT project_id FROM node WHERE id = $1")
+        .bind(node_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+    let wi_node_id: i64 = sqlx::query(
+        "INSERT INTO node (kind, project_id, tags) VALUES ('workitem', $1, $2) RETURNING id",
+    )
+    .bind(project_id)
+    .bind(vec![format!("schedule-{node_id}")])
+    .fetch_one(&mut *tx)
+    .await?
+    .get("id");
+
+    let body = content.unwrap_or_else(|| {
+        format!("Materialized from schedule {node_id}. See the schedule for the procedure.")
+    });
+    sqlx::query(
+        "INSERT INTO workitem \
+         (node_id, wi_number, wi_type, wi_status, wi_tshirt, title, content) \
+         VALUES ($1, $1, $2, 'open', $3, $4, $5)",
+    )
+    .bind(wi_node_id)
+    .bind(&schedule.wi_type)
+    .bind(&schedule.wi_tshirt)
+    .bind(&title)
+    .bind(&body)
+    .execute(&mut *tx)
+    .await?;
+
+    // Provenance (D-17): the edge is the history, `last_wi_id` is only the
+    // pointer to the newest.
+    sqlx::query(
+        "INSERT INTO relationship (left_id, right_id, relationship, created, origin) \
+         VALUES ($1, $2, 'materializes', now(), 'materialize_schedule')",
+    )
+    .bind(node_id)
+    .bind(wi_node_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // Three effects in one statement, each conditional on the schedule's own
+    // configuration:
+    //   * the pointer always moves;
+    //   * a `created` anchor advances now — a `completed` one waits for the item
+    //     to be finished, which `update_work_item` handles (D-4);
+    //   * a `once` schedule is finished the moment it fires.
+    sqlx::query(
+        "UPDATE schedule \
+            SET last_wi_id = $2, \
+                anchor_at  = CASE WHEN anchor_mode = 'created' THEN now() ELSE anchor_at END, \
+                status     = CASE WHEN cadence = 'once' THEN 'done' ELSE status END \
+          WHERE node_id = $1",
+    )
+    .bind(node_id)
+    .bind(wi_node_id)
+    .execute(&mut *tx)
+    .await?;
+    touch_node(&mut *tx, node_id).await?;
+    tx.commit().await?;
+
+    let work_item = get_work_item(pool, wi_node_id)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no work item #{wi_node_id}")))?;
+    let schedule = get_schedule(pool, node_id)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no schedule with node_id {node_id}")))?;
+    Ok(Materialized {
+        work_item,
+        schedule,
+    })
+}
+
+/// Advance the anchor of any `completed`-mode schedule whose newest
+/// materialisation just reached a completed status (D-4).
+///
+/// This is the write rule 0025 deliberately did not make a trigger: 0023 settled
+/// that lifecycle rules live in korg-core, the one path both transports share,
+/// never in a trigger that can drift from it.
+///
+/// `done`/`closed` only. `resolved` is excluded on purpose and for the same
+/// reason [`SCHEDULE_DUE_SQL`] treats it as outstanding — a restore drill that
+/// is "implemented, may still need a user test" has not been performed, and
+/// advancing the anchor there would restart the quarter from a drill nobody ran.
+async fn advance_completed_anchor(
+    tx: &mut Transaction<'_, Postgres>,
+    wi_node_id: i64,
+    new_status: &str,
+) -> Result<()> {
+    if !matches!(new_status, "done" | "closed") {
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE schedule SET anchor_at = now() \
+          WHERE last_wi_id = $1 AND anchor_mode = 'completed' AND status = 'active'",
+    )
+    .bind(wi_node_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 // === the awaiting-Ken marker (#969, sprint 044) =============================
 //
 // "This moves only when Ken acts" — the most valuable lane on the kfdc board,
@@ -4630,6 +5449,16 @@ pub struct BoardRollup {
     /// only date in korg that records when something *happened*, which is why
     /// this is the whole of the board's event story (D-7).
     pub reports: Vec<ReportRow>,
+    /// Sensor Net, the other half (#950, sprint 051): every known reporting
+    /// source and whether korg can currently believe it.
+    ///
+    /// **Unbounded, unlike `reports`.** `BOARD_REPORT_CAP` is defensible because
+    /// a board renders a handful of recent lines and the series lives behind
+    /// `list_reports`; a cap here would mean a stale source could be pushed off
+    /// the board by fresher ones, which is the failure mode inverted. There is
+    /// one row per source — single digits — and the ordering already puts every
+    /// `stale` row first.
+    pub sources: Vec<SourceHealth>,
 }
 
 /// One row of the board's proposal pass, before it is split by panel.
@@ -4872,6 +5701,7 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
         awaiting: list_awaiting(pool).await?,
         depth: planning_rollup(pool).await?,
         reports: list_reports(pool, None, BOARD_REPORT_CAP).await?,
+        sources: list_report_sources(pool).await?,
     })
 }
 
@@ -5124,6 +5954,13 @@ pub async fn update_work_item(
     // deliberately do NOT clear — "implemented, needs your user test" is the
     // canonical awaiting-Ken state.
     settle_awaiting(&mut *tx, node_id).await?;
+    // Sprint 051 (D-4): finishing a materialised maintenance item is what
+    // restarts a `completed`-anchored schedule's clock. A write rule here rather
+    // than a trigger, per 0023's precedent — and inside the same transaction, so
+    // the anchor cannot advance for a status change that then rolls back.
+    if let Some(v) = &patch.wi_status {
+        advance_completed_anchor(&mut tx, node_id, v).await?;
+    }
     touch_node(&mut *tx, node_id).await?;
 
     tx.commit().await?;
@@ -5267,6 +6104,287 @@ pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
         replaced,
         findings_linked: resolved,
     })
+}
+
+// === staleness age-out: absence of a write is the alert (#950, sprint 051) ===
+//
+// kmon crashed ~1s into collection every day from 2026-07-23 to 2026-08-03 — 11+
+// consecutive runs. korg kept serving the last report kmon had successfully
+// filed, a GREEN "OK" from 2026-07-22, so the Today page actively asserted the
+// fleet was healthy *because* the thing checking it was broken. Ken found it by
+// chance, not by signal.
+//
+// kmon #900 now files a RED report when it hits a blocking error, which covers
+// the case where the process lives long enough to catch something. It does
+// nothing for a process killed before its handler runs, a disabled timer, a down
+// host, or — the actual July case — a crash early enough that the alerting code
+// never ran. An age-out is the only check that catches all four, because it is
+// the absence of a write, and absence is exactly what a tool can never report
+// about itself.
+//
+// Two rules from the WI, neither optional, both fenced by tests:
+//
+//   1. A stale source asserts UNKNOWN, never its last known status.
+//   2. It surfaces on the same surface a real problem would use — here,
+//      `BoardRollup.sources`, beside Sensor Net's reports.
+
+/// How many recent gaps the cadence inference looks at.
+///
+/// Long enough that a source which changed cadence months ago is judged on what
+/// it does *now*, short enough that one very old irregular stretch cannot drag
+/// the median. A median rather than a mean throughout: one missed day in a daily
+/// series must not raise the expectation to 1.5 days and quietly widen the
+/// window this feature exists to narrow.
+const SOURCE_CADENCE_WINDOW: i64 = 30;
+
+/// Below this many reports there is no cadence to infer, and the source is
+/// [`vocab::SOURCE_FRESHNESS`]'s `unrated` unless it declares one. Two reports
+/// give exactly one gap, which is an anecdote rather than a cadence.
+const SOURCE_MIN_HISTORY: i64 = 3;
+
+/// One reporting source's freshness — the #950 projection.
+///
+/// Read the two state fields together and note what is *not* here: there is no
+/// `last_status` field. The last known status is deliberately unreachable from
+/// this row, because a consumer holding it will eventually render it, and
+/// rendering 2026-07-22's GREEN in a stale card is the precise failure this
+/// exists to end. A caller that genuinely wants the history calls `list_reports`
+/// for the source and knows exactly what it is doing.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct SourceHealth {
+    pub source: String,
+    /// `fresh` | `stale` | `retired` | `unrated` — see [`vocab::SOURCE_FRESHNESS`].
+    pub freshness: String,
+    /// `ok` | `attention` | `problem` | `unknown`. **`unknown` unless `fresh`.**
+    pub asserts: String,
+    /// The newest report's date, or `None` for a source declared before it has
+    /// ever filed.
+    #[serde(with = "report_date_fmt::option")]
+    #[ts(type = "string | null")]
+    pub last_report_date: Option<time::Date>,
+    pub last_report_node_id: Option<i64>,
+    /// Whole days between the newest report and today.
+    pub days_since: Option<i64>,
+    /// The cadence in use — declared if there is one, else the inferred median
+    /// gap, else `None` when neither exists.
+    pub cadence_days: Option<i64>,
+    /// True when `cadence_days` came from `report_source`, false when it was
+    /// inferred from history. The difference matters when triaging a false
+    /// alarm: an inferred cadence is a guess korg made and can be overridden.
+    pub cadence_declared: bool,
+    pub grace_days: Option<i64>,
+    /// The date by which the next report was expected. `None` when there is no
+    /// cadence to project from.
+    #[serde(with = "report_date_fmt::option")]
+    #[ts(type = "string | null")]
+    pub due_by: Option<time::Date>,
+    /// Days past `due_by`; 0 when not overdue.
+    pub overdue_days: i64,
+    pub report_count: i64,
+    /// Why this source was retired, or any operator note from `report_source`.
+    pub note: Option<String>,
+}
+
+impl SourceHealth {
+    /// Whether this row should raise an alert on a board.
+    ///
+    /// Exactly one freshness value does. `retired` is a declared end, and
+    /// `unrated` is korg admitting it cannot judge yet — alerting on either
+    /// trains people to ignore the panel, and a channel nobody looks at is not a
+    /// channel (`vocab::exactly_one_freshness_is_the_alert` fences the set).
+    pub fn alerts(&self) -> bool {
+        self.freshness == "stale"
+    }
+}
+
+/// `list_report_sources` / `GET /api/report-sources` — every known source with
+/// its freshness, most-alarming first.
+///
+/// The whole derivation is one query, and it is a read: no state is stored about
+/// staleness, which is what makes it immune to the failure mode it detects. A
+/// stored `is_stale` flag needs something to maintain it, and that something can
+/// die exactly the way kmon did.
+///
+/// The CTEs, in order: `gaps` takes each source's consecutive `report_date`
+/// differences; `inferred` medians the most recent [`SOURCE_CADENCE_WINDOW`] of
+/// them; `latest` and `agg` pick up the newest report and the count; `base`
+/// FULL OUTER JOINs `report_source` so a declared-but-never-filed source still
+/// appears; `judged` lets a declared cadence beat an inferred one and refuses to
+/// infer below [`SOURCE_MIN_HISTORY`]; `graced` defaults grace to the cadence
+/// itself, floor one day.
+///
+/// The final SELECT is where **the #950 rule** lives, in one place: only a
+/// `fresh` source's own status ever reaches a caller, and every other row
+/// asserts [`vocab::SOURCE_ASSERTS_UNKNOWN`].
+///
+/// **Do not put `--` comments in this string.** The literal is `\`-continued, so
+/// no newline survives into the SQL and a `--` silently comments out the entire
+/// remainder of the query — it arrives as `syntax error at end of input`, which
+/// points nowhere near the cause. Explanations belong here, in the doc comment.
+pub async fn list_report_sources(pool: &PgPool) -> Result<Vec<SourceHealth>> {
+    let rows = sqlx::query_as::<_, SourceHealth>(&format!(
+        "WITH gaps AS ( \
+             SELECT source, report_date, \
+                    report_date - lag(report_date) OVER w AS gap, \
+                    row_number() OVER (PARTITION BY source ORDER BY report_date DESC) AS recency \
+               FROM report \
+             WINDOW w AS (PARTITION BY source ORDER BY report_date) \
+         ), \
+         inferred AS ( \
+             SELECT source, \
+                    ceil(percentile_cont(0.5) WITHIN GROUP (ORDER BY gap))::bigint AS median_gap \
+               FROM gaps WHERE gap IS NOT NULL AND recency <= {SOURCE_CADENCE_WINDOW} \
+              GROUP BY source \
+         ), \
+         latest AS ( \
+             SELECT DISTINCT ON (r.source) r.source, r.report_date, r.node_id, r.status \
+               FROM report r ORDER BY r.source, r.report_date DESC, r.node_id DESC \
+         ), \
+         agg AS ( \
+             SELECT source, count(*)::bigint AS report_count FROM report GROUP BY source \
+         ), \
+         base AS ( \
+             SELECT coalesce(l.source, rs.source)                        AS source, \
+                    l.report_date                                        AS last_report_date, \
+                    l.node_id                                            AS last_report_node_id, \
+                    l.status                                             AS last_status, \
+                    coalesce(a.report_count, 0)                          AS report_count, \
+                    coalesce(rs.retired, false)                          AS retired, \
+                    rs.note                                              AS note, \
+                    rs.cadence_days                                      AS declared_cadence, \
+                    rs.grace_days                                        AS declared_grace, \
+                    i.median_gap                                         AS inferred_cadence \
+               FROM latest l \
+               FULL OUTER JOIN report_source rs ON rs.source = l.source \
+               LEFT JOIN agg      a ON a.source = coalesce(l.source, rs.source) \
+               LEFT JOIN inferred i ON i.source = coalesce(l.source, rs.source) \
+         ), \
+         judged AS ( \
+             SELECT b.*, \
+                    coalesce(b.declared_cadence::bigint, \
+                             CASE WHEN b.report_count >= {SOURCE_MIN_HISTORY} \
+                                  THEN b.inferred_cadence END)          AS cadence_days \
+               FROM base b \
+         ), \
+         graced AS ( \
+             SELECT j.*, \
+                    CASE WHEN j.cadence_days IS NULL THEN NULL \
+                         ELSE coalesce(j.declared_grace::bigint, greatest(1, j.cadence_days)) \
+                    END                                                  AS grace_days \
+               FROM judged j \
+         ) \
+         SELECT g.source, \
+                CASE WHEN g.retired                     THEN 'retired' \
+                     WHEN g.cadence_days IS NULL \
+                       OR g.last_report_date IS NULL     THEN 'unrated' \
+                     WHEN (current_date - g.last_report_date) \
+                            > (g.cadence_days + g.grace_days) THEN 'stale' \
+                     ELSE 'fresh' END                                    AS freshness, \
+                CASE WHEN NOT g.retired \
+                      AND g.cadence_days IS NOT NULL \
+                      AND g.last_report_date IS NOT NULL \
+                      AND (current_date - g.last_report_date) \
+                            <= (g.cadence_days + g.grace_days) \
+                     THEN g.last_status ELSE '{}' END                    AS asserts, \
+                g.last_report_date, g.last_report_node_id, \
+                (current_date - g.last_report_date)::bigint              AS days_since, \
+                g.cadence_days, \
+                (g.declared_cadence IS NOT NULL)                         AS cadence_declared, \
+                g.grace_days, \
+                (g.last_report_date + (g.cadence_days + g.grace_days)::int) AS due_by, \
+                greatest(0, coalesce((current_date - g.last_report_date) \
+                            - (g.cadence_days + g.grace_days), 0))::bigint AS overdue_days, \
+                g.report_count, g.note \
+           FROM graced g \
+          ORDER BY (CASE WHEN g.retired THEN 'retired' \
+                         WHEN g.cadence_days IS NULL OR g.last_report_date IS NULL THEN 'unrated' \
+                         WHEN (current_date - g.last_report_date) \
+                                > (g.cadence_days + g.grace_days) THEN 'stale' \
+                         ELSE 'fresh' END) = 'stale' DESC, \
+                   g.last_report_date ASC NULLS FIRST, g.source ASC",
+        vocab::SOURCE_ASSERTS_UNKNOWN
+    ))
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// `set_report_source` / `PATCH /api/report-sources/:source` — declare a
+/// cadence, a grace window, or retirement.
+///
+/// Every field is an override; leaving one unset keeps the derivation. The row
+/// may be written **before** the source's first report, which is how a new daily
+/// source skips `unrated` on day one rather than spending three days in it.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub struct ReportSourcePatch {
+    /// Expected days between reports. `null` clears the override and returns the
+    /// source to inference from its own history.
+    #[serde(default, deserialize_with = "ops::double_option")]
+    pub cadence_days: Option<Option<i64>>,
+    /// Slack past the cadence before `stale`. `null` returns it to the default,
+    /// which is the cadence itself (floor 1 day).
+    #[serde(default, deserialize_with = "ops::double_option")]
+    pub grace_days: Option<Option<i64>>,
+    /// Mark a source deliberately ended. This is the answer to #950's open
+    /// question — how a retired source stops nagging without also silencing a
+    /// broken one. It is an explicit declaration, so "we turned this off" stays
+    /// distinguishable from "this died", which silence alone can never do.
+    #[serde(default)]
+    pub retired: Option<bool>,
+    #[serde(default, deserialize_with = "ops::double_option")]
+    pub note: Option<Option<String>>,
+}
+
+pub async fn set_report_source(
+    pool: &PgPool,
+    source: &str,
+    patch: ReportSourcePatch,
+) -> Result<SourceHealth> {
+    require_non_empty(source, "source")?;
+    if let Some(Some(v)) = patch.cadence_days {
+        if v <= 0 {
+            return Err(RepoError::invalid(format!(
+                "cadence_days must be positive, got {v} — pass null to return this \
+                 source to cadence inference from its own report history"
+            ))
+            .into());
+        }
+    }
+    if let Some(Some(v)) = patch.grace_days {
+        if v < 0 {
+            return Err(
+                RepoError::invalid(format!("grace_days must not be negative, got {v}")).into(),
+            );
+        }
+    }
+
+    sqlx::query(
+        "INSERT INTO report_source (source, cadence_days, grace_days, retired, note) \
+         VALUES ($1, $2, $3, coalesce($4, false), $5) \
+         ON CONFLICT (source) DO UPDATE SET \
+             cadence_days = CASE WHEN $6 THEN EXCLUDED.cadence_days ELSE report_source.cadence_days END, \
+             grace_days   = CASE WHEN $7 THEN EXCLUDED.grace_days   ELSE report_source.grace_days   END, \
+             retired      = coalesce($4, report_source.retired), \
+             note         = CASE WHEN $8 THEN EXCLUDED.note         ELSE report_source.note         END, \
+             updated      = now()",
+    )
+    .bind(source)
+    .bind(patch.cadence_days.flatten().map(|v| v as i32))
+    .bind(patch.grace_days.flatten().map(|v| v as i32))
+    .bind(patch.retired)
+    .bind(patch.note.clone().flatten())
+    .bind(patch.cadence_days.is_some())
+    .bind(patch.grace_days.is_some())
+    .bind(patch.note.is_some())
+    .execute(pool)
+    .await?;
+
+    list_report_sources(pool)
+        .await?
+        .into_iter()
+        .find(|s| s.source == source)
+        .ok_or_else(|| RepoError::NotFound(format!("no report source '{source}'")).into())
 }
 
 time::serde::format_description!(report_date_fmt, Date, "[year]-[month]-[day]");
