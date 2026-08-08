@@ -6142,6 +6142,35 @@ const SOURCE_CADENCE_WINDOW: i64 = 30;
 /// give exactly one gap, which is an anecdote rather than a cadence.
 const SOURCE_MIN_HISTORY: i64 = 3;
 
+/// How many cadences the observed history must **span** before that cadence is
+/// believed (#1097, sprint 052).
+///
+/// [`SOURCE_MIN_HISTORY`] counts reports, and counting reports is the wrong
+/// question. `kyac` filed four times — 2026-07-09, 07-11, 07-12, 07-14, gaps of
+/// 2, 1, 2 — cleared the count gate, and korg declared it 21 days overdue on a
+/// 2-day cadence it had invented. kyac is interactive: it files when prompted,
+/// and its silence means nothing at all.
+///
+/// **A variance check would not have caught this.** Gaps of 2, 1, 2 are about as
+/// regular as a series gets. A healthy episodic burst and a broken daily source
+/// are the same shape, and no amount of statistics recovers the difference,
+/// because history cannot tell you a source is *scheduled*.
+///
+/// Span can. Measured live on 2026-08-08: kmon's history spanned 34 days at an
+/// inferred cadence of 1 (34×); kyac's spanned 5 days at 2 (2.5×). Believability
+/// comes from having watched the pattern *repeat over time*, not from having
+/// collected several samples of it in one afternoon.
+///
+/// 7 sits well clear of both ends rather than just barely excluding kyac — a
+/// threshold tuned to one data point is one that will be wrong on the next.
+///
+/// This gate is a trade, not a proof. Requiring an explicit declaration before
+/// alerting would be airtight and would reintroduce #950's original failure: a
+/// genuinely new scheduled source that nobody declared, silently unwatched. If
+/// episodic sources become common the answer is an explicit "on-demand"
+/// declaration, not a cleverer inference.
+const SOURCE_MIN_SPAN_CADENCES: i64 = 7;
+
 /// One reporting source's freshness — the #950 projection.
 ///
 /// Read the two state fields together and note what is *not* here: there is no
@@ -6182,6 +6211,14 @@ pub struct SourceHealth {
     /// Days past `due_by`; 0 when not overdue.
     pub overdue_days: i64,
     pub report_count: i64,
+    /// Days from the oldest to the newest report korg looked at (#1097).
+    ///
+    /// Carried so `unrated` is **explicable rather than mysterious**: a source
+    /// with five reports and a two-day span is one korg declined to judge, and
+    /// this is the field that says so. It is also the number that moves as a new
+    /// source earns a cadence, so a consumer can show progress toward being
+    /// rated instead of a flat "unknown".
+    pub history_span_days: Option<i64>,
     /// Why this source was retired, or any operator note from `report_source`.
     pub note: Option<String>,
 }
@@ -6237,6 +6274,12 @@ pub async fn list_report_sources(pool: &PgPool) -> Result<Vec<SourceHealth>> {
                FROM gaps WHERE gap IS NOT NULL AND recency <= {SOURCE_CADENCE_WINDOW} \
               GROUP BY source \
          ), \
+         observed AS ( \
+             SELECT source, \
+                    (max(report_date) - min(report_date))::bigint AS span_days \
+               FROM gaps WHERE recency <= {SOURCE_CADENCE_WINDOW} \
+              GROUP BY source \
+         ), \
          latest AS ( \
              SELECT DISTINCT ON (r.source) r.source, r.report_date, r.node_id, r.status \
                FROM report r ORDER BY r.source, r.report_date DESC, r.node_id DESC \
@@ -6254,16 +6297,20 @@ pub async fn list_report_sources(pool: &PgPool) -> Result<Vec<SourceHealth>> {
                     rs.note                                              AS note, \
                     rs.cadence_days                                      AS declared_cadence, \
                     rs.grace_days                                        AS declared_grace, \
-                    i.median_gap                                         AS inferred_cadence \
+                    i.median_gap                                         AS inferred_cadence, \
+                    o.span_days                                          AS history_span_days \
                FROM latest l \
                FULL OUTER JOIN report_source rs ON rs.source = l.source \
                LEFT JOIN agg      a ON a.source = coalesce(l.source, rs.source) \
                LEFT JOIN inferred i ON i.source = coalesce(l.source, rs.source) \
+               LEFT JOIN observed o ON o.source = coalesce(l.source, rs.source) \
          ), \
          judged AS ( \
              SELECT b.*, \
                     coalesce(b.declared_cadence::bigint, \
                              CASE WHEN b.report_count >= {SOURCE_MIN_HISTORY} \
+                                   AND b.history_span_days >= \
+                                       {SOURCE_MIN_SPAN_CADENCES} * b.inferred_cadence \
                                   THEN b.inferred_cadence END)          AS cadence_days \
                FROM base b \
          ), \
@@ -6295,7 +6342,7 @@ pub async fn list_report_sources(pool: &PgPool) -> Result<Vec<SourceHealth>> {
                 (g.last_report_date + (g.cadence_days + g.grace_days)::int) AS due_by, \
                 greatest(0, coalesce((current_date - g.last_report_date) \
                             - (g.cadence_days + g.grace_days), 0))::bigint AS overdue_days, \
-                g.report_count, g.note \
+                g.report_count, g.history_span_days, g.note \
            FROM graced g \
           ORDER BY (CASE WHEN g.retired THEN 'retired' \
                          WHEN g.cadence_days IS NULL OR g.last_report_date IS NULL THEN 'unrated' \

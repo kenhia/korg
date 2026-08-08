@@ -566,11 +566,32 @@ between its own `report_date`s, or a declared override), a grace window
 | `fresh` | filed within cadence + grace | no |
 | `stale` | overdue | **yes** |
 | `retired` | declared ended (`set_report_source`) | no |
-| `unrated` | under three reports and no declared cadence | no |
+| `unrated` | no believable cadence, and none declared | no |
 
 **The rule the feature exists for: anything not `fresh` asserts `unknown`.**
 Never the last known status — there is deliberately no field on the row that
 could carry it. Restating a stale GREEN is the exact failure this ends.
+
+**A cadence has to be earned.** korg infers one only when the history both holds
+at least three reports *and* **spans at least seven of the inferred cadences**
+(#1097). The count alone is not enough, and the reason is worth keeping:
+
+`kyac` filed four times over five days — 2026-07-09, 07-11, 07-12, 07-14, gaps of
+2, 1, 2 — and korg called it 21 days overdue on a 2-day cadence it had invented.
+kyac is interactive; it files when prompted, and its silence means nothing.
+
+A variance check would not have caught that: gaps of 2, 1, 2 are as regular as a
+series gets. **A healthy episodic burst and a broken daily source are the same
+shape**, and no statistic recovers the difference, because history cannot tell
+you a source is *scheduled*. Span can — measured live, kmon's history spanned 34
+cadences and kyac's spanned 2.5. `history_span_days` is on every row so an
+`unrated` verdict is explicable rather than mysterious.
+
+This is a trade, not a proof. Requiring an explicit declaration before alerting
+would be airtight and would reintroduce #950's original failure: a genuinely new
+scheduled source nobody declared, silently unwatched. A **declared** cadence
+bypasses the span gate entirely — declaring one is a statement that a cadence is
+*expected*, which is the thing inference can never establish.
 
 `unrated` is a fourth value because both available guesses are bad: `fresh`
 rebuilds the July failure, and `stale` cries wolf on every one-off report, which
