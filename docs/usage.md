@@ -206,7 +206,8 @@ retry", for input that would never be accepted.
 Vocabularies are validated in korg-core, so an unknown value comes back as a
 400 naming the whole allowed set rather than a 500 carrying raw Postgres text:
 
-- `wi_status`: `open`, `resolved`, `done`, `closed`
+- node `kind`: `workitem`, `card`, `link`, `sprint_proposal`, `report`, `handoff`, `program`, `schedule`
+- `wi_status`: `open`, `resolved`, `done`, `closed`, `parked`
 - `wi_type`: `task`, `bug`, `chore`, `feature`, `research`, `tweak`, `brainstorm`, `maintenance`
 - `wi_tshirt`: `XS`, `S`, `M`, `L`, `XL`, `Huge`, `Unknown`
 - card `status`: `Backlog`, `Research`, `OnDeck`, `Active`, `Done`, `Cut`

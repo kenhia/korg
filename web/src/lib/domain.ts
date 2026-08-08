@@ -68,6 +68,43 @@ export function isSatisfied(status: string): boolean {
   return SATISFIED_STATUSES.has(status);
 }
 
+/**
+ * The status for work that is real and wanted but waiting on a condition rather
+ * than on a person (WI #810) — #406 and #780 were the examples Ken gave.
+ *
+ * It is a *third* question about a work item, alongside the two above, and the
+ * reason it gets its own name here: parked items are neither hidden nor
+ * satisfied. They stay in the listing (hiding them is what `closed` is for) and
+ * they still block their dependents (deferred is not done) — they simply must
+ * not sit among the rows you are choosing your next task from.
+ */
+export const PARKED: WiStatus = "parked";
+
+/** True when an item is deferred until some condition fires. */
+export function isParked(status: string): boolean {
+  return status === PARKED;
+}
+
+/**
+ * Split a listing into what is actionable and what is parked, preserving the
+ * incoming order within each half.
+ *
+ * A `sort()` comparator would have been the smaller change and the wrong one:
+ * the caller's order is not always `wi_number` (it is whatever the page sorted
+ * by), and a comparator that returns 0 for two same-half rows is only
+ * order-preserving because `Array.prototype.sort` happens to be stable — a
+ * property to rely on deliberately, not by accident. Partitioning says what is
+ * meant, and gives the caller the two lists it needs to draw a divider between.
+ */
+export function partitionParked<T extends { wi_status: string }>(
+  items: readonly T[],
+): { active: T[]; parked: T[] } {
+  const active: T[] = [];
+  const parked: T[] = [];
+  for (const it of items) (isParked(it.wi_status) ? parked : active).push(it);
+  return { active, parked };
+}
+
 // --- cards ------------------------------------------------------------------
 
 /** The card column meaning "dropped", collapsed by default on the board. */

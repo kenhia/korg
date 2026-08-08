@@ -1589,8 +1589,15 @@ pub async fn get_node_preview(pool: &PgPool, id: i64) -> Result<Option<NodePrevi
         }
         "sprint_proposal" => {
             if let Some(r) = sqlx::query(
-                "SELECT title, summary, notes, status::text AS status, pinned \
-                 FROM sprint_proposal WHERE node_id = $1",
+                "SELECT sp.title, sp.summary, sp.notes, sp.status::text AS status, sp.pinned, \
+                        (SELECT count(*) FROM relationship r JOIN node wn ON wn.id = r.right_id \
+                          WHERE r.left_id = sp.node_id AND r.relationship = 'covers' \
+                            AND wn.kind = 'workitem') AS covered_count, \
+                        (SELECT coalesce(string_agg('#' || w.wi_number, ', ' \
+                                                    ORDER BY w.wi_number), '') \
+                           FROM relationship r JOIN workitem w ON w.node_id = r.right_id \
+                          WHERE r.left_id = sp.node_id AND r.relationship = 'covers') AS covered \
+                 FROM sprint_proposal sp WHERE sp.node_id = $1",
             )
             .bind(id)
             .fetch_optional(pool)
@@ -1600,6 +1607,16 @@ pub async fn get_node_preview(pool: &PgPool, id: i64) -> Result<Option<NodePrevi
                 p.badges = vec![r.get("status")];
                 if r.get::<bool, _>("pinned") {
                     p.badges.push("pinned".into());
+                }
+                // The covered work items — the thing a proposal *is*, and the
+                // half of the new shape this preview was still missing (#870).
+                // Ids rather than titles: the panel is `max-w-md` and eight
+                // wrapped titles push the notes off the screen, while the ids
+                // are what you type into find-by-ID next.
+                let covered_count: i64 = r.get("covered_count");
+                if covered_count > 0 {
+                    p.fields
+                        .push(field("Covers", r.get::<String, _>("covered")));
                 }
                 // Since #860 the summary is a 500-char contract and the analysis
                 // lives in `notes`, so the body is `notes` where there is one —
@@ -1621,9 +1638,14 @@ pub async fn get_node_preview(pool: &PgPool, id: i64) -> Result<Option<NodePrevi
         "program" => {
             // WI #982. Sprint 044 added the `program` kind and its own page but
             // not an arm here, so find-by-ID answered `979` with the fallback:
-            // chip PROGRAM, title literally "program #979". Every other kind in
-            // the vocabulary already resolves, so program was the whole gap —
-            // there is no `_ => {}` kind left to fix after this one.
+            // chip PROGRAM, title literally "program #979".
+            //
+            // The original of this comment ended "there is no `_ => {}` kind
+            // left to fix after this one", which was true when written and false
+            // eleven days later: sprint 051 added `schedule` and no arm, and the
+            // claim sat here reassuring readers for three sprints (#870's audit,
+            // sprint 054). The claim is now `NODE_KINDS` plus the fence that
+            // iterates it — a sentence in a comment cannot notice a new kind.
             //
             // `span` is the derived project set (D-6): a program has no project
             // of its own, so `p.project` is always null here and the span is the
@@ -1686,6 +1708,84 @@ pub async fn get_node_preview(pool: &PgPool, id: i64) -> Result<Option<NodePrevi
                 p.fields.push(field("Summary", r.get::<String, _>("summary")));
                 p.body = Some(r.get("body"));
                 p.body_label = Some("Handoff".into());
+            }
+        }
+        "schedule" => {
+            // WI #870's audit, sprint 054 — the gap #982's fence was written to
+            // catch and missed, because the fence hardcoded seven kinds and
+            // sprint 051 added an eighth. Until now a `materializes` edge or a
+            // find-by-ID on a schedule rendered "schedule #1042" with no fields
+            // at all: the newest node type in korg, and the least visible.
+            //
+            // `preview_title` over `title` for the same reason the schedules
+            // page shows it — the template is the stored value but the
+            // substituted string is what Materialise would actually create, and
+            // a preview exists to answer "what is this". The raw template stays
+            // reachable as a field when the two differ, so the substitution is
+            // never invisible.
+            //
+            // Due-ness is deliberately NOT recomputed here. `due` is a
+            // read-time predicate over three clauses (0025) and the schedules
+            // page is where it is rendered with the context that makes it mean
+            // something; a bare "due" chip in a slide-over reached from an edge
+            // would be a second, thinner implementation of the same derivation —
+            // exactly the drift `SCHEDULE_DUE_SQL` exists to prevent. The dates
+            // are here, and the page is one click away.
+            if let Some(r) = sqlx::query(&format!(
+                "SELECT s.title, {} AS preview_title, s.template, s.notes, \
+                        s.cadence, s.anchor_mode, s.status, s.wi_type, s.wi_tshirt, \
+                        to_char(s.anchor_at, 'YYYY-MM-DD') AS anchor_at, \
+                        (SELECT count(*) FROM relationship r \
+                          WHERE r.left_id = s.node_id \
+                            AND r.relationship = 'materializes') AS run_count \
+                 FROM schedule s WHERE s.node_id = $1",
+                substituted("s.title")
+            ))
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+            {
+                // Substituted database-side, like every other schedule read, so
+                // the rendered date comes off the same clock as the rows beside
+                // it (`substituted`'s own reason).
+                let template_title: String = r.get("title");
+                let rendered: String = r.get("preview_title");
+                p.title = rendered.clone();
+                p.badges = vec![r.get("cadence"), r.get("status")];
+                if rendered != template_title {
+                    p.fields.push(field("Template", template_title));
+                }
+                let cadence: String = r.get("cadence");
+                if cadence != "once" {
+                    p.fields
+                        .push(field("Anchor", format!("last {}", r.get::<String, _>("anchor_mode"))));
+                }
+                p.fields.push(field("Anchored", r.get::<String, _>("anchor_at")));
+                p.fields.push(field(
+                    "Creates",
+                    format!(
+                        "{} · {}",
+                        r.get::<String, _>("wi_type"),
+                        r.get::<String, _>("wi_tshirt")
+                    ),
+                ));
+                p.fields
+                    .push(field("Runs", r.get::<i64, _>("run_count").to_string()));
+                // Same rule as a proposal and a program: the long form is the
+                // body when there is one, and the work-item template it would
+                // create is the next most useful thing when there is not.
+                match r.get::<Option<String>, _>("notes") {
+                    Some(notes) => {
+                        p.body = Some(notes);
+                        p.body_label = Some("Notes".into());
+                    }
+                    None => {
+                        if let Some(template) = r.get::<Option<String>, _>("template") {
+                            p.body = Some(template);
+                            p.body_label = Some("Work item template".into());
+                        }
+                    }
+                }
             }
         }
         _ => {}
@@ -4264,20 +4364,49 @@ pub async fn update_program(
 ///    the anti-duplicate rule and the honesty rule at once;
 /// 3. the interval has elapsed since `anchor_at`.
 ///
-/// `resolved` counts as outstanding here, unlike everywhere else in korg. A
-/// restore drill that is "implemented, may still need a user test" has not been
-/// performed, and re-raising it because the status *looks* terminal would be the
-/// feature nagging about work already in flight.
-const SCHEDULE_DUE_SQL: &str = "s.status = 'active' \
+/// "Outstanding" is [`vocab::WI_UNFINISHED_STATUSES`], derived rather than
+/// spelled — see [`outstanding_sql`].
+///
+/// `resolved` counts as outstanding here. A restore drill that is "implemented,
+/// may still need a user test" has not been performed, and re-raising it because
+/// the status *looks* terminal would be the feature nagging about work already
+/// in flight. That used to read "unlike everywhere else in korg", which stopped
+/// being true in sprint 053 when #978 named this exact set
+/// `WI_UNFINISHED_STATUSES`; the two now agree by construction instead of by
+/// coincidence.
+fn schedule_due_sql() -> String {
+    format!(
+        "s.status = 'active' \
      AND NOT EXISTS (SELECT 1 FROM workitem lw WHERE lw.node_id = s.last_wi_id \
-                       AND lw.wi_status IN ('open', 'resolved')) \
+                       AND {}) \
      AND s.anchor_at + (CASE s.cadence \
             WHEN 'once'      THEN interval '0 days' \
             WHEN 'weekly'    THEN interval '7 days' \
             WHEN 'monthly'   THEN interval '1 month' \
             WHEN 'quarterly' THEN interval '3 months' \
             WHEN 'yearly'    THEN interval '1 year' \
-         END) <= now()";
+         END) <= now()",
+        outstanding_sql("lw.wi_status")
+    )
+}
+
+/// `<column> IN (…)` over [`vocab::WI_UNFINISHED_STATUSES`] — the one place a
+/// schedule decides whether the item it already produced is still the surface.
+///
+/// Written as a helper because the set was hardcoded as `('open', 'resolved')`
+/// in two statements, and #810 made that latently wrong: `parked` is unfinished,
+/// so parking a materialised drill would have made its schedule read "nothing
+/// outstanding" and fire again, quietly producing a duplicate work item for work
+/// deliberately deferred. Values are from the vocabulary and contain no user
+/// input, so inlining them is not an injection surface.
+fn outstanding_sql(column: &str) -> String {
+    let list = vocab::WI_UNFINISHED_STATUSES
+        .iter()
+        .map(|s| format!("'{s}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{column} IN ({list})")
+}
 
 /// `create_schedule` / `POST /api/schedules`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -4423,9 +4552,9 @@ fn schedule_select() -> String {
                     WHEN 'quarterly' THEN interval '3 months' \
                     WHEN 'yearly'    THEN interval '1 year' \
                  END) AS due_at, \
-                ({SCHEDULE_DUE_SQL}) AS due, \
+                ({}) AS due, \
                 lw.wi_number AS last_wi_number, \
-                coalesce(lw.wi_status IN ('open', 'resolved'), false) AS outstanding, \
+                coalesce({}, false) AS outstanding, \
                 (SELECT count(*) FROM relationship mr \
                   WHERE mr.left_id = s.node_id AND mr.relationship = 'materializes') \
                   AS materialized_count, \
@@ -4437,6 +4566,8 @@ fn schedule_select() -> String {
          JOIN node n ON n.id = s.node_id \
          LEFT JOIN project pj ON pj.id = n.project_id \
          LEFT JOIN workitem lw ON lw.node_id = s.last_wi_id",
+        schedule_due_sql(),
+        outstanding_sql("lw.wi_status"),
         substituted("s.title")
     )
 }
@@ -4639,9 +4770,10 @@ pub async fn list_schedules(
         "{} WHERE ($1::text[] IS NULL OR s.status = ANY($1)) \
             AND ($2::bool IS NULL OR n.archived = $2) \
             AND ($3::text IS NULL OR pj.name = $3) \
-            AND (NOT $4::bool OR ({SCHEDULE_DUE_SQL})) \
+            AND (NOT $4::bool OR ({})) \
           ORDER BY due_at ASC, s.node_id ASC",
-        schedule_select()
+        schedule_select(),
+        schedule_due_sql()
     ))
     .bind(shown.as_deref())
     .bind(archived)
@@ -4657,9 +4789,10 @@ pub async fn list_schedules(
                 count(*) FILTER (WHERE ($1::bool IS NULL OR n.archived = $1) \
                                    AND ($2::text[] IS NULL OR s.status = ANY($2)) \
                                    AND ($3::text IS NULL OR pj.name = $3) \
-                                   AND $4::bool AND NOT ({SCHEDULE_DUE_SQL})) \
+                                   AND $4::bool AND NOT ({})) \
          FROM schedule s JOIN node n ON n.id = s.node_id \
-         LEFT JOIN project pj ON pj.id = n.project_id"
+         LEFT JOIN project pj ON pj.id = n.project_id",
+        schedule_due_sql()
     ))
     .bind(archived)
     .bind(shown.as_deref())

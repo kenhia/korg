@@ -12,11 +12,57 @@
 
 use crate::error::RepoError;
 
+/// Every kind a `node` row may be — the typed half of the typed-node model.
+///
+/// **This is the vocabulary that was missing** (WI #870's audit, sprint 054).
+/// Every other closed set in korg has lived here since #526, but node kinds
+/// existed only as a SQL `CHECK` in whichever migration last touched it, plus
+/// hand-written copies in two tests. Nothing tied the copies to the constraint,
+/// so the copies did not grow when the constraint did: sprint 051 added
+/// `schedule` (0025) and both lists stayed at seven. `get_node_preview` then had
+/// no `schedule` arm for three sprints, and the fence written specifically to
+/// catch that — `every_node_kind_resolves_to_a_real_title`, whose doc comment
+/// asserts "every kind the `node.kind` check constraint admits" — iterated its
+/// own hardcoded list and passed throughout.
+///
+/// The lesson is the one #526 already drew and this set was excluded from: a
+/// vocabulary enumerated by hand in the places that consume it is a vocabulary
+/// that drifts. `node_kinds_match_the_check_constraint` (tests/schema.rs) now
+/// pins this list to the database, and the preview fence iterates it, so adding
+/// a kind fails both until it is genuinely handled.
+///
+/// Ordered as the constraint declares them, oldest first: 0001 opened with
+/// `workitem`/`card`, and each later migration appended.
+pub const NODE_KINDS: [&str; 8] = [
+    "workitem",
+    "card",
+    "link",
+    "sprint_proposal",
+    "report",
+    "handoff",
+    "program",
+    "schedule",
+];
+
 /// Canonical work-item statuses (WI #285). Lifecycle: `open → resolved`
 /// (implemented; may still need a user test / may not be PR'd) `→ done`
 /// (agent satisfied — terminal but still visible in default lists)
 /// `→ closed` (Ken only; hidden by default).
-pub const WI_STATUSES: [&str; 4] = ["open", "resolved", "done", "closed"];
+///
+/// `parked` (WI #810, sprint 054) is off that line entirely — it is not a later
+/// stage of `open` but a sideways move from it: work that is real and wanted but
+/// waiting on a condition rather than on a person ("things to consider when a
+/// condition is met"; #406 and #780 were the examples). It stays *visible*,
+/// because the whole point is to keep it in view; it just sorts to the bottom
+/// under a divider so it never competes with what is actionable now.
+///
+/// It carries no DB constraint to widen: `workitem.wi_status` is bare
+/// `TEXT NOT NULL` (0001) and always has been, so korg-core is not merely the
+/// authority here (WI #526) but the *only* enforcement. That is why adding this
+/// value is a one-line vocabulary change and not a migration — and why the two
+/// partition fences below are the only thing standing between a new status and
+/// a silently mis-filed corpus.
+pub const WI_STATUSES: [&str; 5] = ["open", "resolved", "done", "closed", "parked"];
 
 /// The work items a list read means by default (WI #861), i.e. everything that
 /// is not terminal. The program plan's §8 answer 1 decided the split: `closed`
@@ -24,7 +70,11 @@ pub const WI_STATUSES: [&str; 4] = ["open", "resolved", "done", "closed"];
 /// `resolved` and `done` stay visible, because `done`'s visibility is already a
 /// promise `update_work_item`'s schema makes ("terminal but visible in default
 /// lists") and `resolved` is the may-still-want-to-see state.
-pub const WI_LIVE_STATUSES: [&str; 3] = ["open", "resolved", "done"];
+/// `parked` is live (#810): a parked item is one Ken has explicitly asked to
+/// keep in view, so hiding it by default would defeat the status. The divider
+/// does the de-prioritising that hiding would otherwise do, and does it without
+/// making the row unfindable.
+pub const WI_LIVE_STATUSES: [&str; 4] = ["open", "resolved", "done", "parked"];
 
 /// The complement of [`WI_LIVE_STATUSES`] — excluded from a lean
 /// `list_work_items` unless asked for, and counted in its `omitted`. Kept beside
@@ -56,7 +106,13 @@ pub const WI_FINISHED_STATUSES: [&str; 2] = ["done", "closed"];
 /// still blocks. `resolved` is the interesting member: "implemented; may still
 /// need a user test / may not be PR'd" is not landed, and a queue row told it
 /// was unblocked by unlanded work would be told to start on sand.
-pub const WI_UNFINISHED_STATUSES: [&str; 2] = ["open", "resolved"];
+///
+/// `parked` is unfinished and it is the *most* blocking value in the set: work
+/// deferred until a condition fires is the definition of not-yet-done, and #978's
+/// board derivation must report a dependency on one as an unmet blocker. Calling
+/// it finished because it is "not being worked on" would tell a reader that a
+/// thing waiting indefinitely had been dealt with.
+pub const WI_UNFINISHED_STATUSES: [&str; 3] = ["open", "resolved", "parked"];
 
 /// Work-item types (D-2). `brainstorm` is deliberate: half-formed ideas get
 /// filed as work items rather than lost.
@@ -258,7 +314,8 @@ pub const PROJECT_CATEGORIES: [&str; 7] = [
 /// hand-kept copy that drifts (the old `api.ts` `WI_TYPES` had nine entries,
 /// six of which the server rejects). `docs_drift` (korg-mcp) walks it too, so a
 /// vocabulary enumerated in prose is checked against this registry, not a copy.
-pub const EXPORTED: [(&str, &str, &[&str]); 17] = [
+pub const EXPORTED: [(&str, &str, &[&str]); 18] = [
+    ("NODE_KINDS", "NodeKind", &NODE_KINDS),
     ("WI_STATUSES", "WiStatus", &WI_STATUSES),
     ("WI_TYPES", "WiType", &WI_TYPES),
     ("WI_TSHIRTS", "WiTshirt", &WI_TSHIRTS),
@@ -396,6 +453,40 @@ mod partition {
             "WI_FINISHED_STATUSES and WI_TERMINAL_STATUSES must stay different \
              sets — `done` is finished work that a lean list still shows, and \
              collapsing the two makes every `done` dependency read as a blocker"
+        );
+    }
+
+    /// `parked` sits on the unusual corner of both partitions (#810), and the
+    /// combination is the whole status: **visible but unfinished**. Every other
+    /// value is either finished-and-visible (`done`), finished-and-hidden
+    /// (`closed`) or unfinished-and-visible-because-it-is-active
+    /// (`open`/`resolved`). Parked is unfinished and visible *on purpose*.
+    ///
+    /// Asserted directly rather than left to the two partition tests above,
+    /// which only check that every status lands on some side — they would pass
+    /// just as happily with `parked` filed as terminal (making it invisible,
+    /// defeating the status) or as finished (making a dependency on indefinitely
+    /// deferred work read as satisfied). Those are the two plausible mistakes,
+    /// so they get a test that names them.
+    #[test]
+    fn parked_is_visible_but_never_counts_as_finished() {
+        assert!(
+            WI_LIVE_STATUSES.contains(&"parked"),
+            "`parked` must stay in default listings — it exists to keep work in \
+             view, and hiding it is what `closed` is for"
+        );
+        assert!(
+            !WI_TERMINAL_STATUSES.contains(&"parked"),
+            "`parked` must not be terminal"
+        );
+        assert!(
+            WI_UNFINISHED_STATUSES.contains(&"parked"),
+            "`parked` work is not done — #978's board must report a dependency \
+             on a parked item as an unmet blocker"
+        );
+        assert!(
+            !WI_FINISHED_STATUSES.contains(&"parked"),
+            "`parked` must never satisfy a dependency"
         );
     }
 

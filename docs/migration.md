@@ -66,8 +66,11 @@ Flags:
 
 - `--reset` — `TRUNCATE node, project, area … CASCADE` before importing. Read
   that literally: it destroys **every** node kind — work items, cards,
-  reading-list links, sprint proposals and reports —
-  not just the entities this import creates. The import is one-shot and long
+  reading-list links, sprint proposals, reports, handoffs, programs and
+  schedules — not just the entities this import creates. (That list is
+  `vocab::NODE_KINDS`; it had drifted three kinds behind the database until
+  sprint 054, which is a poor property for a warning about irreversible
+  deletion.) The import is one-shot and long
   finished, so a `--reset` against a live korg database is almost certainly a
   mistake; korg-migrate refuses unless `KORG_RESET_CONFIRM=yes` and prints the
   per-kind inventory it is about to destroy.

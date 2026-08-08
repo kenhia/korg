@@ -3,9 +3,15 @@
 //! Two of the sprint's five items reach past `web/`:
 //!
 //! * **#982** — `get_node_preview` had no `program` arm, so find-by-ID answered
-//!   `979` with the `{kind} #{id}` fallback. The fence below is the one that
-//!   matters most: *every* kind in the vocabulary resolves, so the next kind
-//!   added has a test waiting for it rather than a silent fallback.
+//!   `979` with the `{kind} #{id}` fallback. The fence below was meant to be the
+//!   part that mattered: *every* kind resolves, so the next kind added has a
+//!   test waiting for it rather than a silent fallback.
+//!
+//!   It did not hold. The fence enumerated its own seven subjects, sprint 051
+//!   added an eighth kind, and `schedule` went three sprints with no arm and no
+//!   failing test. Sprint 054 rebuilt it on `vocab::NODE_KINDS`; the history is
+//!   in `tests/sprint054.rs`, and it is worth reading before writing the next
+//!   fence of this shape.
 //! * **#966** — `get_work_item` is reached by `node_id` as well as `wi_number`.
 //!   The two are the same number since the 0009 identity migration, so an agent
 //!   holding either was holding the right one.
@@ -13,9 +19,10 @@
 use korg_core::ops::WorkItemSelector;
 use korg_core::repo::{
     create_card, create_handoff, create_link, create_program, create_project, create_proposal,
-    create_work_item, get_node_preview, get_work_item_detail, upsert_report, NewHandoff,
-    NewProgram,
+    create_schedule, create_work_item, get_node_preview, get_work_item_detail, upsert_report,
+    NewHandoff, NewProgram,
 };
+use korg_core::vocab;
 use korg_test_support::{fresh_korg, new, test_project, TEST_PROJECT};
 use sqlx::PgPool;
 
@@ -120,59 +127,103 @@ async fn a_program_without_notes_previews_its_aim_as_the_body() {
 
 /// The fence #982 actually asked for: "which other kinds hit this fallback?".
 ///
-/// Answer, as of this sprint: none. Every kind the `node.kind` check constraint
-/// admits resolves to a real title. Add a kind without a `get_node_preview` arm
-/// and this fails, which is the point — the fallback is silent by design, so a
-/// test has to be the thing that notices.
+/// **This test used to answer that question with a hardcoded list of seven ids,
+/// and it was wrong within eleven days.** Sprint 051 added `schedule` (0025) and
+/// no `get_node_preview` arm; the list above stayed at seven, so a schedule
+/// previewed as `schedule #1042` with no fields for three sprints while this
+/// test — and the doc comment claiming it covered "every kind the `node.kind`
+/// check constraint admits" — reported green. A fence that enumerates its own
+/// subjects fences nothing (WI #870's audit, sprint 054).
+///
+/// It now iterates [`vocab::NODE_KINDS`], which `node_kinds_match_the_check
+/// _constraint` pins to the database. The chain is: a new kind in a migration
+/// fails the schema test until it is in `NODE_KINDS`, which fails the `_ =>` arm
+/// below until this test can build one, which fails the title assertion until
+/// `get_node_preview` renders it. Three failures, no silent fallback.
 #[tokio::test]
 async fn every_node_kind_resolves_to_a_real_title() {
     let (_c, pool) = fresh_korg().await;
     test_project(&pool).await;
 
     // One node of each kind, built through the real write paths so the detail
-    // rows exist the way production's do.
-    let wi = create_work_item(&pool, new::work_item("a work item"))
-        .await
-        .unwrap()
-        .node_id;
-    let proposal = proposal_in(&pool, TEST_PROJECT, "a proposal").await;
-    let program = create_program(
-        &pool,
-        NewProgram {
-            slices: vec![proposal],
-            ..new::program("a program")
-        },
-    )
-    .await
-    .unwrap()
-    .row
-    .node_id;
-    let handoff = create_handoff(
-        &pool,
-        NewHandoff {
-            related_node_ids: vec![wi],
-            ..new::handoff("a handoff")
-        },
-    )
-    .await
-    .unwrap()
-    .handoff
-    .node_id;
-    let card = create_card(&pool, new::card("a card"))
-        .await
-        .unwrap()
-        .node_id;
-    let link = create_link(&pool, new::link("https://example.invalid/a"))
-        .await
-        .unwrap()
-        .node_id;
-    let today = time::OffsetDateTime::now_utc().date();
-    let report = upsert_report(&pool, new::report("a-source", today))
-        .await
-        .unwrap()
-        .node_id;
+    // rows exist the way production's do. Driven by the vocabulary rather than
+    // by this list, so the `_` arm is what a ninth kind hits first.
+    let mut ids: Vec<(&str, i64)> = Vec::new();
+    for kind in vocab::NODE_KINDS {
+        let id = match kind {
+            "workitem" => {
+                create_work_item(&pool, new::work_item("a work item"))
+                    .await
+                    .unwrap()
+                    .node_id
+            }
+            "sprint_proposal" => proposal_in(&pool, TEST_PROJECT, "a proposal").await,
+            "program" => {
+                let slice = proposal_in(&pool, TEST_PROJECT, "a slice").await;
+                create_program(
+                    &pool,
+                    NewProgram {
+                        slices: vec![slice],
+                        ..new::program("a program")
+                    },
+                )
+                .await
+                .unwrap()
+                .row
+                .node_id
+            }
+            "handoff" => {
+                let subject = create_work_item(&pool, new::work_item("a subject"))
+                    .await
+                    .unwrap()
+                    .node_id;
+                create_handoff(
+                    &pool,
+                    NewHandoff {
+                        related_node_ids: vec![subject],
+                        ..new::handoff("a handoff")
+                    },
+                )
+                .await
+                .unwrap()
+                .handoff
+                .node_id
+            }
+            "card" => {
+                create_card(&pool, new::card("a card"))
+                    .await
+                    .unwrap()
+                    .node_id
+            }
+            "link" => {
+                create_link(&pool, new::link("https://example.invalid/a"))
+                    .await
+                    .unwrap()
+                    .node_id
+            }
+            "report" => {
+                let today = time::OffsetDateTime::now_utc().date();
+                upsert_report(&pool, new::report("a-source", today))
+                    .await
+                    .unwrap()
+                    .node_id
+            }
+            "schedule" => {
+                create_schedule(&pool, new::schedule("a drill", "quarterly", None))
+                    .await
+                    .unwrap()
+                    .node_id
+            }
+            other => panic!(
+                "`{other}` is in vocab::NODE_KINDS but this fence cannot build one. \
+                 Add a write path here, then make sure get_node_preview renders it — \
+                 that second step is the one sprint 051 skipped for `schedule`."
+            ),
+        };
+        ids.push((kind, id));
+    }
 
-    for id in [wi, proposal, program, handoff, card, link, report] {
+    for (_kind, id) in ids {
         let preview = get_node_preview(&pool, id)
             .await
             .unwrap()

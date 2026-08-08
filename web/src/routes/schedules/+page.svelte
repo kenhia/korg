@@ -96,7 +96,18 @@
     {#each list.items as s (s.node_id)}
       <li class="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
         <div class="flex flex-wrap items-center gap-2">
-          <span class={`shrink-0 ${ID_CLASS}`}>#{s.node_id}</span>
+          <!-- WI #870 — the schedule's own detail. Until sprint 054 a schedule
+               had no preview arm at all, so this list could open the work item
+               it produced but never the thing that produced it; the id is the
+               affordance because it is what find-by-ID takes. The panel carries
+               the fields this row has no space for: template, notes, anchor,
+               and what type/size it will create. -->
+          <button
+            class={`shrink-0 ${ID_CLASS} hover:text-[var(--color-accent)]`}
+            title="Open this schedule's detail"
+            data-testid="schedule-open-detail"
+            onclick={() => (previewNode = s.node_id)}>#{s.node_id}</button
+          >
           <span class={scheduleDuePill(s.due, s.outstanding)}>
             {scheduleDueLabel(s.due, s.outstanding)}
           </span>

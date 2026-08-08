@@ -281,15 +281,23 @@ it is now the slim projection (`wi_number`, `node_id`, `project`, `title`,
 
 | `wi_status` | rows returned |
 |---|---|
-| omitted | `open` + `resolved` + `done` — everything not terminal |
+| omitted | `open` + `resolved` + `done` + `parked` — everything not terminal |
 | `"all"` | every status |
-| one of the four | exactly that status |
+| one of the five | exactly that status |
 
 `resolved` and `done` stay visible deliberately: `done`'s visibility is a
 promise `update_work_item`'s own schema makes, and `resolved` is the
 implemented-but-Ken-may-still-want-to-see state. `closed` is the terminal one,
 and hiding it is what finally makes that schema's "hidden by default" sentence
 true — nothing on the MCP surface hid anything before this.
+
+`parked` (#810, sprint 054) is visible for a different reason than the other
+three: it is work deferred until a *condition* fires rather than work in
+progress, and the whole point of the status is keeping it in view — hiding it
+would make `parked` a slower spelling of `closed`. The web UI sorts parked rows
+below a divider instead. Note that it is **unfinished**, so a dependency on a
+parked item still reads as an unmet blocker in `get_board`'s deconfliction
+(#978): deferred is not done.
 
 `omitted` is `{closed, archived}`, a cascade like `list_proposals`': `archived`
 counts what the archived filter hid, `closed` is counted only over rows that

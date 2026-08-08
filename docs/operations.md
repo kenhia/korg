@@ -434,8 +434,8 @@ compared rather than reported as a loss.
 
 `korg-migrate --reset` runs `TRUNCATE node, project, area … CASCADE`. Read that
 literally: it destroys **every** node kind — work items, cards, links, sprint
-proposals and reports — not merely the entities the
-legacy import creates. The import it belongs to is one-shot and long finished, so
+proposals, reports, handoffs, programs and schedules — not merely the entities
+the legacy import creates. The import it belongs to is one-shot and long finished, so
 a `--reset` against the live database is almost certainly a mistake.
 
 It refuses to run without `KORG_RESET_CONFIRM=yes` and prints the per-kind

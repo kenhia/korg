@@ -22,6 +22,7 @@
     KNOWN_RELATIONSHIP_LABELS,
     chip,
     isHiddenByDefault,
+    partitionParked,
     projectRailColor,
     relationshipReads,
   } from "$lib/domain";
@@ -368,6 +369,12 @@
       return true;
     }),
   );
+
+  // WI #810 — parked rows sort to the bottom under a divider, so "what should I
+  // do next" never has to step over work that is deliberately waiting. Derived
+  // from `filtered`, so every filter above still applies: parking changes where
+  // a row sits, never whether it is shown.
+  const listed = $derived(partitionParked(filtered));
 
   // The chips are the tags on the rows you can currently see, with counts —
   // derived from `filtered`, so each click narrows the row to what still
@@ -1109,7 +1116,38 @@
           </tr>
         </thead>
         <tbody>
-          {#each filtered as item (item.wi_number)}
+          {#each listed.active as item (item.wi_number)}{@render row(item)}{/each}
+          <!-- WI #810 — Ken specified the shape: parked rows below a labelled
+               rule, not a separate table and not a collapsed section. One
+               <tbody> keeps the columns aligned across the divider, which is
+               the point of keeping them in the same list at all. -->
+          {#if listed.parked.length > 0}
+            <tr class="border-t border-[var(--color-border)]">
+              <td
+                class="px-3 pb-1 pt-3 text-xs uppercase tracking-wide text-[var(--color-muted)]"
+                colspan={current === ALL ? 9 : 8}
+                data-testid="parked-divider"
+              >
+                <span class="mr-2">parked</span>
+                <span class="text-[0.65rem] normal-case tracking-normal"
+                  >waiting on a condition, not on you — {listed.parked.length}
+                  {listed.parked.length === 1 ? "item" : "items"}</span
+                >
+              </td>
+            </tr>
+            {#each listed.parked as item (item.wi_number)}{@render row(item)}{/each}
+          {/if}
+          {#if filtered.length === 0}
+            <!-- +1 on both arms for the Prop column (WI #824). -->
+            <tr><td class="px-3 py-3 text-sm text-[var(--color-muted)]" colspan={current === ALL ? 9 : 8}>No work items found.</td></tr>
+          {/if}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{/snippet}
+
+{#snippet row(item: WorkItemRow)}
             <tr
               id={`wi-row-${item.wi_number}`}
               class="cursor-pointer border-t border-[var(--color-border)] hover:bg-[var(--color-surface-hi)]"
@@ -1218,14 +1256,6 @@
                 >
               </td>
             </tr>
-          {:else}
-            <!-- +1 on both arms for the Prop column (WI #824). -->
-            <tr><td class="px-3 py-3 text-sm text-[var(--color-muted)]" colspan={current === ALL ? 9 : 8}>No work items found.</td></tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
-  </div>
 {/snippet}
 
 {#snippet detailView(item: WorkItemRow)}

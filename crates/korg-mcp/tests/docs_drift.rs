@@ -523,6 +523,7 @@ fn the_migration_env_table_covers_every_importer_variable() {
 /// literal bullet label. The values come from `korg_core::vocab::EXPORTED`, so
 /// there is one registry and this is a projection of it, not a copy.
 const VOCAB_BULLETS: &[(&str, &str)] = &[
+    ("node `kind`", "NODE_KINDS"),
     ("`wi_status`", "WI_STATUSES"),
     ("`wi_type`", "WI_TYPES"),
     ("`wi_tshirt`", "WI_TSHIRTS"),
