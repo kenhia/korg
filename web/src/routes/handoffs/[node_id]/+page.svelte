@@ -20,7 +20,7 @@
   import { page } from "$app/stores";
   import { api, type HandoffFull, type RelatedRef } from "$lib/api";
   import { renderMarkdown } from "$lib/markdown";
-  import { chip } from "$lib/domain";
+  import { chip, stamp } from "$lib/domain";
   import Comments from "$lib/components/Comments.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
   import NodePreview from "$lib/components/NodePreview.svelte";
@@ -63,11 +63,9 @@
   }
 
   // The handoff's own timestamps say how current the context is, which is the
-  // first thing you want to know when you are about to act on it.
-  function stamp(iso: string): string {
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
-  }
+  // first thing you want to know when you are about to act on it. `stamp` moved
+  // to domain.ts in sprint 055 — the generic preview needed the same formatting
+  // for every kind (#1106), and this page had the only copy.
 
   // Getting *out* was browser-back only (Ken, 2026-07-29). Escape now leaves,
   // matching the slide-over this page is reached from — the two are the same

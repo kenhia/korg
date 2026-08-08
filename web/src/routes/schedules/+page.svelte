@@ -1,8 +1,19 @@
 <script lang="ts">
-  import { api, type ScheduleList, type ScheduleRow } from "$lib/api";
+  import {
+    api,
+    type ScheduleList,
+    type ScheduleMaterialization,
+    type ScheduleRow,
+  } from "$lib/api";
   import NodePreview from "$lib/components/NodePreview.svelte";
-  import { notify } from "$lib/toast.svelte";
-  import { ID_CLASS, chip, scheduleDueLabel, scheduleDuePill } from "$lib/domain";
+  import { attempt, notify } from "$lib/toast.svelte";
+  import {
+    ID_CLASS,
+    chip,
+    scheduleDueLabel,
+    scheduleDuePill,
+    stampDay,
+  } from "$lib/domain";
 
   // Work that a date makes appear (#581). korg runs no scheduler: `due` is
   // computed on every read, and Materialise is the explicit write that stands
@@ -27,6 +38,11 @@
     try {
       const out = await api.materializeSchedule(s.node_id, force);
       notify(`#${out.work_item.wi_number} — ${out.work_item.title}`);
+      // The run just added is exactly what the history is for, so drop the
+      // cache rather than let an open disclosure keep showing the run before it
+      // (#1105) — and refill it straight away if it is on screen.
+      delete runs[s.node_id];
+      if (runsOpen[s.node_id]) await fetchRuns(s.node_id);
       await load();
     } catch (e) {
       // The refusals are worth reading verbatim: they say what would lift them
@@ -49,6 +65,43 @@
   /** `2026-10-08` — the date is the whole point; the time of day never is. */
   function day(ts: string): string {
     return ts.slice(0, 10);
+  }
+
+  // WI #1105 — the run history behind the count.
+  //
+  // `materialized[]` is the answer to "when was this drill *actually* run?",
+  // which `last_wi_number` explicitly cannot give (see its doc comment) and
+  // which `materialized_count` cannot either: three runs on schedule and three
+  // runs in one week are the same "3 runs". For a quarterly restore drill that
+  // history *is* the value — it is the evidence the maintenance happened.
+  //
+  // It lives on `ScheduleDetail`, not `ScheduleRow`, so it is fetched per row
+  // on demand rather than N+1'd into the list read. Disclosure rather than
+  // always-on for the same reason the count was there in the first place: the
+  // row is dense, and the history is the thing you go looking for, not the
+  // thing you scan.
+  let runsOpen = $state<Record<number, boolean>>({});
+  let runs = $state<Record<number, ScheduleMaterialization[]>>({});
+
+  async function fetchRuns(node_id: number): Promise<boolean> {
+    const detail = await attempt(() => api.schedule(node_id), "Load run history");
+    if (!detail) return false;
+    runs[node_id] = detail.materialized;
+    return true;
+  }
+
+  async function toggleRuns(s: ScheduleRow) {
+    if (runsOpen[s.node_id]) {
+      runsOpen[s.node_id] = false;
+      return;
+    }
+    runsOpen[s.node_id] = true;
+    // Cached after the first open — a past run does not change — and dropped by
+    // `materialize`, which is the one thing that adds to it.
+    if (runs[s.node_id] !== undefined) return;
+    // Failed, or the schedule is gone. Collapse so the next click retries;
+    // leaving it open would show "loading…" forever with nothing loading.
+    if (!(await fetchRuns(s.node_id))) runsOpen[s.node_id] = false;
   }
 
   load();
@@ -134,15 +187,58 @@
               last: #{s.last_wi_number}
             </button>
           {/if}
+          <!-- WI #1105 — the count is now the way in to the history behind it.
+               It stays a count when there is nothing to expand: a schedule that
+               has never fired has no history, and a disclosure that opens onto
+               "none" is a worse answer than the zero itself. -->
           {#if s.materialized_count > 0}
-            <span>
+            <button
+              class="hover:text-[var(--color-accent)]"
+              aria-expanded={runsOpen[s.node_id] === true}
+              title="Show when this actually ran"
+              data-testid="schedule-runs-toggle"
+              onclick={() => toggleRuns(s)}
+            >
+              {runsOpen[s.node_id] ? "▾" : "▸"}
               {s.materialized_count} run{s.materialized_count === 1 ? "" : "s"}
-            </span>
+            </button>
           {/if}
           {#if s.status !== "active"}
             <span class="uppercase tracking-wide">{s.status}</span>
           {/if}
         </div>
+
+        <!-- The evidence trail (#1105). Newest first, as `materialized[]`
+             arrives — the last run is the one you are checking against the
+             cadence beside it. The date is the edge's own timestamp, i.e. when
+             this schedule fired, which is the fact `last_wi_number` and the
+             count both lose. -->
+        {#if runsOpen[s.node_id]}
+          <ul
+            class="mt-2 space-y-1 border-l border-[var(--color-border)] pl-3 text-xs"
+            data-testid="schedule-runs"
+          >
+            {#each runs[s.node_id] ?? [] as m (m.wi_number)}
+              <li class="flex flex-wrap items-baseline gap-x-2">
+                <span class="font-mono tabular-nums text-[var(--color-muted)]"
+                  >{stampDay(m.materialized)}</span
+                >
+                <button
+                  class="text-[var(--color-accent)] hover:underline"
+                  title={`Preview #${m.wi_number}`}
+                  onclick={() => (previewNode = m.wi_number)}
+                  >#{m.wi_number}</button
+                >
+                <span class="min-w-0 flex-1 truncate">{m.title}</span>
+                <span class="text-[var(--color-muted)]">{m.wi_status}</span>
+              </li>
+            {:else}
+              <li class="text-[var(--color-muted)]">
+                {runs[s.node_id] === undefined ? "loading…" : "No runs recorded."}
+              </li>
+            {/each}
+          </ul>
+        {/if}
 
         <div class="mt-3 flex flex-wrap gap-2">
           <button

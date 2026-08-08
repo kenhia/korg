@@ -1,11 +1,23 @@
 <script lang="ts">
   // Shared slide-over preview for any node kind (WI #231 + #260). Give it a
   // node id; it fetches GET /api/nodes/:id and renders a uniform preview —
-  // work item, card, link, report, sprint proposal, program, or handoff. Used by Planning,
-  // Daily Reports and the Work Items find-by-ID box so the panel lives once.
+  // work item, card, link, report, sprint proposal, program, schedule or
+  // handoff. Used by Planning, Schedules, Reading list, Daily Reports and the
+  // Work Items find-by-ID box so the panel lives once.
+  //
+  // Sprint 055 (#870's punch list) made that "lives once" literal for the two
+  // node-level columns every kind has and almost no kind rendered: comments and
+  // timestamps. The data model was already generic — `add_comment`/
+  // `list_comments` take any node id, `node.tags`/`created`/`updated` exist for
+  // every kind — and only the UI was per-kind. That mismatch is what filed
+  // #1104, #1106 and #1107 as three separate items, and `schedule` is the proof
+  // it regenerates: it landed in sprint 051 brand new and arrived with all
+  // three gaps. Rendering them here means the *next* kind gets them for free
+  // rather than filing punch-list items 6-10.
   import { api, type NodePreview } from "$lib/api";
   import { renderMarkdown } from "$lib/markdown";
-  import { chip, nodePage } from "$lib/domain";
+  import { chip, nodePage, stamp } from "$lib/domain";
+  import Comments from "./Comments.svelte";
   import Dialog from "./Dialog.svelte";
   import ErrorNotice from "./ErrorNotice.svelte";
 
@@ -164,6 +176,44 @@
           </div>
         </section>
       {/if}
+
+      <!-- WI #1106. `created`/`updated` were in this payload from the start and
+           rendered by nothing, so "when was this queued?" needed an MCP call.
+           They sit below the body rather than in the `fields` list because they
+           are node-level and every kind has them, where `fields` is the
+           per-kind metadata each arm chose — mixing the two would make the
+           uniform part look like another arm's decision. `updated` only when it
+           differs: on the many nodes never edited since creation, a second
+           identical timestamp is noise that reads as information. -->
+      <p
+        class="mt-4 text-xs text-[var(--color-muted)]"
+        data-testid="node-preview-stamps"
+      >
+        created {stamp(node.created)}{#if node.updated !== node.created}
+          · updated {stamp(node.updated)}{/if}
+      </p>
+
+      <!-- WI #1104 + #1107 — the punch list's largest real gap. Agents comment
+           on proposals routinely (the pre-sprint premise check does exactly
+           that) and there was no way to read one in the web app: information
+           written into korg on the assumption someone would see it, that nobody
+           could. Mounting `Comments` here rather than on Planning and Schedules
+           separately is the whole architectural move — it covers links (#1107)
+           and every future kind in the same change.
+
+           Keyed on `nodeId` for the state `Comments` does *not* guard. Its
+           fetch is already safe across a reused instance — the `$effect` clears
+           the list and every callback re-checks `id === node_id`. Its editor is
+           not: `newComment` and `editingId`/`editBuf` are plain state, and this
+           panel changes node in place (Planning switches straight from one
+           chip to another without closing). Without the key, a half-typed draft
+           follows you to the next node and "Save" on an in-progress edit
+           PATCHes a comment that belongs to the node you just left. -->
+      {#key nodeId}
+        <div class="mt-4">
+          <Comments node_id={nodeId} />
+        </div>
+      {/key}
     {/if}
   </div>
 </Dialog>

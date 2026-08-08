@@ -17,6 +17,7 @@
     chip,
     nodePage,
     sliceProgress,
+    stamp,
   } from "$lib/domain";
   import { PROGRAM_STATUSES } from "$lib/generated/vocab";
   import { attempt } from "$lib/toast.svelte";
@@ -105,6 +106,16 @@
         {#each program.span as project (project)}
           <span class={chip.project}>{project}</span>
         {/each}
+        <!-- WI #1106 — tags and the "how current is this" stamp, the same pair
+             the handoff page has carried since #621 and for the same reason: a
+             program is long-lived, so how recently it moved is part of reading
+             it. Not on the list rows, which have no room and are a routing
+             surface rather than a reading one. -->
+        {#each program.tags as t (t)}<span class={chip.tag}>#{t}</span>{/each}
+        <span
+          class="ml-auto text-xs text-[var(--color-muted)]"
+          data-testid="program-stamps">updated {stamp(program.updated)}</span
+        >
       </div>
       <p class="text-[var(--color-muted)]">{program.aim}</p>
       <!-- The status control, not a pill (#980's third finding). The current

@@ -5,11 +5,13 @@
   import { ID_CLASS, chip } from "$lib/domain";
   import { attempt } from "$lib/toast.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
+  import NodePreview from "$lib/components/NodePreview.svelte";
 
   let links = $state<LinkRow[]>([]);
   let loading = $state(true);
   let loadError = $state<unknown>(null);
   let editing = $state<number | null>(null);
+  let previewNode = $state<number | null>(null);
 
   let newUrl = $state("");
   let newTitle = $state("");
@@ -66,7 +68,8 @@
 <section class="space-y-4">
   <h1 class="text-xl font-semibold">Reading list</h1>
   <p class="text-xs text-[var(--color-muted)]">
-    A title opens the link · use Edit to change disposition and tags
+    A title opens the link · the id opens its detail and comments · use Edit to
+    change disposition and tags
   </p>
 
   <div class="flex flex-wrap items-center gap-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
@@ -104,8 +107,20 @@
         <li class="px-3 py-2">
           <div class="flex items-center justify-between gap-3">
             <!-- #980: a link is a node an agent cites by id (mark_link_read,
-                 update_link both take node_id), so the id is on the row. -->
-            <span class={`shrink-0 ${ID_CLASS}`}>#{link.node_id}</span>
+                 update_link both take node_id), so the id is on the row.
+                 #1107: and now it opens the link's preview, which is where its
+                 comments live. A link is the kind where a note ("skimmed, the
+                 useful part is §3") is most obviously wanted and the one kind
+                 with nowhere to put one. The id is the affordance for the same
+                 reason it is on Schedules — it is what find-by-ID takes — and
+                 it leaves the title doing the one thing a reading list exists
+                 for, which is following the link (#549). -->
+            <button
+              class={`shrink-0 ${ID_CLASS} hover:text-[var(--color-accent)]`}
+              title="Open this link's detail and comments"
+              data-testid="link-open-detail"
+              onclick={() => (previewNode = link.node_id)}>#{link.node_id}</button
+            >
             <!-- The link navigates (WI #549). It used to preventDefault() and
                  open the editor instead, reserving ctrl/⌘-click for actually
                  following it — so the one control that looks like a link, is
@@ -174,3 +189,7 @@
     </ul>
   {/if}
 </section>
+
+{#if previewNode != null}
+  <NodePreview nodeId={previewNode} onClose={() => (previewNode = null)} />
+{/if}
