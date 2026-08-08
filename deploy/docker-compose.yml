@@ -51,6 +51,29 @@ services:
     env_file:
       - korg.env
 
+    # Image attachments (sprint 056, #582/#1119). The bytes are the one part of
+    # korg that is NOT in Postgres, so they are the one part a container
+    # replacement would otherwise destroy — hence a bind mount rather than a
+    # named volume: the path is visible to `ls`, to the nightly gratch sync
+    # (slice 3) and to the sensitive-image purge runbook, none of which should
+    # have to ask Docker where the data went.
+    #
+    # /datastore is kubsdb's SSD (sda, ROTA=0) and its established service-data
+    # home — decided 2026-08-08 over gratch, which is a spun-down HDD with a
+    # ~15s wake and would make serving a thumbnail feel broken.
+    #
+    # The container side matches the Dockerfile's KORG_IMG_ROOT. Docker creates
+    # the host directory root-owned on first `up` if it is missing, and that
+    # works — the image declares no USER, so korg-api runs as root and can write
+    # it. Pre-create it only if you want it owned by someone else:
+    #   sudo install -d -o 1000 -g 1000 /datastore/korg/images
+    #
+    # NOTE (slice 1): this store has no second copy yet. k-homelab #1122 adds
+    # the nightly rsync to /gratch that korg's pg_dump already gets — until then
+    # a restored database can reference images that exist nowhere.
+    volumes:
+      - /datastore/korg/images:/data/images
+
     networks:
       - kubsdb-net
     restart: unless-stopped

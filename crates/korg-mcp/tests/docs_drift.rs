@@ -79,6 +79,7 @@ const CATEGORIES: &[&str] = &[
     "Reports",
     "Schedules",
     "Handoffs",
+    "Attachments",
     "Projects and areas",
 ];
 

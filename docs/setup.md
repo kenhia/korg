@@ -63,6 +63,7 @@ health check, and point an MCP client at `http://<host>:8090/mcp`.
 | `KORG_LISTEN_ADDR` | no       | `0.0.0.0:8080`   | Address/port the server binds to.                         |
 | `KORG_WEB_DIR`     | no       | `/app/web/build` | Path to the built SvelteKit bundle; UI is served when the directory exists. The default is the in-container path, so a Docker run needs nothing set. |
 | `KORG_LOG`         | no       | `info`           | `tracing` env-filter (e.g. `korg_api=debug`).             |
+| `KORG_IMG_ROOT`    | no       | `/data/images`   | Where image attachments' blobs are stored, one directory per attachment. The default is the in-container path the Dockerfile sets, which the deploy compose file bind-mounts `/datastore/korg/images` onto — so a Docker run needs nothing set. Created at startup; if it is not writable korg logs an error and keeps serving everything else, because work tracking must not stop because the screenshot volume is missing. |
 | `KORG_CORS_ORIGINS`| no       | —                | Comma-separated origins allowed to call the API cross-origin. Needed only for the UI dev server (`pnpm dev` on :5173) hitting an API on another host; the deployed single-process setup is same-origin and needs none. |
 
 `crates/korg-mcp/tests/docs_drift.rs` fails if `korg-api` or `korg-core` reads a

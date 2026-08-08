@@ -33,7 +33,7 @@ use crate::error::RepoError;
 ///
 /// Ordered as the constraint declares them, oldest first: 0001 opened with
 /// `workitem`/`card`, and each later migration appended.
-pub const NODE_KINDS: [&str; 8] = [
+pub const NODE_KINDS: [&str; 9] = [
     "workitem",
     "card",
     "link",
@@ -42,7 +42,24 @@ pub const NODE_KINDS: [&str; 8] = [
     "handoff",
     "program",
     "schedule",
+    "attachment",
 ];
+
+/// What an attachment's lifecycle position is called (sprint 056, #582/#1119).
+///
+/// **Derived on every read, never stored.** `pending` is an attachment with no
+/// `has_attachment` edge — the paste-before-save state, and the only thing the
+/// sweeper collects; `linked` is one an owner claimed. The handoff (D5)
+/// describes this as a state the upload sets and the save advances, and a
+/// column would have been the obvious way to hold it — but then the same fact
+/// lives in two places, and the way they drift is the dangerous way round: an
+/// edge written through the generic `relate()` path would leave the column
+/// reading `pending`, and the sweeper would delete an image somebody's work
+/// item points at. Derivation makes that unrepresentable.
+///
+/// Not in [`EXPORTED`]: it is a computed projection rather than a write-boundary
+/// vocabulary, so nothing validates against it and no schema advertises it.
+pub const ATTACHMENT_STATES: [&str; 2] = ["pending", "linked"];
 
 /// Canonical work-item statuses (WI #285). Lifecycle: `open → resolved`
 /// (implemented; may still need a user test / may not be PR'd) `→ done`

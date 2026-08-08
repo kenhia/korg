@@ -34,6 +34,7 @@ enumerates the tools a third time. All three are drift-tested against
 | Reports | `create_report`, `list_reports`, `get_report`, `list_report_sources`, `set_report_source` |
 | Schedules | `create_schedule`, `get_schedule`, `list_schedules`, `update_schedule`, `materialize_schedule` |
 | Handoffs | `create_handoff`, `get_handoff`, `update_handoff` |
+| Attachments | `get_attachment`, `list_attachments` |
 | Projects and areas | `list_projects`, `get_project`, `create_project`, `update_project`, `list_areas`, `create_area`, `update_area`, `delete_area` |
 
 Two tools are not what their names suggest:
@@ -159,7 +160,7 @@ the same envelope", which was true of four of them:
 |---|---|
 | `{items, total, limit, offset}` | `list_work_items`, `list_cards`, `list_links` |
 | `{items, total, limit, truncated}` | `neighbors` (`truncated`, not `offset` — it caps rather than pages) |
-| bare array | `list_reports`, `list_areas`, `list_comments`, `list_awaiting`, `list_report_sources` |
+| bare array | `list_reports`, `list_areas`, `list_comments`, `list_awaiting`, `list_report_sources`, `list_attachments` |
 | `{items, omitted}` | `list_proposals`, `list_programs`, `list_projects`, `list_schedules` |
 
 (`omitted` counts the rows a read's own defaults hid. `list_work_items` carries
@@ -696,6 +697,121 @@ Both surfaces ride `get_board`: `sources` sits beside `reports` in Sensor Net,
 uncapped, alert-first. Rendering on korg-dash's Today page is a separate
 project's concern — the derivation lives here and korg-dash consumes it.
 
+## Images (#582, #1119)
+
+An uploaded image is an `attachment` node (migration 0027). The metadata lives
+in Postgres; the bytes live on disk under `KORG_IMG_ROOT`, one directory per
+attachment. The design record is the handoff on the "Images in korg" program
+(`korg:1127`); what follows is the contract.
+
+### Bytes over REST, metadata over MCP
+
+This split is the whole shape of the surface, and it is deliberate.
+
+| Operation | Where | Call |
+|---|---|---|
+| Upload | REST | `POST /api/img[?owner=<node_id>]`, multipart, ≤32 MB |
+| Fetch | REST | `GET /api/img/<img-id>[/<variant>]` |
+| Discard | REST | `DELETE /api/img/<img-id>` |
+| Attach on save | REST | `POST /api/img/<img-id>/link` with `{"owner_node_id": N}` |
+| Read metadata | MCP | `get_attachment`, `list_attachments`, and `get_work_item`'s inlined `attachments` |
+| Attach later | MCP | `relate` with `has_attachment` |
+| Store size | REST | `GET /api/img/stats` |
+
+There is deliberately **no** base64-over-MCP path and **no** `delete_attachment`
+tool. Inflating image bytes by a third to carry them through a JSON-RPC channel
+serves nobody, and a delete that reached only the row would strand the blobs
+forever — the sweeper finds orphans *through* the row, so a row deleted without
+its bytes is bytes nothing will ever collect. One path owns disk.
+
+An agent reads an image by fetching the `agent` variant to a temp file and
+reading that file natively:
+
+```sh
+curl -sf http://kubsdb:5674/api/img/img-c2a/agent -o /tmp/shot.png
+curl -sf -F file=@/tmp/shot.png 'http://kubsdb:5674/api/img?owner=582'
+```
+
+### The display id
+
+`img-<hex>`, where the hex **is** the node id. `img-c2a` is node 3114. It is
+parsed case-insensitively, so the `IMG-C2A` spelling resolves to the same
+image. There is no separate id sequence: deriving it buys uniqueness and
+comment-relatability for free, at the price of gaps nobody can see.
+
+### Variants
+
+Generated eagerly at upload and never on demand — korg has no resize-on-read
+path and no cache layer:
+
+| Variant | Long edge | For |
+|---|---|---|
+| *(none — the bare id)* | original | the archival copy, byte-exact, EXIF intact |
+| `thumb` | 400 px | inline display and the attachment list |
+| `agent` | 1568 px | agent reads — Anthropic vision downscales past this, so larger is pure waste |
+
+Neither variant upscales. Both are re-encoded from decoded pixels, which is
+what strips EXIF; the encoding follows the *pixels* rather than the source
+format, so anything with an alpha channel stays PNG and everything else becomes
+JPEG. korg accepts PNG, JPEG, GIF, WebP and BMP, sniffed from the bytes — the
+upload's declared `Content-Type` is ignored, because a claim about a file is not
+a file.
+
+Serve responses carry `Cache-Control: public, max-age=31536000, immutable`. That
+is a statement of fact, not a gamble: an id is a node id, and a re-upload is a
+different node, so an attachment's bytes never change.
+
+### Lifecycle, and the one rule that matters
+
+An attachment is `pending` until something owns it and `linked` after. **That
+state is derived from the `has_attachment` edge on every read, never stored.**
+
+The sweeper deletes every `pending` attachment older than 24 hours, and that
+sweeper is **the entire garbage-collection story**. There is no retention
+policy, no delete-on-close and no delete-on-archive: closing and archiving a
+work item never touches its screenshots. Growth is watched by kmon milestones
+instead, and fast growth is the trigger to revisit.
+
+Deriving the state rather than storing it is what makes that safe. With a stored
+column, an edge written through the generic `relate` — the documented way to
+attach an existing image — would leave the column reading `pending`, and the
+sweeper would then delete an image a work item points at, silently and
+permanently. With the edge as the only source of truth, that is unrepresentable:
+anything reachable by a `has_attachment` edge is never a candidate.
+
+Two consequences follow, and both are correct:
+
+- **Deleting an owner orphans its images**, and they are swept 24 hours later.
+  That is the only path that reaches it — discarding an attachment deletes it
+  outright, and deleting the markdown token that displays one never touches the
+  edge.
+- **`unrelate` on a `has_attachment` edge is a decision to let the image go**,
+  not merely a detach.
+
+### Placement is markdown; existence is not
+
+An image is displayed by a `![img-<hex>](…)` token in a body or a comment.
+The token is *placement only*: deleting it removes the image from the prose and
+leaves the attachment in the node's attachment list. Existence is never parsed
+out of prose, which is what keeps garbage collection derivable rather than
+guessed.
+
+A korg comment is not a node — it is a row keyed to the node it hangs off — so
+it cannot own an edge. An image pasted into a comment is owned by the **node**
+that comment is on, and appears in that node's `attachments`; the comment body
+carries the token.
+
+### Storage accounting
+
+`GET /api/img/stats` reports `count`, the `pending`/`linked` split,
+`original_bytes`, `variant_bytes`, `total_bytes` and `oldest_pending`. The byte
+totals are summed from the recorded sizes — what korg *believes* the store
+holds — rather than measured off the volume. The gap between `total_bytes` and
+`du` on the store is stranded blobs, and having both numbers is what makes that
+gap visible: writes land the row before the bytes and deletes remove the row
+before the bytes, so a crash strands bytes rather than leaving a row promising
+bytes that are not there.
+
 ## Relationships
 
 Any node can link to any other through a single `relationship` edge:
@@ -719,6 +835,7 @@ label not in it.
 | `collides-with` | **undirected** | the two nodes collide (same contract / fold on landing) | any → any | no |
 | `has_handoff` | directed | node **has** handoff | any → `handoff` | no |
 | `materializes` | directed | schedule **materialized** work item | `schedule` → `workitem` | no |
+| `has_attachment` | directed | node **has** attachment | any → `attachment` | no |
 
 **Directed** means the stored orientation carries meaning, so the reverse edge
 is a *different* fact: `A depends_on B` and `B depends_on A` together are a
@@ -747,6 +864,12 @@ cross-project work is bundled. `depends_on` deliberately carries no such rule �
 the homelab-ai plan's whole structure is dependencies between repos. A work item
 with *no* project is unfiled rather than filed elsewhere and is not refused;
 production holds none (measured 2026-08-05).
+
+**`has_attachment` carries liveness, not just reference** (sprint 056). It is
+the only label whose *absence* destroys the node on its right end: an attachment
+with no `has_attachment` edge is `pending`, and the sweeper deletes it 24 hours
+after upload. Writing the edge rescues an image; `unrelate`-ing it is a decision
+to let that image go. See [Images](#images-582-1119).
 
 **Extending it** is one registry entry in `korg_core::relationships` plus
 `just gen`, which propagates the new label to the API, the MCP tool

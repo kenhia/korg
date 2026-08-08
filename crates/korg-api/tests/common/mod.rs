@@ -36,15 +36,90 @@ pub const PROJECT: &str = korg_test_support::TEST_PROJECT;
 /// and a REST suite that has to POST `/api/projects` first before it can test
 /// anything else is testing the wrong thing.
 pub async fn app_with_pool() -> (impl Sized, PgPool, axum::Router) {
+    let (guard, pool, router, _root) = app_with_images().await;
+    (guard, pool, router)
+}
+
+/// A throwaway image-store root that removes itself when the suite drops it.
+///
+/// Bound into the harness guard rather than left to the caller: an image test
+/// that forgot to clean up would leave decoded screenshots in `/tmp` on every
+/// run, and the failure would be invisible until a disk filled.
+pub struct ImageRoot(pub std::path::PathBuf);
+
+impl Drop for ImageRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// The full harness, including where the image store put its blobs — so a test
+/// can assert against the *disk*, not only against what korg says about it.
+/// That distinction is the whole point of the store being a separate crate.
+pub async fn app_with_images() -> (impl Sized, PgPool, axum::Router, std::path::PathBuf) {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let (pg, pool) = fresh_korg().await;
     test_project(&pool).await;
+
+    let root = std::env::temp_dir().join(format!(
+        "korg-api-img-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let images = korg_img::Store::new(&root);
+    images.ensure_root().expect("create test image store");
+
     let router = build_router(AppState {
         pool: Arc::new(pool.clone()),
         config: Arc::new(
             korg_core::config::KorgConfig::fixed("UTC", datetime!(2026-07-11 12:00 UTC)).unwrap(),
         ),
+        images: Arc::new(images),
     });
-    (pg, pool, router)
+    ((pg, ImageRoot(root.clone())), pool, router, root)
+}
+
+/// A `multipart/form-data` body with one file part — what a `curl -F` upload
+/// and a browser's `FormData` both send.
+pub fn multipart(field: &str, filename: &str, bytes: &[u8]) -> (String, Vec<u8>) {
+    const BOUNDARY: &str = "korgtestboundary";
+    let mut body = Vec::new();
+    body.extend_from_slice(
+        format!(
+            "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{field}\"; \
+             filename=\"{filename}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(bytes);
+    body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
+    (format!("multipart/form-data; boundary={BOUNDARY}"), body)
+}
+
+/// Issue a request with a raw body and content type, returning the raw
+/// response. Images are not JSON in either direction, so the JSON-shaped
+/// helpers below cannot serve them.
+pub async fn raw(
+    router: &axum::Router,
+    method: &str,
+    path: &str,
+    content_type: Option<&str>,
+    body: Vec<u8>,
+) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    let mut builder = Request::builder().method(method).uri(path);
+    if let Some(ct) = content_type {
+        builder = builder.header("content-type", ct);
+    }
+    let resp = router
+        .clone()
+        .oneshot(builder.body(Body::from(body)).unwrap())
+        .await
+        .expect("request");
+    let status = resp.status();
+    let headers = resp.headers().clone();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    (status, headers, bytes.to_vec())
 }
 
 /// Issue one request and return `(status, parsed body)`. An empty body parses

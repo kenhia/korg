@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderValue, Method};
 use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
@@ -26,15 +26,20 @@ use rmcp::transport::streamable_http_server::session::local::LocalSessionManager
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 
 pub mod error;
+pub mod img;
 use error::ApiError;
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: Arc<PgPool>,
     pub config: Arc<KorgConfig>,
+    /// The image blob store (sprint 056). In `AppState` rather than read from
+    /// the environment at each call site so a test can point it at a temp
+    /// directory — the same reason `config` is here.
+    pub images: Arc<korg_img::Store>,
 }
 
-type ApiResult = Result<Json<Value>, ApiError>;
+pub(crate) type ApiResult = Result<Json<Value>, ApiError>;
 
 pub fn build_router(state: AppState) -> Router {
     let mcp = mcp_service(state.pool.clone());
@@ -111,6 +116,28 @@ pub fn build_router(state: AppState) -> Router {
             "/api/proposals/:node_id",
             get(get_proposal).patch(update_proposal),
         )
+        // --- images (#582/#1119) ---
+        //
+        // Registered ahead of the `:id` routes so the intent is visible;
+        // matchit prefers a static segment either way, which is what keeps
+        // `/api/img/stats` from resolving as an attachment called "stats".
+        //
+        // The upload route carries its own body limit: axum's default is 2 MB,
+        // and the whole point of a screenshot endpoint is that screenshots are
+        // bigger than that. `korg_img::prepare` enforces the same cap again on
+        // the buffered bytes, so a router change cannot silently lift it.
+        .route("/api/img/stats", get(img::stats))
+        .route("/api/img/sweep", post(img::sweep_now))
+        .route(
+            "/api/img",
+            post(img::upload).layer(DefaultBodyLimit::max(korg_img::MAX_UPLOAD_BYTES)),
+        )
+        .route(
+            "/api/img/:id",
+            get(img::serve_original).delete(img::delete_image),
+        )
+        .route("/api/img/:id/link", post(img::link_image))
+        .route("/api/img/:id/:variant", get(img::serve_variant))
         .with_state(state);
 
     let api = api.route_service("/mcp", mcp);

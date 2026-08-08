@@ -20,10 +20,41 @@ async fn mcp_surface_end_to_end() {
     let (_c, pool) = fresh_korg().await;
     let server = server(pool);
 
-    // Tool descriptors are stable. (57 until #965 retired the 13 topic and
-    // daily-plan tools with the slots feature; 44 until #581/#950 added the
-    // five schedule tools and the two report-source ones.)
-    assert_eq!(tools().len(), 51, "expected 51 tools");
+    // Every descriptor is well-formed: a name, a description, and an object
+    // schema an agent can actually fill in.
+    //
+    // This line used to assert a hand-maintained tool *count*, under a comment
+    // saying "tool descriptors are stable" — which the count never checked. It
+    // was also the third copy of a number that `docs_drift` already pins twice
+    // (the catalogue in docs/api.md, the README) and `dispatch.rs` pins as a
+    // set. Sprint 056 added two tools and three of the five places holding the
+    // number were the only failures in the workspace, long after the real
+    // inventories agreed. A count is not a property; this is.
+    for tool in tools() {
+        assert!(!tool.name.is_empty(), "a tool with no name");
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(
+            !description.trim().is_empty(),
+            "`{}` has no description — `tools/list` is the only documentation \
+             an MCP client ever sees",
+            tool.name
+        );
+        assert_eq!(
+            tool.input_schema.get("type").and_then(Value::as_str),
+            Some("object"),
+            "`{}`'s input schema is not an object",
+            tool.name
+        );
+        assert_eq!(
+            tool.input_schema
+                .get("additionalProperties")
+                .and_then(Value::as_bool),
+            Some(false),
+            "`{}` accepts unknown properties — korg's surface has always \
+             advertised the opposite",
+            tool.name
+        );
+    }
 
     // Create a work item.
     let wi = body(

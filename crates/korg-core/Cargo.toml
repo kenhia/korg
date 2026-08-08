@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+# The image engine (sprint 056). korg-core needs it for the attachment display
+# id and the canonical blob-serving paths — both contract facts that must have
+# exactly one definition. The dependency points core -> img and never back:
+# korg-img knows nothing about Postgres or korg's node model.
+korg-img = { path = "../korg-img" }
 sqlx = { workspace = true }
 rust_decimal = { workspace = true }
 serde = { workspace = true }

@@ -137,6 +137,20 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
         .await
         .expect("handoff");
 
+    // An attachment owned by the subject work item (#582/#1119). Recorded
+    // straight through the repo rather than uploaded: this fence is about
+    // dispatch, and korg-mcp has no store — the bytes half of the feature is
+    // REST's, and `korg-api/tests/images.rs` is where it is exercised.
+    let attachment = repo::create_attachment(
+        pool,
+        repo::NewAttachment {
+            owner_node_id: Some(wi.node_id),
+            ..new::attachment("screenshot.png")
+        },
+    )
+    .await
+    .expect("attachment");
+
     BTreeMap::from([
         // --- work items ---
         (
@@ -263,6 +277,13 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
             "update_handoff",
             json!({"node_id": handoff.handoff.node_id, "body": "revised by the fence"}),
         ),
+        // --- attachments (#582/#1119) ---
+        //
+        // `get_attachment` is addressed by its display id here, and
+        // `list_attachments` by the owner's node id — between them the two
+        // spellings the selector accepts both get dispatched.
+        ("get_attachment", json!({"img_id": attachment.img_id})),
+        ("list_attachments", json!({"node_id": wi.node_id})),
         // --- projects and areas ---
         ("list_projects", json!({})),
         ("get_project", json!({"name": "korg"})),

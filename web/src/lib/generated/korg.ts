@@ -9,6 +9,78 @@ export type AreaRow = { id: number, name: string,
 description: string | null, };
 
 /**
+ * An attachment as every read returns it.
+ */
+export type AttachmentRow = { node_id: number, 
+/**
+ * The display id, `img-<hex of node_id>` (handoff D3) — what appears in a
+ * markdown token and what a serve route is addressed by.
+ */
+img_id: string, filename: string, mime: string, byte_size: number, width: number, height: number, 
+/**
+ * SHA-256 of the original bytes, recorded for future dedup *detection*.
+ * korg never shares a blob on it (handoff D4).
+ */
+content_hash: string, 
+/**
+ * `pending` (no owner yet) or `linked`. **Derived from the edges on every
+ * read**, so it cannot disagree with them.
+ */
+state: string, 
+/**
+ * The nodes that own this image, via `has_attachment`. Empty means
+ * `pending`, and means the sweeper will take it once it is old enough.
+ */
+owner_node_ids: Array<number>, 
+/**
+ * Where to fetch the byte-exact original. Relative.
+ */
+url: string, variants: Array<AttachmentVariantRow>, project: string | null, tags: Array<string>, archived: boolean, comment_count: number, created: string, updated: string, };
+
+/**
+ * What `/api/img/stats` reports — the numbers kmon's growth milestones watch
+ * (slice 4). Byte totals come from the recorded sizes rather than from walking
+ * the store, so this is two aggregates rather than a directory crawl.
+ */
+export type AttachmentStats = { count: number, 
+/**
+ * Attachments with no owner yet — the sweeper's candidates.
+ */
+pending: number, linked: number, 
+/**
+ * Bytes of the byte-exact originals.
+ */
+original_bytes: number, 
+/**
+ * Bytes of every generated variant.
+ */
+variant_bytes: number, 
+/**
+ * What the store should be holding, as korg believes it. Compare against
+ * `du` on the volume: a gap is stranded blobs (see
+ * [`sweep_pending_attachments`]) and is what slice 3's runbook reconciles.
+ */
+total_bytes: number, 
+/**
+ * When the oldest pending attachment was uploaded — how far behind the
+ * sweeper is, and null when nothing is pending.
+ */
+oldest_pending: string | null, };
+
+/**
+ * One generated size, as a read surface returns it.
+ */
+export type AttachmentVariantRow = { 
+/**
+ * `thumb` or `agent` — korg-img's vocabulary.
+ */
+variant: string, mime: string, width: number, height: number, byte_size: number, 
+/**
+ * Where to fetch these bytes. Relative — see `korg_img::ROUTE_PREFIX`.
+ */
+url: string, };
+
+/**
  * One row of the awaiting lane.
  */
 export type AwaitingRow = { node_id: number, kind: string, 
@@ -1046,7 +1118,25 @@ related: Array<RelatedRef>,
 /**
  * True when there are more edges than were inlined (call `neighbors`).
  */
-related_truncated: boolean, wi_number: number, node_id: number, project: string | null, area: string | null, wi_type: string, wi_status: string, wi_tshirt: string, sprint: string | null, title: string, content: string, details: string | null, category: string | null, tags: Array<string>, parent: number | null, archived: boolean, 
+related_truncated: boolean, 
+/**
+ * The images attached to this item (sprint 056, #1119), with their
+ * dimensions and variant URLs — enough for an agent to decide whether to
+ * fetch one and, if so, which size.
+ *
+ * Carried here rather than left to `related` for the same reason a
+ * proposal carries `covered`: a bare edge ref says an attachment exists
+ * and nothing about what it *is*, and "there is a screenshot on this bug"
+ * is a fact the read should not need a follow-up call to make useful.
+ * `has_attachment` is excluded from `related` accordingly — one fact, one
+ * place in the payload.
+ *
+ * Images pasted into a **comment** appear here too: a korg comment is not
+ * a node, so it cannot own an edge, and the node it hangs off owns the
+ * image instead (0027's header). The comment body carries the placement
+ * token.
+ */
+attachments: Array<AttachmentRow>, wi_number: number, node_id: number, project: string | null, area: string | null, wi_type: string, wi_status: string, wi_tshirt: string, sprint: string | null, title: string, content: string, details: string | null, category: string | null, tags: Array<string>, parent: number | null, archived: boolean, 
 /**
  * Number of comments on this work item (WI #392) — the hint that tells an
  * agent "this row has discussion; fetch it".

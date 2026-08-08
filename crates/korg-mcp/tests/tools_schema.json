@@ -772,7 +772,7 @@
     "name": "mark_link_read"
   },
   {
-    "description": "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these seven labels and no others: `covers` (proposal -> work item), `includes` (program -> proposal), `finding` (report -> work item), `depends_on` (dependent -> dependency), and `has_handoff` (node -> handoff; normally written by create_handoff, but relate attaches an existing handoff to another node) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` (the two nodes are related) and `collides-with` (same contract / fold on landing -- the kfdc curator's mined collisions, korg #1002) are UNDIRECTED -- orientation is stored but meaningless, so read them symmetrically. An unregistered label is invalid_input naming the registry and the near-miss; `covers`, `includes`, `finding`, and `has_handoff` also validate endpoint kinds (`has_handoff`'s right end must be a handoff), and `covers` additionally requires BOTH ENDS IN THE SAME PROJECT -- a proposal bundles work from one project, and cross-project work belongs to a program, the layer above proposals (korg #968). `includes` is the layer where cross-project work is legal, so it has NO same-project rule; `depends_on` across projects likewise stays legal and is the normal case. Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `rank` -- the position of the right endpoint within the left one, which is how a program's slices are ordered; re-relating an existing edge WITH a rank moves it in place and keeps its provenance, and re-relating without one leaves the position alone (so reordering never needs unrelate + relate). Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected).",
+    "description": "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these eight labels and no others: `covers` (proposal -> work item), `includes` (program -> proposal), `finding` (report -> work item), `depends_on` (dependent -> dependency), `has_handoff` (node -> handoff; normally written by create_handoff, but relate attaches an existing handoff to another node), and `has_attachment` (node -> attachment: what makes an uploaded image BELONG to something -- an attachment with no such edge is `pending` and the sweeper deletes it 24h after upload, so writing this edge rescues an image and unrelating one lets it go) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` (the two nodes are related) and `collides-with` (same contract / fold on landing -- the kfdc curator's mined collisions, korg #1002) are UNDIRECTED -- orientation is stored but meaningless, so read them symmetrically. An unregistered label is invalid_input naming the registry and the near-miss; `covers`, `includes`, `finding`, and `has_handoff` also validate endpoint kinds (`has_handoff`'s right end must be a handoff), and `covers` additionally requires BOTH ENDS IN THE SAME PROJECT -- a proposal bundles work from one project, and cross-project work belongs to a program, the layer above proposals (korg #968). `includes` is the layer where cross-project work is legal, so it has NO same-project rule; `depends_on` across projects likewise stays legal and is the normal case. Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `rank` -- the position of the right endpoint within the left one, which is how a program's slices are ordered; re-relating an existing edge WITH a rank moves it in place and keeps its provenance, and re-relating without one leaves the position alone (so reordering never needs unrelate + relate). Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected).",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1895,6 +1895,49 @@
       "type": "object"
     },
     "name": "update_handoff"
+  },
+  {
+    "description": "Fetch one image attachment by `img_id` (e.g. \"img-c2a\", the display id as it appears in a markdown token) OR `node_id` -- they are the same number, hex and decimal, so pass whichever you are holding; passing both is invalid_input rather than a guess. Returns METADATA ONLY: filename, sniffed mime, byte size, pixel dimensions, content hash, the owning node ids, and a `url` per size. Bytes never travel over MCP -- to READ an image, GET the `agent` variant's url (<=1568px, Anthropic's vision ceiling; anything larger is downscaled and the extra bytes are wasted) to a temp file and read that file natively. `state` is `pending` (no owner yet -- swept 24h after upload) or `linked`, and it is DERIVED from the has_attachment edges on every read, so it cannot disagree with them. isError with code `not_found` if there is none. Every operation on the BYTES is REST, not MCP: upload with `curl -F file=@shot.png '<korg>/api/img?owner=<node_id>'`, and discard with `DELETE <korg>/api/img/<img-id>`, which is the only path that removes the record and the blobs together.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "img_id": {
+          "description": "The display id, e.g. `img-c2a` — what a markdown token carries.",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "node_id": {
+          "description": "The attachment's node id — the same number `img_id` spells in hex.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "get_attachment"
+  },
+  {
+    "description": "Every image attached to a node -- work item, card, proposal, anything -- oldest first, as a bare array with the same metadata get_attachment returns. get_work_item already inlines this for a work item, so reach for it when you hold some other kind of node, or after attaching. An image pasted into a COMMENT belongs to the node that comment is on: a korg comment is not a node and cannot own an edge, so the node owns the image and the comment body carries the placement token. A node with no images (or no such node) is an empty array, not an error -- this is a projection of a node's edges, and that node's own read is what says whether it exists.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "name": "list_attachments"
   },
   {
     "description": "Answers \"which project does this work belong to?\". Returns {items, omitted:{archived}} — NOT a bare array; `omitted` is how you know rows were filtered out rather than absent. Each item is name + description (a one-line routing contract saying what belongs here and what does not) + status, the last only when it is not `active`. Defaults: active projects only, lean projection. Pass status:\"all\" to include archived (never a correct route target — their work went to a successor), detail:\"full\" for every column including machines, src_path, gh_repo, category, notes and the created/updated timestamps.",
