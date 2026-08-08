@@ -216,3 +216,54 @@ prose.
 - **`/api/reports` has no envelope.** #1101's cheap fix is fenced, but the
   honest version is that a corpus count should not be a function of a page size
   at all. Giving that read a `total` would retire `ARRAY_CEILING`.
+
+## Deployed
+
+2026-08-08, to kubsdb. Image `korg:1b8d297f0855` (also `latest`), digest
+`sha256:091b741c6209`, revision gate asserted. Rollback target:
+`korg:4d9d45a7d1ac` (sprint 052).
+
+**The rollback is a clean re-tag, despite the migration.** 0026 is purely
+additive DDL and the pre-053 binary neither reads nor writes `transition`, so
+the table is inert to it — going back is an image swap, and the accumulated
+event history survives to be correct again when the new image returns. Only a
+rollback that wanted the table *gone* would be a restore.
+
+Migrations 25 → 26. Every row count flat across the deploy (work_items 752,
+cards 30, links 4, proposals 171, reports 32, projects 40); `node_count` 1002
+and `node_id_seq` 1101 both unchanged, which is what an additive DDL-only
+migration should look like.
+
+### Verified live
+
+**#1101, proven on the baseline capture itself.** The pre-deploy baseline read
+`reports: 32` — not the constant 30 the old script would have printed. The fix
+was already doing its job before the new image existed, which is exactly why it
+was done first.
+
+**#978 returned a real answer** production could not previously give:
+
+```
+proposal 749  ⟂  proposal 912 ("kprojects installable anywhere")
+via: proposal   blocker_status: proposed   sequenced_by: null
+```
+
+`sequenced_by: null` means no program orders that pair, so it is a genuine
+Deconfliction card rather than something Operations is already drawing — the
+distinction kfdc #1070 asked for, working on live data.
+
+**#977's cold start behaved as documented**: `events: []` immediately after the
+deploy. Empty because the log starts at 0026 and fills forward, not because
+nothing has ever moved — the difference `BoardRollup::events` tells consumers to
+respect.
+
+**The no-op guard, proven against production.** Moving #977, #978 and #1101 from
+`resolved` to `done` (the honest status now that this shipped) was done as four
+writes — #977 twice, deliberately. The ticker recorded **three** events.
+
+The sharpest confirmation is in #977's own row: its transition is dated
+`07:19:43`, the moment the status actually changed, while its `node.updated` sat
+at `07:19:47` from the no-op write four seconds later. That four-second gap is
+the entire thesis of this work item, now visibly on the right side of it — a
+feed built on `node.updated` would have dated the change by a write that changed
+nothing.
