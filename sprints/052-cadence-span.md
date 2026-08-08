@@ -126,3 +126,36 @@ most in opposite directions: `a_regular_burst_is_not_a_cadence` (kyac's timeline
 verbatim) and `a_long_running_daily_source_that_stops_is_still_the_alert` — a
 month of daily filing then eleven days of silence, proving the span gate did not
 buy its false-positive fix by going quiet.
+
+## Deployed
+
+2026-08-08, to kubsdb. Image `korg:4d9d45a7d1ac` (also `latest`), revision gate
+asserted. Rollback target: `korg:82b81e621fe5` (sprint 051) — a clean re-tag,
+since 052 carries no migration.
+
+Migrations unchanged at 25. Row counts flat across the deploy (work_items 751,
+cards 30, links 4, proposals 171, projects 40); `node_count` 1000 → 1001 and the
+sequence 1099 → 1100, from another session writing to korg while the image
+built — explainable, and upward.
+
+**The fix, verified live:**
+
+| source | freshness | n | span | cadence | alerts |
+|---|---|---|---|---|---|
+| `kmon` | fresh | 23 | 34d | 1 | no |
+| `kyac` | **unrated** | 4 | 5d | — | **no** |
+| 5 one-off probes | unrated | 1 | 0d | — | no |
+
+kyac is no longer an alert and kmon is untouched, which is exactly the pair this
+sprint had to get right. korg's staleness panel now shows **zero alerts** — the
+correct state, because nothing is actually broken.
+
+### Noticed during verification
+
+`scripts/post-deploy-check.sh` counts reports with `curl /api/reports | jq
+length`, and `/api/reports` defaults to `limit=30`. The count therefore
+**saturates at 30** and cannot detect loss above it — a count that cannot go
+down cannot do the one job the compare exists for. Two new sources appeared in
+this deploy's source list while `reports` sat at 30, which is what exposed it.
+Filed separately; the same latent issue may affect `proposals` (171 today, so
+not yet capped, but it is a bare-array read too).
