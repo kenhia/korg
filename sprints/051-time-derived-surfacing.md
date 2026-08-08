@@ -296,6 +296,42 @@ Two spec fixes were needed and are in this sprint:
 - `a11y.spec.ts` — its route list was missing `/programs` (added in sprint 044
   and never added here) as well as `/schedules`. Both added; both pass.
 
+## Deployed
+
+2026-08-08, to kubsdb (`https://kubsdb.encke-wahoo.ts.net:5674`).
+
+- Image `kubsdb.encke-wahoo.ts.net:5000/korg:82b81e621fe5` (also `latest`),
+  revision label asserted by the deploy gate. Rollback target:
+  `korg:9720cbada47a` (sprint 050), confirmed present in the registry before
+  building.
+- **Migration 0025 verified live**: migrations 24 → 25; `node_count` **997 →
+  997** — no row change, which is the correct result for a DDL-only additive
+  migration and the thing worth checking, since 0024 the sprint before moved
+  −7. `node_min`/`node_max`/sequence untouched; every REST count identical to
+  the pre-deploy baseline (work_items 750, cards 30, links 4, proposals 170,
+  reports 30, projects 40).
+- Unlike 050, **rollback here is a clean re-tag rather than a restore** — 0025
+  destroys nothing, and no schedule has been filed yet. That changes the moment
+  one is (see the migration header): schedule rows are `node` rows, and an
+  older image's `node_kind_check` does not admit them.
+- **Surface verified live**: MCP `tools/list` is 51 with all seven new names;
+  `/api/schedules` returns the empty envelope `{items, omitted{archived, done,
+  not_due}}`; `/schedules` serves 200; `get_board` carries `sources`.
+- **The staleness derivation, against the real corpus** — and it immediately
+  earned its place: `kmon` **fresh** asserting its true `ok` (23 reports, daily
+  inferred); three one-off probes (`kmon:vmlab-01`, `t3-probe-037`,
+  `kaed-journal-pass`) **unrated** and correctly not alerting; and **`kyac`
+  stale, 21 days overdue**, asserting `unknown` rather than the `ok` it last
+  filed on 2026-07-14. That is korg's first standing alert, and it was
+  invisible before this deploy.
+- The stock `scripts/post-deploy-check.sh` ran unpatched for the first time
+  since 050 — which is #1086 verified in the place it actually failed.
+- **No live write test of the schedule path**, deliberately: `create_schedule`
+  makes a durable production node, and which schedules exist is Ken's call, not
+  a deploy artefact. The write paths are covered by sprint051.rs, the dispatch
+  fixture gate and CI on this exact commit; the post-deploy check's own
+  idempotent write covers the transport.
+
 ## Follow-ups
 
 - **kmon should surface due schedules**, not freshly created work items — the
