@@ -475,11 +475,13 @@ above: it is one composite object, not `{items, …}`.
 | `queue` | proposals in `proposed`, same row type, same order |
 | `proposals_omitted` | `{done, declined, archived}` — the same envelope, meaning the same thing, as `list_proposals` |
 | `proposal_edges` | korg #1003: every edge whose **both** endpoints are `active`/`queue` rows — `{left, right, label, directed, origin, created}`. `directed` comes from the registry (read undirected labels symmetrically); `origin`/`created` are the first read surface for D-17's write-side edge provenance, which is how curated edges (`origin: "kfdc-curator"`) stay distinguishable from human ones |
+| `blocked` | #978: every **unmet** `depends_on` holding up a live row — `{proposal, via, dependent, dependent_wi_number, blocker, blocker_kind, blocker_wi_number, blocker_title, blocker_project, blocker_status, sequenced_by}`. See below |
 | `programs` | live programs, each carrying `slices` exactly as `get_program` returns them |
 | `programs_omitted` | `{done, archived}` |
 | `awaiting` | `list_awaiting`'s lane, unchanged |
 | `depth` | per-project queue depth — every project, with its `status` |
 | `reports` | the newest 5 |
+| `events` | #977: the newest 20 status transitions, newest first — `{node_id, kind, wi_number, title, project, from_status, to_status, at}`. See below |
 
 **It takes no arguments**, for the reason `list_awaiting` takes none: it is one
 screen's state, and every filter it could offer is already decided by what the
@@ -497,13 +499,91 @@ one per panel is the aggregate creep #976 filed a warning about. `depth` carries
 `status` (sprint 045) precisely so the one non-derivable figure became derivable
 instead of becoming a counter.
 
-**The board has no event feed.** #970 asked for "recent events/reports";
-`reports` is the reports half, and `report_date` is the only date in korg that
-records when something *happened*. There is no transition log, and the available
-substitute — `node.updated` — advances on any edit, so a "recently shipped" list
-built from it would date a proposal by its last tag edit. On a surface whose
-promise is that it renders korg deterministically, a plausible wrong date is
-worse than an absent panel.
+### The ticker (#977)
+
+`events` is the board's event feed, and it exists because korg finally has
+something honest to build one from. #970 asked for "recent events/reports";
+sprint 045 shipped the reports half and deferred this one (D-7) rather than fake
+it, because the only available substitute was `node.updated` — which advances on
+any edit, so a "recently shipped" list built from it dates a proposal by its last
+tag edit. On a surface whose promise is that it renders korg deterministically, a
+plausible wrong date is worse than an absent panel.
+
+Migration 0026 added an append-only `transition` table, written by korg-core's
+three update paths — never by a trigger, per the rule 0023 set. The scoping rule
+is worth stating because it is what keeps the feed small and complete at once:
+**korg logs the events that have no honest timestamp anywhere else.** A node's
+creation has `node.created`, a report landing has `report_date`, a handoff has
+its own `node.created`. A status change had nothing, and it is the one that says
+"shipped".
+
+Two properties a consumer must know:
+
+- **A write that does not change the status produces no event.** korg's own
+  post-deploy check re-PATCHes a status to the value it already holds, and agents
+  re-set statuses routinely. Logging those would rebuild `node.updated`'s lie one
+  table over, so the write path compares before it appends and migration 0026
+  carries a CHECK as the backstop.
+- **The log starts at 0026 and was not backfilled.** There was no honest history
+  to backfill from. A freshly migrated corpus therefore has an empty ticker that
+  fills forward — which means empty says "nothing has moved since the migration",
+  not "nothing has ever moved". A panel that cannot express that difference
+  should render nothing rather than "no recent activity".
+
+Schedules are deliberately not logged. `materialize_schedule` moves a `once`
+schedule to `done` outside `update_schedule`, so hooking only the update path
+would give that kind a half-recorded history — and a feed that is silently
+partial for one kind is worse than one that never claimed to cover it. A
+schedule's real history is its `materializes` edges, which record every firing
+already.
+
+### Deconfliction (#978)
+
+`blocked` answers "is this queue row blocked, and by what" — deterministically,
+with no curator and no LLM, because `depends_on` edges are already real and
+typed. One entry per (row, blocker) pair; an empty list means nothing live is
+waiting on anything.
+
+| Field | What it is |
+|---|---|
+| `proposal` | the `active`/`queue` row that cannot proceed |
+| `via` | `proposal` when the row itself carries the edge, `covered` when one of its covered work items does — both count, and they are distinguished because they mean different things: a sequencing decision about the sprint versus one task inside it waiting on something outside |
+| `dependent` / `dependent_wi_number` | the node carrying the edge |
+| `blocker` + `blocker_kind` / `blocker_wi_number` / `blocker_title` / `blocker_project` / `blocker_status` | what is depended on, resolved enough to render a card naming both sides without a follow-up read |
+| `sequenced_by` | the live `program` whose ordered slices already express this dependency, or `null` |
+
+The rules, each a decision rather than an accident:
+
+- **Unfinished is derived from the vocabulary, per kind** — `WI_FINISHED_STATUSES`
+  for work items, the terminal sets for proposals and programs — so a future
+  status is handled here for free. Note that work items have **two** partitions
+  over one vocabulary and this is not the other one: `WI_TERMINAL_STATUSES` is a
+  *list-visibility* split holding `closed` alone, while a dependency on a `done`
+  item is satisfied. Reading the visibility split here would report every `done`
+  dependency as an unmet blocker.
+- **One hop.** A closure is a different query and a different UI. A blocked
+  blocker still appears in its own right, so a chain is visible without being
+  computed.
+- **An archived blocker does not block**, and neither do the dependencies of a
+  covered item that is itself finished. A row held blocked forever by something
+  nobody will ever do is worse than one that quietly frees up; a dangling
+  dependency is a different card, and nothing has asked for it.
+- **A blocker whose kind has no lifecycle korg tracks** (a link, a report, a
+  handoff) is not a blocker. korg cannot say whether such a node is finished, and
+  inventing an answer is the failure this panel exists to avoid.
+
+`sequenced_by` is kfdc #1070's answer. The objection was that for
+program-ordered work Deconfliction "is essentially showing the same data twice,
+in Operations and Deconfliction" — correct, but the fix cannot live in kfdc,
+because kfdc cannot filter what korg did not label. korg names the program that
+is already drawing the dependency as sequence; the render decides whether to show
+it. Neither side guesses, and korg does not drop a true fact to make one panel
+tidier.
+
+`blocked` is not a superset of `proposal_edges` and does not replace it: that
+list is *every* edge between two live rows whatever it says, this one is the
+subset meaning "cannot start yet", widened to blockers that are not proposals at
+all.
 
 Consumers: **kfdc** (`kai:~/src/tools/kfdc`, the widescreen overseer board) and
 **korg-dash** (the kdeskdash Pi feed, which derives its panel counts from this

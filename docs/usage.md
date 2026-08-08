@@ -157,7 +157,7 @@ describing a route that no longer exists.
 | `PATCH` | `/api/report-sources/:source` | Declare a source's cadence, grace window, retirement or note. Every field is an override; `null` returns it to derivation. |
 | `GET` | `/api/awaiting` | Everything waiting on Ken, oldest ask first, across every node kind. |
 | `PUT` | `/api/nodes/:id/awaiting` | Set or clear the awaiting-Ken marker on any node (`{awaiting, note}`). The UI's one-click clear is this call with `awaiting: false`. |
-| `GET` | `/api/board` | The whole board in one request: active sprints with progress, the ranked queue, programs with slices, the awaiting lane, per-project depth, newest reports, and every reporting source's freshness. No parameters — see [api.md](api.md#the-board-rollup-970). |
+| `GET` | `/api/board` | The whole board in one request: active sprints with progress, the ranked queue, what is blocked and by what, programs with slices, the awaiting lane, per-project depth, newest reports, the status-transition ticker, and every reporting source's freshness. No parameters — see [api.md](api.md#the-board-rollup-970). |
 | `GET` | `/api/reports` | List agent reports (filters `source`, `limit`; newest first). |
 | `GET` | `/api/reports/:node_id` | One report with its findings and comments. |
 | `POST` | `/api/handoffs` | Create a handoff and attach it to the nodes it describes (`has_handoff` edges) in one call. |

@@ -374,6 +374,26 @@ archived-rows filter dropping data; the real cause was a work item created in th
 UI mid-build. Without a baseline, that is a scary unexplained number at the exact
 moment you are deciding whether to roll back.
 
+**A count is only a corpus count if nothing truncated it** (korg #1101). Three of
+the seven come from bare-array reads, which have no `total` to ask for, so their
+count is the array length. `/api/proposals` and `/api/projects` take no limit at
+all and are honest by construction; `/api/reports` pages, defaulting to 30, and
+had therefore been reporting exactly 30 for some time — a number that cannot
+fall cannot detect the loss the whole compare exists for. The script now asks for
+an explicit ceiling **and fails if the answer came back at it**, which is the
+half that matters: asking for a big number fixes today, and the assertion is what
+stops the fix from silently rotting the day the corpus outgrows it. If you see
+`FAIL: the report count hit the page ceiling`, nothing is broken in production —
+raise `ARRAY_CEILING`, or give that read a `total` envelope and retire it.
+
+That is the second `post-deploy-check.sh` defect of the same family in two
+sprints — #1086 was a route removed under the script's feet, #1101 a default
+limit it sat below until it didn't. The shape is always: the script asserts
+something about a surface, the surface moved, and nothing told anyone. Prefer a
+self-check inside the script over another line in this document — a note only
+helps the person who thinks to read it, and #1086's note lives under *removals*,
+which is why it could not have caught #1101.
+
 The **schema section** (WI #584) covers what no row count can see. korg applies
 migrations automatically at container start, so a deploy can move schema state
 while every REST total stays identical — sprint 020 shipped a migration whose

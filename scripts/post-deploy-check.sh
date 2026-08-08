@@ -68,6 +68,10 @@ ok()   { echo "  ok   $*"; }
 # envelope every list endpoint gained in sprint 015.
 # ---------------------------------------------------------------------------
 
+# A page size big enough that no bare-array read can reach it, and small enough
+# that hitting it is a bug rather than a plausible corpus. See `counts`.
+ARRAY_CEILING=100000
+
 counts() {
   local wi card link proposal report project
   # Enveloped collections carry a filtered total; ask for archived=all so the
@@ -75,10 +79,28 @@ counts() {
   wi=$(curl -fsS "$U/api/work-items?archived=all&limit=1" | jq '.total')
   card=$(curl -fsS "$U/api/cards?archived=all&limit=1"    | jq '.total')
   link=$(curl -fsS "$U/api/links?archived=all&limit=1"    | jq '.total')
-  # These three answer with bare arrays by design (small, hand-ordered).
+  # These three answer with bare arrays by design (small, hand-ordered), so the
+  # count IS the array length — which is a corpus count only if nothing
+  # truncated it, and one of them was being truncated (#1101).
+  #
+  # `/api/proposals` and `/api/projects` take no limit at all: `list_proposals`
+  # and `list_projects` are unconditional `fetch_all`, so their lengths are
+  # honest and stay honest. `/api/reports` DOES page, defaulting to 30 — and
+  # production passed 30 reports long enough ago that this number had been
+  # pinned at exactly 30, so one of the seven was a constant. A count that
+  # cannot fall cannot detect the loss this whole compare exists to catch: the
+  # sprint 052 deploy filed reports from two new sources and still printed
+  # `reports: 30 -> 30 (0)`.
+  #
+  # Asking for a ceiling fixes today; asserting we stayed under it is what stops
+  # the fix from rotting into the same silent saturation the day the corpus
+  # outgrows the number.
   proposal=$(curl -fsS "$U/api/proposals" | jq 'length')
-  report=$(curl -fsS "$U/api/reports"     | jq 'length')
+  report=$(curl -fsS "$U/api/reports?limit=$ARRAY_CEILING" | jq 'length')
   project=$(curl -fsS "$U/api/projects"   | jq 'length')
+  [[ "$report" -lt "$ARRAY_CEILING" ]] || fail \
+    "the report count hit the page ceiling ($ARRAY_CEILING) — it is a page size now, \
+not a corpus count. Raise ARRAY_CEILING or give /api/reports a total envelope."
   jq -n --argjson w "$wi" --argjson c "$card" --argjson l "$link" \
         --argjson p "$proposal" --argjson r "$report" \
         --argjson j "$project" \
