@@ -147,3 +147,48 @@ applied to the two files `docs_drift` does not read.
   (`korg:1124`, #1120/#1121), and until it lands the attachment list is the
   only surface. WI #1115's misaligned reading-list edit links is the natural
   first real-world use.
+
+## Deployed
+
+**2026-08-08** — `kubsdb.encke-wahoo.ts.net:5000/korg:e06c77842de3`
+(digest `sha256:cedac9b4…49e1f`), built from the squash-merge `e06c778`.
+Rollback target: `korg:01de7bd78c96` (sprint 055), confirmed present in the
+registry before building.
+
+**Rolling back across 0027 is a clean re-tag.** The migration is DDL-only and
+purely additive, and an image that predates it never selects from `attachment`
+or `attachment_variant` — so the previous image runs correctly against the
+new schema. What a re-tag does *not* undo is the store: blobs written by this
+image stay on disk with rows the old image ignores. Nothing breaks; the space
+is reclaimed by the sweeper or by hand.
+
+### Verified live
+
+`post-deploy-check.sh --compare` clean: every row count identical (767 work
+items, 30 cards, 4 links, 175 proposals, 33 reports, 40 projects), node count
+1029 and `node_id_seq` at 1128 both unmoved, migrations 26 → 27 — the shape a
+DDL-only migration should have.
+
+Then the sprint's own work, which no fixed script covers. A 2000×1000 PNG
+uploaded with `curl -F` against the deployed instance:
+
+- **Identity** — `img-469`, node 1129 (0x469), as D3 specifies.
+- **Original byte-exact** on the way back out, `content-type: image/png`,
+  `cache-control: public, max-age=31536000, immutable`.
+- **Variants** — `thumb` 400×200, `agent` 1568×784: both caps applied, aspect
+  ratio preserved, both decode as real PNGs.
+- **Disk layout** — `/datastore/korg/images/0001/img-469/{original,thumb,agent}.png`,
+  through the new bind mount.
+- **Lifecycle** — uploaded `pending`, `POST /link` to #582 moved it to `linked`
+  and it inherited that item's project.
+- **MCP** — `get_work_item(582)` carried the attachment with a URL per size,
+  and `has_attachment` was correctly *absent* from that read's `related` block;
+  `get_attachment` resolved it by `img_id`.
+- **Accounting** — `/api/img/stats` reported `total_bytes: 192852` against a
+  `find`-summed 192852 on the volume. The reconciliation the runbook describes
+  agrees exactly on a fresh store, which is the only time it can be checked
+  without interpretation.
+- **Discard** — `DELETE` removed the record and all three blobs; store back to
+  zero, serve 404. Production carries no residue from this test.
+
+Web deep links (`/plan`, `/planning`, `/work-items`) and `/api/health` all 200.
