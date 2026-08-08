@@ -3,30 +3,17 @@ import { test, expect } from "@playwright/test";
 // Structural smoke: the four pages render and the SPA nav works. These
 // assertions are data-independent so the gate is deterministic.
 
-test("landing renders the weekly daily planner", async ({ page }) => {
+test("landing renders the Today overview", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("link", { name: "korg" })).toBeVisible();
-  await expect(page.getByText("Daily plan", { exact: true })).toBeVisible();
-  await expect(page.getByTestId("week-planner")).toBeVisible();
+  // The slim Today (sprint 050, WI #965): the proposals tray is the page's
+  // answer to "which sprint am I on", open by default; cards collapsed.
+  await expect(page.getByTestId("tray-toggle-proposals")).toBeVisible();
+  await expect(page.getByTestId("tray-toggle-cards")).toBeVisible();
 });
 
-// WI #812 — this walked History → Topics through the top nav, which sprint 029
-// removed: both became buttons on Today, and each page grew a BackTo control in
-// exchange. The old walk did not merely fail, it asserted a nav that no longer
-// exists. Walking them the way they are now reached — out from Today and back —
-// also covers that BackTo control, which nothing else in the smoke suite did.
-test("nav reaches planner support pages", async ({ page }) => {
+test("nav reaches the other pages", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("link", { name: "History" }).click();
-  await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
-  await page.getByTestId("back-to").click();
-  await expect(page.getByTestId("week-planner")).toBeVisible();
-
-  await page.getByRole("link", { name: "Topics" }).click();
-  await expect(page.getByRole("heading", { name: "Topics" })).toBeVisible();
-  await page.getByTestId("back-to").click();
-  await expect(page.getByTestId("week-planner")).toBeVisible();
-
   await page.getByRole("link", { name: "Cards" }).click();
   await expect(page.getByRole("heading", { name: "Cards" })).toBeVisible();
   await page.getByRole("link", { name: "Work Items" }).click();

@@ -1,16 +1,12 @@
 //! One error taxonomy for korg-core (WI #524).
 //!
 //! Before this, the crate had three regimes — `RepoError` (mapped to 4xx),
-//! `PlanningError` (mapped precisely), and bare `anyhow::bail!` (always 500) —
-//! so invalid dates, unknown reports, bad t-shirt sizes and FK violations all
+//! the daily-plan feature's `PlanningError` (mapped precisely; removed with
+//! the feature in sprint 050), and bare `anyhow::bail!` (always 500) — so
+//! invalid dates, unknown reports, bad t-shirt sizes and FK violations all
 //! surfaced to agents as 500s with raw DB text. Everything now funnels into
 //! `RepoError`, and every transport asks the same question of an error: what
 //! is its [`ErrorCode`]?
-//!
-//! `PlanningError` keeps its precise variants (they carry planning-specific
-//! context the daily-plan surfaces use) but maps into the same codes.
-
-use crate::daily_plan::PlanningError;
 
 /// Domain errors every surface translates to 4xx rather than 500. Carried
 /// through `anyhow` and recovered by `downcast_ref` at the transport edge.
@@ -92,26 +88,9 @@ impl ErrorClass for RepoError {
     }
 }
 
-impl ErrorClass for PlanningError {
-    fn code(&self) -> ErrorCode {
-        match self {
-            Self::SourceNotFound(_) | Self::ItemNotFound(_) => ErrorCode::NotFound,
-            Self::WrongSource { .. }
-            | Self::TargetPast { .. }
-            | Self::HistoryNotPast { .. }
-            | Self::InvalidRange(_) => ErrorCode::InvalidInput,
-            Self::FrozenPast { .. } | Self::InvalidReorder => ErrorCode::Conflict,
-            Self::Database(_) => ErrorCode::Internal,
-        }
-    }
-}
-
 impl ErrorClass for anyhow::Error {
     fn code(&self) -> ErrorCode {
         if let Some(e) = self.downcast_ref::<RepoError>() {
-            return e.code();
-        }
-        if let Some(e) = self.downcast_ref::<PlanningError>() {
             return e.code();
         }
         ErrorCode::Internal

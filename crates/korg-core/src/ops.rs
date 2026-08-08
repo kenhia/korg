@@ -8,7 +8,7 @@
 //!
 //! Now the serde-facing types live here (and, for the operations that already
 //! had a natural home, directly on the core `New*`/`*Patch` structs in
-//! [`crate::repo`] and [`crate::topics`]). Both transports deserialize the
+//! [`crate::repo`]). Both transports deserialize the
 //! *same* types, and the MCP input schemas are derived from them via
 //! [`schemars`] — including the enum lists, which come from [`crate::vocab`],
 //! so a vocabulary change reaches the tool schema with no hand-edit at all.
@@ -24,7 +24,6 @@ use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Deserializer};
 
 use crate::repo::{self, archived_default, ArchivedFilter, PageQuery};
-use crate::topics;
 
 /// Deserialize a nullable, optional field into `Option<Option<T>>` so callers
 /// can distinguish "key absent" (leave unchanged) from "key present and null"
@@ -54,9 +53,6 @@ pub(crate) fn default_unknown() -> String {
 }
 pub(crate) fn default_backlog() -> String {
     "Backlog".into()
-}
-pub(crate) fn default_true() -> bool {
-    true
 }
 fn default_report_limit() -> i64 {
     30
@@ -253,11 +249,6 @@ pub mod schema {
         json_schema!({ "type": "integer", "minimum": 0, "default": 0 })
     }
 
-    /// A 0-based position within an ordered day.
-    pub fn position(_: &mut SchemaGenerator) -> Schema {
-        json_schema!({ "type": "integer", "minimum": 0 })
-    }
-
     pub fn neighbor_limit(_: &mut SchemaGenerator) -> Schema {
         json_schema!({
             "type": "integer",
@@ -277,7 +268,7 @@ pub mod schema {
 //
 // Everything below is an operation whose payload never had a core struct to
 // live on. The create/update payloads that DO have one (work items, cards,
-// links, topics, proposals, projects, reports) are the core types themselves —
+// links, proposals, projects, reports) are the core types themselves —
 // see `repo::NewWorkItem`, `repo::WorkItemPatch`, and friends.
 
 /// `create_project` / `POST /api/projects`.
@@ -389,64 +380,6 @@ pub struct Relate {
     pub rank: Option<Decimal>,
 }
 
-/// `archive_topic` / `POST /api/topics/:node_id/archive`.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct ArchiveTopic {
-    #[serde(default = "default_true")]
-    pub archived: bool,
-}
-
-/// `create_daily_plan_item` / `POST /api/daily-plan`.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct CreateDailyPlanItem {
-    pub source_node_id: i64,
-    #[schemars(schema_with = "schema::date")]
-    pub plan_date: String,
-}
-
-/// `set_daily_plan_completion`.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct SetCompletion {
-    pub completed: bool,
-}
-
-/// `move_daily_plan_item`.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct MoveDailyPlanItem {
-    #[schemars(schema_with = "schema::date")]
-    pub target_date: String,
-    #[serde(default)]
-    #[schemars(schema_with = "schema::position")]
-    pub target_position: i32,
-}
-
-/// `reorder_daily_plan` — the complete new order for one open day.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct ReorderDailyPlan {
-    #[schemars(schema_with = "schema::node_ids")]
-    pub node_ids: Vec<i64>,
-}
-
-/// `list_daily_plan` — an inclusive date range.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct DateRange {
-    #[schemars(schema_with = "schema::date")]
-    pub from: String,
-    #[schemars(schema_with = "schema::date")]
-    pub to: String,
-}
-
-/// `daily_plan_history` — the same range, optionally narrowed to one source.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub struct HistoryRange {
-    #[schemars(schema_with = "schema::date")]
-    pub from: String,
-    #[schemars(schema_with = "schema::date")]
-    pub to: String,
-    #[serde(default)]
-    pub source_node_id: Option<i64>,
-}
-
 // --- collection-read filters (MCP spelling) ---------------------------------
 //
 // REST spells these as query strings (see the module docs); both spellings
@@ -540,36 +473,6 @@ impl From<ListLinks> for repo::LinkQuery {
         Self {
             disposition: a.disposition,
             read: a.read,
-            archived: a.archived,
-            page: PageQuery {
-                limit: a.limit,
-                offset: a.offset,
-            },
-        }
-    }
-}
-
-/// `list_topics` / `search_topics`.
-#[derive(Debug, Clone, Deserialize, JsonSchema, Default)]
-pub struct ListTopics {
-    /// Match against name and description
-    #[serde(default)]
-    pub q: Option<String>,
-    #[serde(default = "archived_default")]
-    #[schemars(schema_with = "schema::archived_filter")]
-    pub archived: ArchivedFilter,
-    #[serde(default)]
-    #[schemars(schema_with = "schema::limit", default = "documented_page_limit")]
-    pub limit: Option<i64>,
-    #[serde(default)]
-    #[schemars(schema_with = "schema::offset", default = "documented_page_offset")]
-    pub offset: Option<i64>,
-}
-
-impl From<ListTopics> for topics::TopicQuery {
-    fn from(a: ListTopics) -> Self {
-        Self {
-            q: a.q,
             archived: a.archived,
             page: PageQuery {
                 limit: a.limit,

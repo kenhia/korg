@@ -202,7 +202,7 @@ async fn list_reports_filters_orders_and_limits() {
 
     // NOTE: `list_reports` returns a **bare array**, not the
     // `{items, total, limit, offset}` envelope that `list_work_items`,
-    // `list_cards`, `list_links` and `list_topics` return. That is what the
+    // `list_cards` and `list_links` return. That is what the
     // code does on every surface (MCP, `GET /api/reports`, and `api.ts`'s
     // `ReportRow[]`), so it is what these tests assert — but the MCP server
     // instructions tell agents that *collection reads* return the envelope,

@@ -101,7 +101,7 @@ cd web && KORG_API=http://localhost:8090 pnpm dev   # http://localhost:5173
 
 `web/src/lib/generated/` and `crates/korg-mcp/tests/tools_schema.json` are
 derived from korg-core and must never be hand-edited. After changing a shared
-operation struct (`korg_core::ops`, or any `New*`/`*Patch` in `repo`/`topics`),
+operation struct (`korg_core::ops`, or any `New*`/`*Patch` in `repo`),
 a response row, or a vocabulary:
 
 ```bash

@@ -41,8 +41,8 @@ ceremony.
 
 korg is the homelab's **system of record for work**: one typed-node +
 generalized-edges data model over Postgres holding work items, cards, sprint
-proposals, topics, daily plans, reading links, reports, handoffs, and
-projects/areas. A Rust workspace serves the web UI, REST API and MCP endpoint
+proposals, reading links, reports, handoffs, and projects/areas. A Rust
+workspace serves the web UI, REST API and MCP endpoint
 from one binary; production runs on kubsdb at `:5674`.
 
 ### Build / test

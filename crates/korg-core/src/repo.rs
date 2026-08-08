@@ -329,7 +329,7 @@ async fn require_project(pool: &PgPool, id: i64) -> Result<()> {
 /// Resolve a create-time project selector: id, name, or neither.
 ///
 /// Every create that takes a project funnels through here — work items, cards,
-/// links, topics, proposals, handoffs — which is why #884's status check lives
+/// links, proposals, handoffs — which is why #884's status check lives
 /// in the two resolvers rather than in six call sites. `update_project` is
 /// deliberately *not* one of them: setting `status` is how a project comes back.
 pub(crate) async fn resolve_project(
@@ -935,9 +935,8 @@ pub async fn update_link(pool: &PgPool, node_id: i64, patch: LinkPatch) -> Resul
 ///
 /// It **refuses** rather than cascading. `relationship` and `comment` both
 /// cascade from `node`, so an unguarded delete would take a link's edges and
-/// its whole thread with it, and `daily_plan_item.source_node_id` would fail
-/// with raw Postgres text instead of a `conflict` an agent can branch on.
-/// Anything referenced is by definition real; archive it instead.
+/// its whole thread with it. Anything referenced is by definition real;
+/// archive it instead.
 pub async fn delete_link(pool: &PgPool, node_id: i64) -> Result<bool> {
     let mut tx = pool.begin().await?;
     let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM node WHERE id = $1")
@@ -976,21 +975,13 @@ async fn refuse_if_referenced(tx: &mut Transaction<'_, Postgres>, node_id: i64) 
         .bind(node_id)
         .fetch_one(&mut **tx)
         .await?;
-    let plan_items: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM daily_plan_item WHERE source_node_id = $1")
-            .bind(node_id)
-            .fetch_one(&mut **tx)
-            .await?;
-    if edges + comments + plan_items > 0 {
+    if edges + comments > 0 {
         let mut refs = Vec::new();
         if edges > 0 {
             refs.push(format!("{edges} relationship(s)"));
         }
         if comments > 0 {
             refs.push(format!("{comments} comment(s)"));
-        }
-        if plan_items > 0 {
-            refs.push(format!("{plan_items} daily-plan item(s)"));
         }
         return Err(RepoError::Conflict(format!(
             "node {node_id} is referenced by {} — delete is for rows that were \
@@ -1321,7 +1312,7 @@ pub async fn related_context(
                 other.id AS node_id, \
                 w.wi_number AS wi_number, \
                 other.kind AS kind, \
-                COALESCE(w.title, sp.title, pg.title, cd.title, lk.title, lk.url, tp.name, \
+                COALESCE(w.title, sp.title, pg.title, cd.title, lk.title, lk.url, \
                          rp.summary, hd.title, other.kind || ' #' || other.id) AS title, \
                 r.relationship AS label, \
                 CASE WHEN r.left_id = $1 THEN 'out' ELSE 'in' END AS direction, \
@@ -1334,7 +1325,6 @@ pub async fn related_context(
          LEFT JOIN program pg         ON pg.node_id = other.id \
          LEFT JOIN card cd            ON cd.node_id = other.id \
          LEFT JOIN link lk            ON lk.node_id = other.id \
-         LEFT JOIN topic tp           ON tp.node_id = other.id \
          LEFT JOIN report rp          ON rp.node_id = other.id \
          LEFT JOIN handoff hd         ON hd.node_id = other.id \
          WHERE (r.left_id = $1 OR r.right_id = $1) \
@@ -1587,39 +1577,6 @@ pub async fn get_node_preview(pool: &PgPool, id: i64) -> Result<Option<NodePrevi
                         p.body = Some(r.get("summary"));
                         p.body_label = Some("Summary".into());
                     }
-                }
-            }
-        }
-        "topic" => {
-            if let Some(r) = sqlx::query(
-            "SELECT name, description FROM topic WHERE node_id = $1",
-            )
-            .bind(id)
-            .fetch_optional(pool)
-            .await?
-            {
-                p.title = r.get("name");
-                if let Some(description) = r.get::<Option<String>, _>("description") {
-                    p.body = Some(description);
-                    p.body_label = Some("Description".into());
-                }
-            }
-        }
-        "daily_plan_item" => {
-            if let Some(r) = sqlx::query(
-                "SELECT to_char(plan_date, 'YYYY-MM-DD') AS plan_date, display, \
-                        source_node_id, completed_at IS NOT NULL AS completed \
-                 FROM daily_plan_item WHERE node_id = $1",
-            )
-            .bind(id)
-            .fetch_optional(pool)
-            .await?
-            {
-                p.title = r.get("display");
-                p.fields.push(field("Date", r.get::<String, _>("plan_date")));
-                p.fields.push(field("Source", format!("#{}", r.get::<i64, _>("source_node_id"))));
-                if r.get::<bool, _>("completed") {
-                    p.badges.push("complete".into());
                 }
             }
         }
@@ -4298,7 +4255,7 @@ pub struct AwaitingRow {
 }
 
 const AWAITING_SELECT: &str = "SELECT n.id AS node_id, n.kind, w.wi_number, \
-            COALESCE(w.title, sp.title, g.title, cd.title, lk.title, lk.url, tp.name, \
+            COALESCE(w.title, sp.title, g.title, cd.title, lk.title, lk.url, \
                      rp.summary, hd.title, n.kind || ' #' || n.id) AS title, \
             pj.name AS project, \
             COALESCE(w.wi_status, sp.status::text, g.status, cd.status::text) AS status, \
@@ -4309,7 +4266,6 @@ const AWAITING_SELECT: &str = "SELECT n.id AS node_id, n.kind, w.wi_number, \
      LEFT JOIN program g          ON g.node_id  = n.id \
      LEFT JOIN card cd            ON cd.node_id = n.id \
      LEFT JOIN link lk            ON lk.node_id = n.id \
-     LEFT JOIN topic tp           ON tp.node_id = n.id \
      LEFT JOIN report rp          ON rp.node_id = n.id \
      LEFT JOIN handoff hd         ON hd.node_id = n.id \
      LEFT JOIN project pj         ON pj.id = n.project_id";

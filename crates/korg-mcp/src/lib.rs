@@ -5,24 +5,24 @@ pub mod tools;
 /// overview of korg an agent gets before it has called anything.
 ///
 /// It therefore has to name every category of tool. Two sprints' worth of
-/// clients were told korg covers work items, cards, links, relationships,
-/// topics and daily planning, and never learned that sprint proposals, reports,
+/// clients were told korg covers work items, cards, links and relationships,
+/// and never learned that sprint proposals, reports,
 /// projects or comments existed (F-12). `docs_drift::the_server_instructions_
 /// name_every_category` now fails if a category goes unmentioned; the full
 /// catalogue is `docs/api.md`.
 pub fn server_instructions() -> &'static str {
     "korg MCP server — one typed-node data model over Postgres covering work items, cards, \
-     comments, reading-list links, generalized relationships, topics, daily planning, \
+     comments, reading-list links, generalized relationships, \
      sprint proposals, programs, reports, handoffs, projects and areas, and a one-call \
      Board rollup. \
      Mutations validate their target and return the updated entity; errors are isError \
      results carrying {message, code} where code is one of invalid_input, not_found, \
      conflict, internal. Paginated collection reads (list_work_items, list_cards, \
-     list_links, list_topics) return {items, total, limit, offset}, where `total` is the \
+     list_links) return {items, total, limit, offset}, where `total` is the \
      whole filtered corpus on every page — including one whose offset overshot the last \
      row, which returns no items and the same total; \
      the unpaginated ones (list_reports, list_areas, \
-     list_comments, list_daily_plan, list_awaiting) return a bare array and have no archived \
+     list_comments, list_awaiting) return a bare array and have no archived \
      filter; and the filtered ones \
      (list_proposals, list_programs, list_projects) return {items, omitted}, where `omitted` counts \
      the rows their defaults hid — so a narrowed view can never be mistaken for the \

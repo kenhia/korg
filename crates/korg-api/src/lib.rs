@@ -10,8 +10,6 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use time::macros::format_description;
-use time::{Date, Duration};
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
@@ -22,7 +20,6 @@ use korg_core::repo::{
     self, CardPatch, HandoffPatch, LinkPatch, NewCard, NewHandoff, NewLink, NewProgram,
     NewProposal, NewWorkItem, ProgramPatch, ProjectPatch, ProposalPatch, WorkItemPatch,
 };
-use korg_core::{daily_plan, topics};
 use korg_mcp::tools::KorgServer;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
@@ -39,7 +36,7 @@ pub struct AppState {
 type ApiResult = Result<Json<Value>, ApiError>;
 
 pub fn build_router(state: AppState) -> Router {
-    let mcp = mcp_service(state.pool.clone(), state.config.clone());
+    let mcp = mcp_service(state.pool.clone());
     let api = Router::new()
         .route("/api/health", get(health))
         .route("/api/projects", get(list_projects).post(create_project))
@@ -76,21 +73,6 @@ pub fn build_router(state: AppState) -> Router {
             "/api/links/:node_id",
             patch(update_link).delete(delete_link),
         )
-        .route("/api/topics", get(list_topics).post(create_topic))
-        .route("/api/topics/:node_id", get(get_topic).patch(update_topic))
-        .route("/api/topics/:node_id/archive", post(archive_topic))
-        .route(
-            "/api/daily-plan",
-            get(list_daily_plan).post(create_daily_plan_item),
-        )
-        .route("/api/daily-plan/history", get(daily_plan_history))
-        .route("/api/daily-plan/:node_id", delete(delete_daily_plan_item))
-        .route(
-            "/api/daily-plan/:node_id/completion",
-            patch(set_daily_plan_completion),
-        )
-        .route("/api/daily-plan/:node_id/move", post(move_daily_plan_item))
-        .route("/api/daily-plan/:plan_date/order", put(reorder_daily_plan))
         .route("/api/relationships", post(create_relationship))
         .route("/api/relationships/:id", delete(delete_relationship))
         .route("/api/nodes/:id/neighbors", get(neighbors))
@@ -132,8 +114,8 @@ pub fn build_router(state: AppState) -> Router {
 /// straight off disk; anything else falls back to `index.html` so the client
 /// router can take over. WI #284 — the fallback MUST use `ServeDir::fallback`,
 /// not `not_found_service`: the latter serves the shell body but stamps the
-/// upstream 404 onto it, so deep links / bookmarks (e.g. /plan) load the page
-/// with a 404 status. `fallback` preserves the shell's 200.
+/// upstream 404 onto it, so deep links / bookmarks (e.g. /planning) load the
+/// page with a 404 status. `fallback` preserves the shell's 200.
 fn spa_fallback(api: Router, dir: &std::path::Path) -> Router {
     let index = dir.join("index.html");
     let serve = ServeDir::new(dir).fallback(ServeFile::new(index));
@@ -147,16 +129,13 @@ fn spa_fallback(api: Router, dir: &std::path::Path) -> Router {
 /// transport for a single-user tool and trivially testable with `curl`. Host
 /// validation is disabled because korg is reached over several hostnames
 /// (e.g. `kai`, `kubsdb`) on a trusted network — same posture as the REST API.
-fn mcp_service(
-    pool: Arc<PgPool>,
-    config: Arc<KorgConfig>,
-) -> StreamableHttpService<KorgServer, LocalSessionManager> {
+fn mcp_service(pool: Arc<PgPool>) -> StreamableHttpService<KorgServer, LocalSessionManager> {
     let transport_config = StreamableHttpServerConfig::default()
         .with_stateful_mode(false)
         .with_json_response(true)
         .disable_allowed_hosts();
     StreamableHttpService::new(
-        move || Ok(KorgServer::new((*pool).clone(), config.clone())),
+        move || Ok(KorgServer::new((*pool).clone())),
         Arc::new(LocalSessionManager::default()),
         transport_config,
     )
@@ -191,11 +170,6 @@ fn cors_layer() -> CorsLayer {
     } else {
         layer.allow_origin(origins)
     }
-}
-
-fn parse_date(s: &str) -> Result<Date, ApiError> {
-    let fmt = format_description!("[year]-[month]-[day]");
-    Date::parse(s, &fmt).map_err(|e| ApiError::invalid(format!("invalid date `{s}`: {e}")))
 }
 
 /// `archived` is tri-state across every collection read (D-3): absent means
@@ -473,178 +447,6 @@ async fn update_link(
 async fn delete_link(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
     let deleted = repo::delete_link(&s.pool, node_id).await?;
     Ok(Json(json!({ "deleted": deleted })))
-}
-
-// --- topics and daily planning --------------------------------------------
-
-#[derive(Deserialize)]
-struct TopicsQuery {
-    #[serde(default)]
-    q: Option<String>,
-    archived: Option<String>,
-    limit: Option<i64>,
-    offset: Option<i64>,
-}
-
-async fn list_topics(State(s): State<AppState>, Query(q): Query<TopicsQuery>) -> ApiResult {
-    let page = topics::list_topics(
-        &s.pool,
-        topics::TopicQuery {
-            q: q.q,
-            archived: parse_archived(q.archived.as_deref())?,
-            page: repo::PageQuery {
-                limit: q.limit,
-                offset: q.offset,
-            },
-        },
-    )
-    .await?;
-    Ok(Json(json!(page)))
-}
-
-async fn create_topic(State(s): State<AppState>, Json(b): Json<topics::NewTopic>) -> ApiResult {
-    Ok(Json(json!(topics::create_topic(&s.pool, b).await?)))
-}
-
-async fn get_topic(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
-    match topics::get_topic(&s.pool, node_id).await? {
-        Some(topic) => Ok(Json(json!(topic))),
-        None => Err(not_found(format!("no topic with node_id {node_id}"))),
-    }
-}
-
-async fn update_topic(
-    State(s): State<AppState>,
-    Path(node_id): Path<i64>,
-    Json(patch): Json<topics::TopicPatch>,
-) -> ApiResult {
-    Ok(Json(json!(
-        topics::update_topic(&s.pool, node_id, patch).await?
-    )))
-}
-
-async fn archive_topic(
-    State(s): State<AppState>,
-    Path(node_id): Path<i64>,
-    Json(b): Json<ops::ArchiveTopic>,
-) -> ApiResult {
-    let topic = topics::archive_topic(&s.pool, node_id, b.archived).await?;
-    Ok(Json(json!(topic)))
-}
-
-async fn list_daily_plan(State(s): State<AppState>, Query(q): Query<ops::DateRange>) -> ApiResult {
-    Ok(Json(json!(
-        daily_plan::list_items(&s.pool, parse_date(&q.from)?, parse_date(&q.to)?,).await?
-    )))
-}
-
-async fn create_daily_plan_item(
-    State(s): State<AppState>,
-    Json(b): Json<ops::CreateDailyPlanItem>,
-) -> ApiResult {
-    let context = s.config.lifecycle_context()?;
-    let item = daily_plan::create_item(
-        &s.pool,
-        b.source_node_id,
-        parse_date(&b.plan_date)?,
-        &context,
-    )
-    .await?;
-    Ok(Json(json!(item)))
-}
-
-async fn set_daily_plan_completion(
-    State(s): State<AppState>,
-    Path(node_id): Path<i64>,
-    Json(b): Json<ops::SetCompletion>,
-) -> ApiResult {
-    let item = daily_plan::set_completion(
-        &s.pool,
-        node_id,
-        b.completed,
-        &s.config.lifecycle_context()?,
-    )
-    .await?;
-    Ok(Json(json!(item)))
-}
-
-async fn delete_daily_plan_item(State(s): State<AppState>, Path(node_id): Path<i64>) -> ApiResult {
-    daily_plan::delete_item(&s.pool, node_id, &s.config.lifecycle_context()?).await?;
-    Ok(Json(json!({ "deleted": true })))
-}
-
-async fn reorder_daily_plan(
-    State(s): State<AppState>,
-    Path(plan_date): Path<String>,
-    Json(b): Json<ops::ReorderDailyPlan>,
-) -> ApiResult {
-    let items = daily_plan::reorder_day(
-        &s.pool,
-        parse_date(&plan_date)?,
-        &b.node_ids,
-        &s.config.lifecycle_context()?,
-    )
-    .await?;
-    Ok(Json(json!(items)))
-}
-
-async fn move_daily_plan_item(
-    State(s): State<AppState>,
-    Path(node_id): Path<i64>,
-    Json(b): Json<ops::MoveDailyPlanItem>,
-) -> ApiResult {
-    Ok(Json(json!(
-        daily_plan::move_item(
-            &s.pool,
-            node_id,
-            parse_date(&b.target_date)?,
-            b.target_position,
-            &s.config.lifecycle_context()?,
-        )
-        .await?
-    )))
-}
-
-#[derive(Deserialize)]
-struct HistoryQuery {
-    #[serde(default)]
-    from: Option<String>,
-    #[serde(default)]
-    to: Option<String>,
-    #[serde(default)]
-    preset: Option<String>,
-    #[serde(default)]
-    source_node_id: Option<i64>,
-}
-
-async fn daily_plan_history(State(s): State<AppState>, Query(q): Query<HistoryQuery>) -> ApiResult {
-    let context = s.config.lifecycle_context()?;
-    let (from, to) = match q.preset.as_deref() {
-        Some(preset) => {
-            let days = match preset {
-                "week" => 7,
-                "month" => 30,
-                "90days" => 90,
-                "year" => 365,
-                _ => return Err(ApiError::invalid("invalid history preset")),
-            };
-            let to = context.today - Duration::days(1);
-            (to - Duration::days(days - 1), to)
-        }
-        None => {
-            let from = q
-                .from
-                .as_deref()
-                .ok_or_else(|| ApiError::invalid("from is required without preset"))?;
-            let to =
-                q.to.as_deref()
-                    .ok_or_else(|| ApiError::invalid("to is required without preset"))?;
-            (parse_date(from)?, parse_date(to)?)
-        }
-    };
-    Ok(Json(json!(
-        daily_plan::history(&s.pool, from, to, q.source_node_id, &context,).await?
-    )))
 }
 
 // --- relationships --------------------------------------------------------

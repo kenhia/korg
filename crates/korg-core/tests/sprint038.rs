@@ -1,11 +1,8 @@
 //! Sprint 038 — the T3 behaviour gaps, fenced.
 //!
 //! Every test here is a probe sprint 037 ran against production, turned into an
-//! assertion. Four of them describe a bug that existed; the fifth (#886)
-//! describes a bug that did *not*, and exists so the same false positive cannot
-//! be filed a third time.
-
-use korg_core::daily_plan::{self, LifecycleContext, PlanningError};
+//! assertion. (A fifth, #886, refuted a daily-plan false positive; it left with
+//! the feature in sprint 050, WI #965.)
 use korg_core::error::{ErrorClass, ErrorCode};
 use korg_core::repo::{
     archived_default, create_card, create_link, create_proposal, create_work_item,
@@ -15,8 +12,8 @@ use korg_core::repo::{
 };
 use korg_test_support::{fresh_korg, new, test_project};
 use sqlx::PgPool;
-use time::macros::date;
-use time::{Date, OffsetDateTime};
+
+use time::OffsetDateTime;
 
 /// The error code a surface would report for a failure, which is the half of an
 /// error an agent branches on.
@@ -531,105 +528,6 @@ async fn updated_advances_on_ordinary_edits_of_every_kind() {
     assert!(
         node_updated(&pool, link.node_id).await > after_set,
         "mark_link_read"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// #886 — the freeze that was never broken
-// ---------------------------------------------------------------------------
-
-/// **This one is a refutation.** T3 reported create/delete/reorder all mutating
-/// a past day; they do not, and did not. The probes ran at 2026-08-02T01:10Z
-/// against production, which runs `KORG_TIMEZONE=America/Los_Angeles` — so the
-/// server's local today was still 2026-08-01, and the "past day" being written
-/// was the current one.
-///
-/// What is asserted here is the freeze itself, per operation, against a pinned
-/// `today`, so the next session to read the daily-plan module finds the answer
-/// in a test rather than re-deriving it from a timezone. The second half
-/// asserts the actual fix that shipped: the refusal *names* the server's local
-/// date, which is what would have shown the T3 session its clock disagreed.
-#[tokio::test]
-async fn past_days_are_frozen_and_the_refusal_names_the_servers_today() {
-    let (_c, pool) = fresh_korg().await;
-    let today = date!(2026 - 08 - 02);
-    let yesterday = date!(2026 - 08 - 01);
-    let context = LifecycleContext {
-        today,
-        now: OffsetDateTime::now_utc(),
-    };
-
-    let wi = create_work_item(&pool, new::work_item("plannable"))
-        .await
-        .expect("create wi");
-
-    // Create onto a past day.
-    let created = daily_plan::create_item(&pool, wi.node_id, yesterday, &context).await;
-    let err = created.expect_err("a past day must not accept new items");
-    assert!(matches!(err, PlanningError::TargetPast { .. }));
-    assert_eq!(err.code(), ErrorCode::InvalidInput);
-    assert_names_the_boundary(&err.to_string(), yesterday, today);
-
-    // Seed one item on the past day the only way the server allows: plan it
-    // while that day is current.
-    let past_context = LifecycleContext {
-        today: yesterday,
-        now: OffsetDateTime::now_utc(),
-    };
-    let seeded = daily_plan::create_item(&pool, wi.node_id, yesterday, &past_context)
-        .await
-        .expect("planning today is what the freeze exists to permit");
-
-    // Delete from a past day.
-    let deleted = daily_plan::delete_item(&pool, seeded.node_id, &context).await;
-    let err = deleted.expect_err("past structure is frozen");
-    assert!(matches!(err, PlanningError::FrozenPast { .. }));
-    assert_eq!(
-        err.code(),
-        ErrorCode::Conflict,
-        "a frozen past is a state conflict, not a malformed request"
-    );
-    assert_names_the_boundary(&err.to_string(), yesterday, today);
-
-    // Reorder a past day.
-    let reordered = daily_plan::reorder_day(&pool, yesterday, &[seeded.node_id], &context).await;
-    let err = reordered.expect_err("past order is frozen");
-    assert!(matches!(err, PlanningError::FrozenPast { .. }));
-    assert_names_the_boundary(&err.to_string(), yesterday, today);
-
-    // Move *to* a past day.
-    let moved = daily_plan::move_item(&pool, seeded.node_id, yesterday, 0, &context).await;
-    let err = moved.expect_err("a past target is refused");
-    assert!(matches!(err, PlanningError::TargetPast { .. }));
-    assert_names_the_boundary(&err.to_string(), yesterday, today);
-
-    // History's end is the same boundary, and used to be the one refusal that
-    // could not say which date it meant.
-    let history = daily_plan::history(&pool, yesterday, today, None, &context).await;
-    let err = history.expect_err("history must end before today");
-    assert!(matches!(err, PlanningError::HistoryNotPast { .. }));
-    assert_eq!(err.code(), ErrorCode::InvalidInput);
-    assert_names_the_boundary(&err.to_string(), today, today);
-
-    // And the day itself is still open for business.
-    daily_plan::create_item(&pool, wi.node_id, today, &context)
-        .await
-        .expect("today is not the past");
-}
-
-/// A date refusal has to carry both dates: the one asked for and the one the
-/// server measured against. Without the second, a caller on a different clock
-/// can only guess — which is the whole of WI #886.
-fn assert_names_the_boundary(message: &str, requested: Date, today: Date) {
-    let requested = requested.to_string();
-    let today = today.to_string();
-    assert!(
-        message.contains(&today),
-        "the refusal must name the server's local today ({today}): {message}"
-    );
-    assert!(
-        message.contains(&requested) || requested == today,
-        "the refusal must name the date it refused ({requested}): {message}"
     );
 }
 

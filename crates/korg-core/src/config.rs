@@ -1,11 +1,15 @@
-//! Required IANA timezone configuration and deterministic lifecycle clock.
+//! Required IANA timezone configuration and a deterministic local-date clock.
+//!
+//! The daily-planning feature that motivated this was removed in sprint 050
+//! (WI #965); the timezone plumbing stays because "what is today in Ken's
+//! timezone" is a question korg keeps needing (#581/#950 are next in line),
+//! and the DST edge cases in `tests/config.rs` are exactly the part worth not
+//! rebuilding.
 
 use anyhow::{Context, Result};
 use jiff::{tz::TimeZone, Timestamp};
 use time::macros::format_description;
 use time::{Date, OffsetDateTime};
-
-use crate::daily_plan::LifecycleContext;
 
 #[derive(Debug, Clone)]
 pub struct KorgConfig {
@@ -41,16 +45,16 @@ impl KorgConfig {
         &self.timezone_name
     }
 
-    pub fn lifecycle_context(&self) -> Result<LifecycleContext> {
-        self.lifecycle_context_at(self.fixed_now.unwrap_or_else(OffsetDateTime::now_utc))
+    /// The current calendar date in the configured timezone.
+    pub fn local_today(&self) -> Result<Date> {
+        self.local_today_at(self.fixed_now.unwrap_or_else(OffsetDateTime::now_utc))
     }
 
-    pub fn lifecycle_context_at(&self, now: OffsetDateTime) -> Result<LifecycleContext> {
+    pub fn local_today_at(&self, now: OffsetDateTime) -> Result<Date> {
         let timestamp = Timestamp::new(now.unix_timestamp(), now.nanosecond() as i32)
             .context("current instant is outside jiff's supported range")?;
         let local = timestamp.to_zoned(self.timezone.clone()).date().to_string();
-        let today = Date::parse(&local, &format_description!("[year]-[month]-[day]"))
-            .context("failed to convert local calendar date")?;
-        Ok(LifecycleContext { today, now })
+        Date::parse(&local, &format_description!("[year]-[month]-[day]"))
+            .context("failed to convert local calendar date")
     }
 }

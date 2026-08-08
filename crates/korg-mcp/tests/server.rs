@@ -20,8 +20,9 @@ async fn mcp_surface_end_to_end() {
     let (_c, pool) = fresh_korg().await;
     let server = server(pool);
 
-    // Tool descriptors are stable.
-    assert_eq!(tools().len(), 57, "expected 57 tools");
+    // Tool descriptors are stable. (57 until #965 retired the 13 topic and
+    // daily-plan tools with the slots feature.)
+    assert_eq!(tools().len(), 44, "expected 44 tools");
 
     // Create a work item.
     let wi = body(
@@ -86,62 +87,6 @@ async fn mcp_surface_end_to_end() {
     // Reading list reflects the link.
     let links = body(&server.call("list_links", args(json!({}))).await.unwrap());
     assert_eq!(links["items"].as_array().unwrap().len(), 1);
-
-    // Topics and daily planning round-trip with server-derived display.
-    let topic = body(
-        &server
-            .call("create_topic", args(json!({"name":"Architecture"})))
-            .await
-            .unwrap(),
-    );
-    let topic_node = topic["node_id"].as_i64().unwrap();
-    let planned = body(
-        &server
-            .call(
-                "create_daily_plan_item",
-                args(json!({"source_node_id":topic_node,"plan_date":"2026-07-11"})),
-            )
-            .await
-            .unwrap(),
-    );
-    let planned_node = planned["node_id"].as_i64().unwrap();
-    let completed = body(
-        &server
-            .call(
-                "set_daily_plan_completion",
-                args(json!({"node_id":planned_node,"completed":true})),
-            )
-            .await
-            .unwrap(),
-    );
-    assert_eq!(completed["node_id"].as_i64(), Some(planned_node));
-    assert!(
-        completed["completed_at"].is_string(),
-        "completion acknowledged"
-    );
-    let moved = body(
-        &server
-            .call(
-                "move_daily_plan_item",
-                args(
-                    json!({"node_id":planned_node,"target_date":"2026-07-12","target_position":0}),
-                ),
-            )
-            .await
-            .unwrap(),
-    );
-    assert_eq!(moved["copied"], false);
-    let day = body(
-        &server
-            .call(
-                "list_daily_plan",
-                args(json!({"from":"2026-07-12","to":"2026-07-12"})),
-            )
-            .await
-            .unwrap(),
-    );
-    assert_eq!(day.as_array().unwrap().len(), 1);
-    assert_eq!(day[0]["display"], "Architecture");
 
     // Unknown tool is a clean error.
     assert!(server.call("nope", args(json!({}))).await.is_err());
@@ -1027,14 +972,6 @@ async fn typed_errors_carry_codes_and_never_lie_about_success() {
     );
     err(
         &server
-            .call("get_topic", args(json!({"node_id":9999})))
-            .await
-            .unwrap(),
-        "not_found",
-        "get_topic on a missing node",
-    );
-    err(
-        &server
             .call(
                 "relate",
                 args(json!({"left":n,"right":9999,"label":"related-to"})),
@@ -1130,7 +1067,7 @@ fn advertised_defaults_match_server_behaviour() {
 
     // The shared collection-read params must agree with korg-core's constants
     // everywhere they appear.
-    for name in ["list_work_items", "list_cards", "list_links", "list_topics"] {
+    for name in ["list_work_items", "list_cards", "list_links"] {
         let schema = schema_of(name);
         let props = schema["properties"].as_object().expect("properties");
         assert_eq!(

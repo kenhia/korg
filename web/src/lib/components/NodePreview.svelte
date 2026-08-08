@@ -1,7 +1,7 @@
 <script lang="ts">
   // Shared slide-over preview for any node kind (WI #231 + #260). Give it a
   // node id; it fetches GET /api/nodes/:id and renders a uniform preview —
-  // work item, card, link, report, sprint proposal, topic, or daily plan item. Used by Planning,
+  // work item, card, link, report, sprint proposal, program, or handoff. Used by Planning,
   // Daily Reports and the Work Items find-by-ID box so the panel lives once.
   import { api, type NodePreview } from "$lib/api";
   import { renderMarkdown } from "$lib/markdown";

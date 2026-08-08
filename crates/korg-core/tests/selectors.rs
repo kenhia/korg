@@ -17,7 +17,6 @@ use korg_core::repo::{
     list_projects, update_card, update_work_item, CardPatch, NewCard, NewLink, NewProposal,
     NewWorkItem, WorkItemPatch,
 };
-use korg_core::topics;
 use korg_test_support::{fresh_korg, new};
 use rust_decimal::Decimal;
 use sqlx::PgPool;
@@ -90,21 +89,6 @@ async fn every_write_accepts_a_project_name() {
         .await
         .unwrap();
     assert!(pid.is_some(), "link should have been assigned a project");
-
-    let topic = topics::create_topic(
-        &pool,
-        topics::NewTopic {
-            project_id: None,
-            project: Some("korg".into()),
-            category: None,
-            tags: vec![],
-            name: "topic by name".into(),
-            description: None,
-        },
-    )
-    .await
-    .expect("topic by project name");
-    assert_eq!(topic.project.as_deref(), Some("korg"));
 
     let proposal = create_proposal(
         &pool,

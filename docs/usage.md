@@ -10,10 +10,12 @@ the MCP endpoint.
 Browse to the address `korg-api` is serving (e.g. `http://<host>:8090`). The UI
 covers:
 
-- **Today** — the daily plan for the week, and the page to start from. Clicking
-  a day makes it the target for the Proposals and Cards trays below; dragging
-  into one works too. Carries the latest daily report's status, and buttons
-  through to History and Topics. Above the planner sits the **Awaiting you**
+- **Today** — the planning overview and the page to start from: "which sprint
+  am I on" is the question it answers at a glance (the daily-plan week board it
+  used to carry was removed with the slots feature in sprint 050, WI #965).
+  Carries the latest daily report's status pill, the active proposals list
+  (open by default) and the cards tray (collapsed by default — Ken,
+  2026-07-29). At the top sits the **Awaiting you**
   lane (#969): everything an agent has marked as moving only when Ken acts,
   oldest ask first. It renders **nothing** when the lane is empty — a panel that
   shows an empty state every day is one you learn to skip, and this one has to
@@ -49,8 +51,8 @@ covers:
 - **Cards** — kanban cards with status, rank, tags, comments, and clickable
   launch links for URL fields.
 - **Link Up** — relate any node to any other across kinds via the generalized
-  `relationship` edge. **Not on the top nav** as of sprint 029 — linking and
-  slotting are agent requests in practice — but `/link-up` still serves.
+  `relationship` edge. **Not on the top nav** as of sprint 029 — linking is
+  an agent request in practice — but `/link-up` still serves.
 - **Planning** — the agent-planning queue: `sprint_proposal` nodes (a title +
   summary bundled with the work items they cover), drag-orderable by rank,
   with pin-to-top. Start/Decline/Done buttons drive the status lifecycle; a
@@ -94,10 +96,10 @@ is unreachable" used to look identical. Error toasts stay until dismissed;
 successes fade.
 
 **Destructive actions are split by whether they can be undone.** Deleting a
-comment, removing a relationship, or removing a daily-plan item cannot be
-undone from the UI, so each takes two presses — the button arms, then commits,
-and disarms if you click away. Archiving a work item, card or topic *is*
-reversible, so it happens immediately and offers an Undo in the toast instead.
+comment or removing a relationship cannot be undone from the UI, so each takes
+two presses — the button arms, then commits, and disarms if you click away.
+Archiving a work item or card *is* reversible, so it happens immediately and
+offers an Undo in the toast instead.
 
 **Dialogs behave like dialogs.** The node preview and the card editor trap
 focus, close on Escape, and return focus to whatever opened them.
@@ -105,8 +107,8 @@ focus, close on Escape, and return focus to whatever opened them.
 **Every id an agent cites is on screen, and every id resolves** (#980, #982).
 Agents name things by id — `korg:979`, `#846` — and Ken reads agent output
 constantly, so matching a number against a screen is a scanning task. Rows and
-detail headers across programs, cards, topics, the reading list, daily reports,
-the awaiting lane, Today's plan items and trays, and both Link Up pickers carry
+detail headers across programs, cards, the reading list, daily reports,
+the awaiting lane, Today's trays, and both Link Up pickers carry
 their id in one shared mono-and-muted style. The reverse direction holds too:
 find-by-ID on Work Items resolves **every** node kind to its real title (a work
 item navigates; anything else previews), and `crates/korg-core/tests/sprint049.rs`
@@ -139,15 +141,6 @@ describing a route that no longer exists.
 | `PATCH`, `DELETE` | `/api/comments/:id` | Edit or delete a comment. |
 | `GET`, `POST` | `/api/links` | List links (enveloped; filters `disposition`, `read`, `archived`) or create. |
 | `PATCH`, `DELETE` | `/api/links/:node_id` | Update a link: disposition, read flag, tags and archived in one transaction. `DELETE` hard-deletes an unreferenced capture and refuses (`409`) otherwise — see [disposal semantics](api.md#disposal-semantics-wi-855). |
-| `GET`, `POST` | `/api/topics` | List/search (`?q=`, enveloped) or create topics. |
-| `GET`, `PATCH` | `/api/topics/:node_id` | Fetch or update a topic. |
-| `POST` | `/api/topics/:node_id/archive` | Archive or restore a topic. |
-| `GET`, `POST` | `/api/daily-plan` | List an inclusive range or plan a source node. |
-| `GET` | `/api/daily-plan/history` | Historical range or `week`, `month`, `90days`, `year` preset. |
-| `DELETE` | `/api/daily-plan/:node_id` | Delete an item from an open day. |
-| `PATCH` | `/api/daily-plan/:node_id/completion` | Complete/uncomplete an item using server time. |
-| `POST` | `/api/daily-plan/:node_id/move` | Move an open item or copy a past item. |
-| `PUT` | `/api/daily-plan/:plan_date/order` | Replace an open day's item order. |
 | `POST` | `/api/relationships` | Create a generalized relationship. |
 | `DELETE` | `/api/relationships/:id` | Delete a relationship. |
 | `GET` | `/api/nodes/:id` | Kind-agnostic preview of any node by id (powers find-by-ID + the preview panel); 404 if none. |
@@ -214,8 +207,10 @@ Vocabularies are validated in korg-core, so an unknown value comes back as a
 - card `status`: `Backlog`, `Research`, `OnDeck`, `Active`, `Done`, `Cut`
 - link `disposition`: `Unread`, `Done`, `Revisit`, `Summarized`, `VaultSaved`
 - proposal `status`: `proposed`, `active`, `done`, `declined`
+- program `status`: `active`, `holding`, `done`
 - report `status`: `ok`, `attention`, `problem`
 - project `status`: `active`, `archived`
+- project `category`: `AI`, `Dashboard`, `EVAL`, `Fun`, `Infrastructure`, `Ops`, `Other`
 
 ## MCP endpoint
 
@@ -416,17 +411,6 @@ any other through a single generalized `relationship` edge:
   (#966) — passing both is `invalid_input`, not a guess.
 - **card** — kanban card (status, rank, tags).
 - **link** — reading-list URL.
-- **topic** — reusable planning identity with searchable name/description.
-- **daily_plan_item** — ordered local-date occurrence linked to a work item,
-  card, topic, or sprint proposal; keeps an immutable display snapshot and
-  optional completion timestamp. Past structure is frozen, while completion can
-  be corrected — and "past" means before the **server's** local date, derived
-  from `KORG_TIMEZONE` rather than from the caller's clock, which is why every
-  date refusal names the date it measured against (WI #886). The plannable set
-  is closed (`PLANNABLE_KINDS` in korg-core) — anything else is refused rather
-  than stored as an unresolvable reference.
-  `sprint_proposal` joined it in sprint 029, so "which sprint am I pushing on
-  today" is answerable by the planner.
 - **sprint_proposal** — an agent-planning proposal (title, a ≤500-char `summary`
   routing contract, unbounded `notes` for the analysis, status, drag-orderable
   `rank`, `pinned`); covers work items via the same `relationship` mechanism,

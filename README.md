@@ -30,8 +30,6 @@ any other through a single generalized `relationship` edge:
   external project docs) that is *not* the primary key.
 - **card** — kanban card (status, rank, tags).
 - **link** — reading-list URL.
-- **topic** — reusable source for daily planning.
-- **daily plan item** — ordered source occurrence with a historical display snapshot.
 - **sprint proposal** — a title + summary bundled with the work items it
   `covers`. Single-project, enforced (#967).
 - **program** — the layer above: `includes` proposals, ordered, and carries no
@@ -45,10 +43,10 @@ project-scoped; tags/category are shared across kinds.
 
 ## Crates
 
-- `korg-core` — schema (sqlx migrations), domain repos (work items, cards,
-  reading-list links, generalized relationships), topics, and daily planning,
-  plus the domain vocabulary, request/response types and error taxonomy both
-  transports share
+- `korg-core` — schema (sqlx migrations) and domain repos (work items, cards,
+  reading-list links, generalized relationships, proposals, programs, reports,
+  handoffs), plus the domain vocabulary, request/response types and error
+  taxonomy both transports share
   (see [the response and error contract](docs/usage.md#response-and-error-contract)).
 - `korg-api` — the axum binary: REST API, the mounted MCP endpoint, and the
   static web bundle, in one process. This is what deploys.
@@ -70,7 +68,7 @@ installed; point an MCP client at the URL:
 http://<host>:8090/mcp
 ```
 
-It exposes 57 tools backed directly by `korg-core`. The full list, by category,
+It exposes 44 tools backed directly by `korg-core`. The full list, by category,
 is the [tool catalogue](docs/api.md#tool-catalogue) — the one place it is
 written down, so this sentence carries only the count and a drift test keeps
 even that honest.

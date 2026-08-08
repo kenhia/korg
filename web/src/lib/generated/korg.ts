@@ -197,8 +197,6 @@ export type Comment = { id: number, node_id: number, body: string, created: stri
  */
 export type CoveredRef = { wi_number: number, node_id: number, title: string, wi_status: string, wi_tshirt: string, project: string | null, comment_count: number, };
 
-export type DailyPlanItem = { node_id: number, plan_date: string, position: number, display: string, source_node_id: number, source_kind: string, source_title: string, completed_at: string | null, created_at: string, };
-
 /**
  * The created handoff plus the owner node ids actually linked (deduped). Since
  * create rejects any id that does not resolve, this echoes the request minus
@@ -232,8 +230,6 @@ export type HandoffRow = { node_id: number, title: string, summary: string, proj
  */
 comment_count: number, created: string, updated: string, };
 
-export type History = { from: string, to: string, total: number, completed: number, completion_rate: number, items: Array<DailyPlanItem>, };
-
 export type LinkRow = { node_id: number, url: string, title: string | null, read: boolean, disposition: string, category: string | null, tags: Array<string>, archived: boolean, 
 /**
  * Capture recency (WI #888). Links are nodes, so `node` has carried both
@@ -241,8 +237,6 @@ export type LinkRow = { node_id: number, url: string, title: string | null, read
  * one kind whose whole point is *when did I capture this* unable to say.
  */
 created: string, updated: string, };
-
-export type MoveOutcome = { node_id: number, copied: boolean, };
 
 export type Neighbor = { rel_id: number, node_id: number, kind: string, label: string, 
 /**
@@ -727,13 +721,6 @@ export type ReportRow = { node_id: number, source: string, report_date: string, 
  * Comments on this report (WI #535).
  */
 comment_count: number, updated: string, };
-
-export type Topic = { node_id: number, name: string, description: string | null, project_id: number | null, project: string | null, category: string | null, tags: Array<string>, archived: boolean, 
-/**
- * Comments on this topic (WI #535) — the two-level read contract
- * generalized past work items: any commentable row says so.
- */
-comment_count: number, created: string, updated: string, };
 
 /**
  * A work item plus its comments, capped (WI #392). The single-item detail
