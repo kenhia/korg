@@ -54,7 +54,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 
 # MCP
-rmcp = { version = "1.7", features = ["server", "transport-streamable-http-server"] }
+rmcp = { version = "3.1", features = ["server", "transport-streamable-http-server"] }
 
 # Images (sprint 056, korg:1081). `default-features = false` because the
 # default feature set pulls every codec `image` knows; korg accepts the five

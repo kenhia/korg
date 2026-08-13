@@ -295,6 +295,47 @@ curl -s -X POST http://localhost:8090/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | jq
 ```
 
+### MCP protocol revisions
+
+korg implements `2024-11-05`, `2025-03-26`, `2025-06-18`, `2025-11-25` and
+`2026-07-28`. The list lives in `korg_mcp::tools::SUPPORTED_PROTOCOL_VERSIONS`
+and is stated explicitly rather than left to rmcp's default, which advertises
+every revision the *SDK* knows — a claim about the SDK, not about korg.
+
+`2026-07-28` requires SEP-2549 cache metadata on paginated results. korg
+advertises tools only, so `tools/list` is the whole of it: a peer that
+negotiated `2026-07-28` gets `ttlMs` (one hour — the catalogue is fixed per
+build) and `cacheScope: "public"`, and a peer on an older revision gets neither,
+because it is entitled to its own revision's shape.
+
+**This matters more than it looks.** A server that advertises `2026-07-28`
+without emitting those fields does not fail loudly — a Claude Code ≥2.1.227
+client validates `tools/list`, fails, and registers **zero tools** while the
+session stays up with its instructions delivered. kaed lost its whole tool
+surface that way (korg:1212). So the supported list, the ceiling and the two
+fields are one change; never move one without the others.
+
+A raw probe reads korg's real ceiling from outside — ask for a version it
+cannot know and read what comes back:
+
+```bash
+curl -s -X POST http://localhost:8090/mcp \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -H 'mcp-protocol-version: 9999-12-31' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "protocolVersion":"9999-12-31","capabilities":{},
+        "clientInfo":{"name":"probe","version":"0"}}}' | jq -r .result.protocolVersion
+```
+
+Note that `2026-07-28` uses the inline lifecycle (no session id) and requires
+per-request `_meta` plus SEP-2243 headers, so the simple `tools/list` curl above
+works only at older revisions. `crates/korg-api/tests/mcp_protocol.rs` drives
+the conformant shape and documents it. Because rmcp's own *client* cannot make
+such a request, those wire tests are necessary but not sufficient: the real
+acceptance gate is a fresh Claude Code session enumerating korg's tools and
+completing a call.
+
 ## Work-item status lifecycle
 
 Statuses are validated server-side (WI #285): `open`, `resolved`, `done`,
