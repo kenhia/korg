@@ -21,15 +21,63 @@ use korg_core::repo::{
 };
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Content, ErrorData, Implementation,
-    InitializeRequestParams, InitializeResult, JsonObject, ListToolsResult, PaginatedRequestParams,
-    ServerCapabilities, ServerInfo, Tool,
+    CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData,
+    Implementation, InitializeRequestParams, InitializeResult, JsonObject, ListToolsResult,
+    PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
 };
 use rmcp::service::{RequestContext, RoleServer};
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
+use std::borrow::Cow;
+
+/// The MCP revisions korg-mcp actually implements (sprint 058, korg:1215).
+///
+/// Spelled out rather than left to rmcp's default of
+/// [`ProtocolVersion::KNOWN_VERSIONS`], because that default is a claim about
+/// the **SDK**, and serving it makes korg assert things about itself that only
+/// the SDK knows. That is not a hypothetical: it is exactly how kaed broke
+/// (korg:1212) — an rmcp that knew `2026-07-28` made kaed advertise it, a
+/// Claude Code ≥2.1.227 client took the echo at its word, validated
+/// `tools/list` against that revision's schema, and dropped **all** tools while
+/// the session stayed up. korg escaped only because its rmcp topped out at
+/// `2025-11-25`; the 1.8 → 3.1 bump in this sprint armed the same trap, which
+/// is why the list and the cache metadata below had to land together.
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[ProtocolVersion] = &[
+    ProtocolVersion::V_2024_11_05,
+    ProtocolVersion::V_2025_03_26,
+    ProtocolVersion::V_2025_06_18,
+    ProtocolVersion::V_2025_11_25,
+    ProtocolVersion::V_2026_07_28,
+];
+
+/// What korg answers when a client asks for a revision korg does not know —
+/// its ceiling, and the thing a raw probe reads to learn korg's real revision.
+///
+/// Pinned to a korg constant rather than inherited from `ProtocolVersion::
+/// LATEST` (kaed 015 D-3). `LATEST` moving underneath a server is the mechanism
+/// by which this whole bug class arrives: through a dependency bump, with no
+/// code change for anyone to review. Raising korg's ceiling should be an edit
+/// to this line and the list above, made deliberately.
+pub const FALLBACK_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2026_07_28;
+
+/// How long a client may treat korg's tool catalogue as fresh (SEP-2549).
+///
+/// The catalogue is a compile-time constant — [`tools()`] builds the same list
+/// on every call — so it cannot go stale while the process lives, and an hour
+/// is an honest under-claim bounded by how often korg is redeployed.
+pub const TOOLS_CACHE_TTL_MS: u64 = 3_600_000;
+
+/// Whether a peer at `version` is owed the SEP-2549 cache metadata.
+///
+/// korg serves a newer revision than several of its clients ask for, so it owns
+/// the translation in both directions: a `2025-11-25` peer is entitled to
+/// `2025-11-25`'s shape, and rmcp only strips the neighbouring `resultType`
+/// field for legacy peers — cache metadata is korg's to gate.
+fn emits_cache_metadata(version: Option<&ProtocolVersion>) -> bool {
+    version.is_some_and(|v| v.as_str() >= ProtocolVersion::V_2026_07_28.as_str())
+}
 
 #[derive(Clone)]
 pub struct KorgServer {
@@ -242,7 +290,7 @@ struct MarkLinkReadArgs {
 // --- responses --------------------------------------------------------------
 
 fn ok_json(v: Value) -> Result<CallToolResult, ErrorData> {
-    let c = Content::json(v)
+    let c = ContentBlock::json(v)
         .map_err(|e| ErrorData::internal_error(format!("failed to encode response: {e}"), None))?;
     Ok(CallToolResult::success(vec![c]))
 }
@@ -260,7 +308,7 @@ fn not_found(message: String) -> CallToolResult {
 }
 
 fn err_with_code(message: String, code: ErrorCode) -> CallToolResult {
-    CallToolResult::error(vec![Content::json(
+    CallToolResult::error(vec![ContentBlock::json(
         json!({ "message": message, "code": code.as_str() }),
     )
     .expect("encode error")])
@@ -682,8 +730,13 @@ impl KorgServer {
 }
 
 impl ServerHandler for KorgServer {
+    fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
+        Cow::Borrowed(SUPPORTED_PROTOCOL_VERSIONS)
+    }
+
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_protocol_version(FALLBACK_PROTOCOL_VERSION)
             .with_server_info(Implementation::new("korg-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(crate::server_instructions())
     }
@@ -695,33 +748,71 @@ impl ServerHandler for KorgServer {
     /// and why "rank at initialize" was implementable at all. Everything else
     /// is the default behaviour, `set_peer_info` included; drop that line and
     /// the peer never learns who connected.
+    ///
+    /// **Including the negotiation**, which rmcp 3.x added to the default
+    /// `initialize` this override replaces. The Streamable-HTTP transport
+    /// happens to re-negotiate on top of whatever a handler returns, so korg
+    /// would answer correctly today without these two lines — but that is the
+    /// transport's habit, not a contract, and inheriting a fix by luck is how
+    /// the roster override quietly went stale in the first place. Repeated here
+    /// so the handler is right on its own terms; `negotiate_protocol_version`
+    /// is `pub(crate)` in rmcp, hence the open-coded equivalent.
     async fn initialize(
         &self,
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, ErrorData> {
+        let requested = request.protocol_version.clone();
         context.peer.set_peer_info(request);
         let mut info = self.get_info();
+        if SUPPORTED_PROTOCOL_VERSIONS.contains(&requested) {
+            info.protocol_version = requested;
+        }
         info.instructions = Some(crate::server_instructions_with_roster(&self.pool).await);
         Ok(info)
     }
 
+    /// The one result `2026-07-28` changes the shape of.
+    ///
+    /// SEP-2549 puts cache metadata on *paginated* results, and korg advertises
+    /// tools only — `CallToolResult` carries none in any revision — so
+    /// `tools/list` is the entire surface of the upgrade. `cacheScope: public`
+    /// is not a shrug: the catalogue is identical for every caller of a given
+    /// build, so there is nothing user-specific to leak into a shared cache.
+    ///
+    /// korg has always hand-written this method (the `#[tool_handler]` macro
+    /// generates it only when absent), so unlike kaed there was nothing to
+    /// unpick here — just two fields to set.
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        Ok(ListToolsResult {
+        let result = ListToolsResult {
             tools: tools(),
             ..Default::default()
-        })
+        };
+        Ok(
+            if emits_cache_metadata(context.protocol_version().as_ref()) {
+                result
+                    .with_ttl_ms(TOOLS_CACHE_TTL_MS)
+                    .with_cache_scope(CacheScope::Public)
+            } else {
+                result
+            },
+        )
     }
 
+    /// Every korg tool completes in the request that made it: no elicitation,
+    /// no SEP-2663 tasks. So the MRTR envelope rmcp 3.x introduced is always
+    /// [`CallToolResponse::Complete`], and stripping `resultType` back off for a
+    /// pre-2026-07-28 peer is rmcp's job, not ours
+    /// (`ServerResult::strip_result_type_for_legacy_peer`).
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
-        self.call(&request.name, request.arguments).await
+    ) -> Result<CallToolResponse, ErrorData> {
+        Ok(self.call(&request.name, request.arguments).await?.into())
     }
 }

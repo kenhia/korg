@@ -169,8 +169,11 @@ fn spa_fallback(api: Router, dir: &std::path::Path) -> Router {
 /// validation is disabled because korg is reached over several hostnames
 /// (e.g. `kai`, `kubsdb`) on a trusted network — same posture as the REST API.
 fn mcp_service(pool: Arc<PgPool>) -> StreamableHttpService<KorgServer, LocalSessionManager> {
+    // `with_stateful_mode(false)` in rmcp 1.x; renamed in 3.x because SEP-2567
+    // removes sessions from `2026-07-28` outright, so the flag only ever
+    // governed the *legacy* lifecycle. Same value, honester name.
     let transport_config = StreamableHttpServerConfig::default()
-        .with_stateful_mode(false)
+        .with_legacy_session_mode(false)
         .with_json_response(true)
         .disable_allowed_hosts();
     StreamableHttpService::new(

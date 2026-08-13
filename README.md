@@ -78,6 +78,12 @@ Transport notes:
   request/response (no SSE session to manage), ideal for a single-user tool.
 - **Host check disabled** (`disable_allowed_hosts`) so korg is reachable via any
   hostname on the trusted network — the same no-auth posture as the REST API.
+- **Protocol revisions `2024-11-05` … `2026-07-28`**, listed explicitly in
+  `korg_mcp::tools::SUPPORTED_PROTOCOL_VERSIONS` rather than inherited from the
+  SDK, with `2026-07-28` as the ceiling an unknown request falls back to. korg
+  emits that revision's SEP-2549 cache metadata (`ttlMs`, `cacheScope: public`)
+  on `tools/list` and withholds it from older peers. See
+  [MCP protocol revisions](docs/usage.md#mcp-protocol-revisions).
 
 Quick smoke test against a running korg-api:
 
