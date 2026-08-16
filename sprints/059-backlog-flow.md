@@ -115,3 +115,31 @@ it knowingly.
   adjustments) — file as a tweak or fold into the live sprint, per the
   proposal.
 - kfdc #1319 (Rate of Fire panel) is unblocked once this deploys.
+
+## Deployed
+
+**2026-08-15 (PDT; 2026-08-16 UTC)** —
+`kubsdb.encke-wahoo.ts.net:5000/korg:471636f3aefe`
+(digest `sha256:3798611f…456ca`), built from the squash-merge `471636f` on
+`main`, both tags pushed SHA-first. Rollback target: `korg:78e5c0a6781d`
+(sprint 058), confirmed in the registry before building. **Rollback is a
+plain re-tag** — no migration this sprint, `migrations` 27 → 27 on both
+sides.
+
+`post-deploy-check.sh --compare` clean: no count down, nodes 1222 → 1225
+(three planning writes from a concurrent kdeskdash session — #1324 and two
+proposals — not deploy artifacts), revision label asserted equal to the built
+commit inside the deploy script.
+
+### Verified live
+
+| Probe | Result |
+|---|---|
+| `GET /api/work-items/flow` | 200 — 6 rows, `horizon` `2026-08-08`, `timezone` `America/Los_Angeles`, `durable_after_days` 7 |
+| today's row (2026-08-15 local) | `added` 29, `closed` 38, `closed_durable` **9**, `backlog` 166, `added_durable` 0 (structural at the 6-day window, as documented) |
+| `GET /api/work-items/flow?days=100000` | 8 rows, first day `2026-08-08` — clamped to the horizon, not zero-filled |
+| MCP `tools/list` | **54** tools, `work_item_flow` present |
+
+The `closed_durable: 9` on day one is the sprint's thesis confirmed in
+production: the durable drawdown is visible immediately, where the raw
+added/closed pair (29 vs 38, mostly churn) says almost nothing.
