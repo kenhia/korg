@@ -585,7 +585,7 @@ mod partition {
             SOURCE_FRESHNESS.len(),
             4,
             "adding a freshness value means deciding whether it alerts — see \
-             `SourceHealth::alerts` in repo.rs, which this list feeds"
+             `SourceHealth::alerts` in repo/reports.rs, which this list feeds"
         );
     }
 }

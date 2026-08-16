@@ -70,7 +70,8 @@ from one binary; production runs on kubsdb at `:5674`.
 
 - `docs/api.md` — normative agent-facing contracts: tool catalogue,
   collection-read envelope, relationship label registry.
-- `crates/korg-core/src/repo.rs` — queries and projections.
+- `crates/korg-core/src/repo/` — queries and projections, one module per
+  domain; `mod.rs` re-exports them all, so callers still say `repo::`.
 - `crates/korg-mcp/src/tools.rs` — the MCP tool surface.
 - `crates/korg-migrate/` — numbered migrations; each header states its
   rollback semantics.
