@@ -99,3 +99,52 @@ record of what was true when written.
 
 The scoped 044–059 surface re-review (rank 2) is now unblocked and is what
 this sprint was for.
+
+## Deployed
+
+2026-08-16, to kubsdb (`:5674`), built from merged `main` `a7053ae`.
+
+| | |
+|---|---|
+| Image | `kubsdb.encke-wahoo.ts.net:5000/korg:a7053ae5bdb9` |
+| Digest | `sha256:4e75fb8a0abebaed7ad7850df6a5206dbe142d3eadc63732e3bca06339fa484c` |
+| Rollback target | `471636f3aefe` (sprint 059) — confirmed present in the registry before building |
+| Migrations | 27 → 27 — **no migration**, as a pure refactor should have |
+
+The deploy script's revision assertion passed (running label equals the commit
+built), and `post-deploy-check.sh --compare` was clean with **every count
+unchanged**: work items 921, cards 30, links 4, projects 48, proposals 239,
+reports 42, nodes 1274, `seq_last` 1375 on both sides.
+
+### Verified live
+
+A refactor's smoke test is that nothing moved, and this one rewrote the module
+every read path runs through — so the check was one read per split module,
+all 200:
+
+| Module | Probe |
+|---|---|
+| `work_items.rs` | `/api/work-items?limit=2`, `/api/work-items/1345` |
+| `cards.rs` | `/api/cards?limit=2` |
+| `links.rs` | `/api/links?limit=2` |
+| `relationships.rs` | `/api/nodes/1345/neighbors` |
+| `preview.rs` | `/api/nodes/1347` |
+| `projects.rs` | `/api/projects`, `/api/projects/korg/plan` |
+| `comments.rs` | `/api/nodes/1345/comments` |
+| `areas.rs` | `/api/areas?project=korg` |
+| `proposals.rs` | `/api/proposals`, `/api/proposals/1347` |
+| `programs.rs` | `/api/programs` |
+| `schedules.rs` | `/api/schedules` |
+| `awaiting.rs` | `/api/awaiting` |
+| `planning.rs` | `/api/proposals/rollup` |
+| `board.rs` | `/api/board` |
+| `flow.rs` | `/api/work-items/flow` |
+| `reports.rs` | `/api/reports`, `/api/report-sources` |
+| `handoffs.rs` | `/api/handoffs/1128` |
+| `attachments.rs` | `/api/img/stats` |
+| web UI | `/plan` deep link |
+
+Four probes captured before the deploy came back byte-for-byte equal after it:
+work-items `total` 900, projects 48, flow 6 days at horizon `2026-08-08`, and
+the MCP `tools/list` payload. Which is the whole claim this sprint makes — the
+surfaces did not move.
