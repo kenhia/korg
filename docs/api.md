@@ -643,7 +643,7 @@ durability is only knowable in retrospect — so at the launch default
 The default window is 6 days, chosen so the whole window sits inside the
 transition horizon at ship time (Ken, 2026-08-15); widening it to 10 after
 2026-08-18 is a one-constant change (`FLOW_DAYS_DEFAULT` in
-`crates/korg-core/src/repo.rs`).
+`crates/korg-core/src/repo/flow.rs`).
 
 This is a rollup like the board, not a collection read: it returns no
 `{items, total, limit, offset}` envelope and takes no `archived` filter (the

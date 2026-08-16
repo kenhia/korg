@@ -68,7 +68,8 @@ fn the_membership_predicate_matches_the_proposal_vocabulary() {
         korg_core::vocab::PROPOSAL_LIVE_STATUSES,
         ["proposed", "active"],
         "membership_joins! and planning_rollup hardcode this pair — update \
-         both SQL fragments in repo.rs if the vocabulary moves"
+         both SQL fragments (repo/work_items.rs, repo/planning.rs) if the \
+         vocabulary moves"
     );
     assert_eq!(
         korg_core::vocab::WI_TERMINAL_STATUSES,
