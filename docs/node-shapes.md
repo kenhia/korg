@@ -57,7 +57,7 @@ Verified by removing the new `schedule` arm and watching the fence fail with
 ## The generic surface
 
 Most "is this viewable?" questions resolve to `get_node_preview`
-(`repo.rs`) → `NodePreview.svelte`, the slide-over reached from find-by-ID on
+(`repo/preview.rs`) → `NodePreview.svelte`, the slide-over reached from find-by-ID on
 Work Items, from any edge chip, and from the id/title affordances on Planning,
 Schedules and the Reading list. It renders, for every kind: `kind`, `node_id`,
 `title`, `project`, `tags`, `archived`, `badges[]`, `fields[]` (label/value),
