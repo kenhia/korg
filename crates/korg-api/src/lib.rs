@@ -42,7 +42,7 @@ pub struct AppState {
 pub(crate) type ApiResult = Result<Json<Value>, ApiError>;
 
 pub fn build_router(state: AppState) -> Router {
-    let mcp = mcp_service(state.pool.clone());
+    let mcp = mcp_service(state.pool.clone(), state.config.timezone_name().to_owned());
     let api = Router::new()
         .route("/api/health", get(health))
         .route("/api/projects", get(list_projects).post(create_project))
@@ -52,6 +52,7 @@ pub fn build_router(state: AppState) -> Router {
             get(list_work_items).post(create_work_item),
         )
         .route("/api/work-items/survey", get(survey_work_items))
+        .route("/api/work-items/flow", get(work_item_flow))
         .route(
             "/api/work-items/:wi_number",
             get(get_work_item).patch(update_work_item),
@@ -168,7 +169,10 @@ fn spa_fallback(api: Router, dir: &std::path::Path) -> Router {
 /// transport for a single-user tool and trivially testable with `curl`. Host
 /// validation is disabled because korg is reached over several hostnames
 /// (e.g. `kai`, `kubsdb`) on a trusted network — same posture as the REST API.
-fn mcp_service(pool: Arc<PgPool>) -> StreamableHttpService<KorgServer, LocalSessionManager> {
+fn mcp_service(
+    pool: Arc<PgPool>,
+    timezone: String,
+) -> StreamableHttpService<KorgServer, LocalSessionManager> {
     // `with_stateful_mode(false)` in rmcp 1.x; renamed in 3.x because SEP-2567
     // removes sessions from `2026-07-28` outright, so the flag only ever
     // governed the *legacy* lifecycle. Same value, honester name.
@@ -177,7 +181,7 @@ fn mcp_service(pool: Arc<PgPool>) -> StreamableHttpService<KorgServer, LocalSess
         .with_json_response(true)
         .disable_allowed_hosts();
     StreamableHttpService::new(
-        move || Ok(KorgServer::new((*pool).clone())),
+        move || Ok(KorgServer::new((*pool).clone(), timezone.clone())),
         Arc::new(LocalSessionManager::default()),
         transport_config,
     )
@@ -308,6 +312,20 @@ async fn survey_work_items(State(s): State<AppState>, Query(q): Query<SurveyQuer
     )
     .await?;
     Ok(Json(json!(survey)))
+}
+
+#[derive(Deserialize)]
+struct FlowQuery {
+    days: Option<i64>,
+}
+
+/// The backlog-trend read (#1318): one row per day in the board's timezone,
+/// oldest first, ending today. A window reaching past the transition horizon
+/// is clamped to it and the response names the horizon — days the log cannot
+/// answer are absent, never zero-filled.
+async fn work_item_flow(State(s): State<AppState>, Query(q): Query<FlowQuery>) -> ApiResult {
+    let flow = repo::work_item_flow(&s.pool, q.days, s.config.timezone_name()).await?;
+    Ok(Json(json!(flow)))
 }
 
 /// Missing work item is a 404, not `200 null` (D-6) — a typo'd number must

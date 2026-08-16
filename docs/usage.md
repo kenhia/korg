@@ -170,6 +170,7 @@ describing a route that no longer exists.
 | `GET` | `/api/projects/:name/plan` | A project's work items plus their `depends_on` edges, for plan/frontier views. |
 | `GET`, `POST` | `/api/work-items` | List (`{items,total,limit,offset}`; filters `project`, `archived`, `limit`, `offset`) or create. |
 | `GET` | `/api/work-items/survey` | Slim, paginated work-item projection (no content/details); filters `project`, `wi_status` (+ `all`), `archived` (tri-state since #851, excluding archived by default). Since #861 it shares the MCP `list_work_items` read, so omitting `wi_status` means everything **not terminal** rather than every status, and the response carries `omitted: {closed, archived}`. |
+| `GET` | `/api/work-items/flow` | Daily work-item flow (#1318): one row per day in the board's timezone — added, closed, backlog, each with its durable split. `days` defaults to 6; a window reaching past the transition horizon is clamped to it, and the response names the horizon — see [api.md](api.md#the-flow-series-1318). |
 | `GET`, `PATCH` | `/api/work-items/:wi_number` | Fetch with inlined comments (same shape as the MCP tool), or update. |
 | `GET`, `POST`, `PATCH`, `DELETE` | `/api/areas` | List, create, rename/re-describe, or delete areas (delete refuses while work items are filed under one). Selected by `{project, name}` in the body. |
 | `GET`, `POST` | `/api/cards` | List cards (enveloped; filters `status`, `project`, `archived`) or create. |

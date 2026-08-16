@@ -82,11 +82,18 @@ fn emits_cache_metadata(version: Option<&ProtocolVersion>) -> bool {
 #[derive(Clone)]
 pub struct KorgServer {
     pub pool: PgPool,
+    /// The IANA timezone day-bucketed reads (`work_item_flow`) compute in —
+    /// `KORG_TIMEZONE`, threaded in by whoever mounts the server, because this
+    /// surface deliberately holds no config handle of its own.
+    pub timezone: String,
 }
 
 impl KorgServer {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: PgPool, timezone: impl Into<String>) -> Self {
+        Self {
+            pool,
+            timezone: timezone.into(),
+        }
     }
 }
 
@@ -227,6 +234,7 @@ pub fn tools() -> Vec<Tool> {
         tool::<ops::ListWorkItems>("list_work_items", "The work-item list: lean rows (wi_number, node_id, project, title, wi_type, wi_status, wi_tshirt, comment_count -- no content/details), ordered by wi_number, as {items, total, limit, offset, omitted}. `omitted` is {closed, archived} -- the rows the defaults hid, so a narrowed list can never be mistaken for the whole corpus. Defaults: everything not terminal (`open`, `resolved`, `done`) and unarchived. Pass wi_status:\"all\" (or one status, including \"closed\") for the rest, `project` (name) to scope to one project. There is no detail flag: reading one item in full is get_work_item, which also inlines its comments and edges."),
         tool::<ops::WorkItemSelector>("get_work_item", "Fetch a single work item by `wi_number` OR `node_id` -- for a work item they are the SAME number (the 0009 identity migration), so pass whichever you are holding; passing both is invalid_input rather than a guess. isError with code `not_found` if there is none. Comments are inlined (up to 10; `comments_truncated:true` + `comment_count` signal a longer thread — fetch the whole thread with list_comments, which returns every comment in one unpaginated array). Comments often hold the real payload (resolution rationale, decisions), so prefer this over list_work_items when you need the full state of one item."),
         tool2::<ops::WiNumber, WorkItemPatch>("update_work_item", "Partially update a work item by its wi_number; returns the updated row (isError with code `not_found` if the wi_number does not exist). Only the fields you pass are changed. Status lifecycle: open -> resolved (implemented; may still need a user test or PR) -> done (agent satisfied; terminal but visible in default lists) -> closed (reserved for Ken; hidden from list_work_items unless you pass wi_status \"closed\" or \"all\" -- do not set unless directed). For nullable fields (project_id, details, sprint, area_id, parent, category) pass null to clear or omit to leave unchanged. Moving projects (project_id) clears an area that no longer belongs to the target project unless you pass a valid area_id in the same call."),
+        tool::<ops::WorkItemFlow>("work_item_flow", "korg's one time-series read (#1318): daily work-item flow, one row per day in the board's timezone, oldest first, ending today -- {day, added, closed, backlog, added_durable, closed_durable} per row, plus {horizon, timezone, durable_after_days, generated} on the envelope. `added` counts creations, from node.created (complete for every item; creating writes no transition row, so a log-derived added would be silently zero). `closed` counts moves to `closed`, from the transition log. `backlog` is the open (non-closed, unarchived) count at that day's end, reconstructed from the log -- today's value equals list_work_items' `total`. The `*_durable` split is where the signal is: an item is durable once it lived (or has so far lived) more than `durable_after_days` days; everything faster is sprint-internal churn, which is 3 of every 4 closes, so the raw added/closed pair reads ~1:1 forever and says nothing about the backlog. Note `added_durable` is structurally zero for the newest `durable_after_days` days -- durability is only knowable in retrospect. `days` defaults to 6. A window reaching past `horizon` (where the transition log begins; it was deliberately not backfilled) is CLAMPED: the series starts at the horizon and is simply shorter than asked -- days the log cannot answer are absent, never zero-filled, because a zero that means 'no data' renders exactly like 'nothing closed'. Take the series length from the response, not from the default you passed."),
         tool::<NewCard>("create_card", "Create a kanban card. Returns the created card row."),
         tool2::<ops::NodeId, CardPatch>("update_card", "Partially update a kanban card by its node_id; returns the updated card (isError with code `not_found` if that node is missing or is not a card). Projects are addressed by `project_id` here and over REST alike (get ids from list_projects) -- REST used to take a project *name* and silently create it. Only the fields you pass are changed (move status/rank, edit title/description, archive, reassign project). For nullable fields (project_id, category) pass null to clear or omit to leave unchanged."),
         tool::<ops::ListCards>("list_cards", "List cards as {items, total, limit, offset}, ordered by status, then rank, then node_id. Each row includes `comment_count`. Archived cards are EXCLUDED by default."),
@@ -422,6 +430,10 @@ impl KorgServer {
             "update_work_item" => {
                 let (a, patch) = parse_args2::<ops::WiNumber, WorkItemPatch>(args)?;
                 respond(repo::update_work_item(pool, a.wi_number, patch).await)
+            }
+            "work_item_flow" => {
+                let a: ops::WorkItemFlow = parse_args(args)?;
+                respond(repo::work_item_flow(pool, a.days, &self.timezone).await)
             }
 
             // --- cards ---

@@ -22,7 +22,7 @@ enumerates the tools a third time. All three are drift-tested against
 
 | Category | Tools |
 |---|---|
-| Work items | `create_work_item`, `get_work_item`, `update_work_item`, `list_work_items` |
+| Work items | `create_work_item`, `get_work_item`, `update_work_item`, `list_work_items`, `work_item_flow` |
 | Cards | `create_card`, `update_card`, `list_cards` |
 | Comments | `add_comment`, `list_comments`, `update_comment`, `delete_comment` |
 | Reading-list links | `create_link`, `list_links`, `update_link`, `delete_link`, `mark_link_read` |
@@ -597,6 +597,60 @@ all.
 Consumers: **kfdc** (`kai:~/src/tools/kfdc`, the widescreen overseer board) and
 **korg-dash** (the kdeskdash Pi feed, which derives its panel counts from this
 read rather than growing its own queries).
+
+## The flow series (#1318)
+
+`work_item_flow` (REST: `GET /api/work-items/flow?days=N`) is korg's one
+time-series read: one row per day in the board's timezone, oldest first,
+ending today — `{day, added, closed, backlog, added_durable, closed_durable}`
+per row, with `{horizon, timezone, durable_after_days, generated}` on the
+envelope. It exists because the raw open count is the wrong instrument for the
+backlog: measured 2026-08-15, 77.6% of all closed work items lived under one
+day (sprint-internal task lists opened and closed in one session), so a plain
+added-vs-closed chart reads ~1:1 forever whatever the backlog does. The
+durable split — an item is durable once it lived, or has so far lived, more
+than `durable_after_days` days — is where the signal is.
+
+Three source decisions carry the contract:
+
+- **`added` comes from `node.created`, never the log.** Creating a work item
+  writes no transition row, so an arrivals series derived from transitions is
+  silently all zeros. `node.created` is complete for every item.
+- **`closed` and the backlog reconstruction come from the transition log**,
+  which begins at `horizon` (2026-08-08) and was deliberately not backfilled.
+  A window reaching past the horizon is **clamped** to it: the series starts
+  at the horizon and is simply shorter than asked. Days the log cannot answer
+  are absent, never zero-filled — a zero meaning "no data" renders exactly
+  like "nothing closed", which is the lie this read exists to end. Consumers
+  therefore take the series length from the response, not from the `days`
+  they passed.
+- **Archived items are excluded throughout**, so today's `backlog` equals what
+  `list_work_items` reports as `total` — two reads that disagree about "how
+  many are open" would be a bug, and there is a test pinning them together.
+
+`backlog` at a day's end is the current status un-walked: the status at
+instant T is the `from_status` of the first transition after T, or the current
+status when nothing has moved since. A close counts on the day it happened
+(once per day, even if an item closes twice that day); a reopened item rejoins
+the backlog on the day of its reopening.
+
+One property worth knowing before rendering: `added_durable` is structurally
+zero for the newest `durable_after_days` days of any series — an arrival's
+durability is only knowable in retrospect — so at the launch default
+(`days` = 6, threshold 7) that column is all zeros until the window widens.
+`closed_durable` has no such lag: an item closing today may have lived months.
+
+The default window is 6 days, chosen so the whole window sits inside the
+transition horizon at ship time (Ken, 2026-08-15); widening it to 10 after
+2026-08-18 is a one-constant change (`FLOW_DAYS_DEFAULT` in
+`crates/korg-core/src/repo.rs`).
+
+This is a rollup like the board, not a collection read: it returns no
+`{items, total, limit, offset}` envelope and takes no `archived` filter (the
+exclusion is fixed), so it appears in neither the collection-shape table nor
+the instructions' read lists.
+
+Consumer: **kfdc**'s Rate of Fire panel (kfdc #1319).
 
 ## Time-derived surfacing (#581, #950)
 
