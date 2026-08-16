@@ -16,9 +16,9 @@ use rmcp::model::{CallToolResult, JsonObject};
 use serde_json::Value;
 use sqlx::PgPool;
 
-/// A server over `pool`.
+/// A server over `pool`, in the timezone the API tests also pin.
 pub fn server(pool: PgPool) -> KorgServer {
-    KorgServer::new(pool)
+    KorgServer::new(pool, "UTC")
 }
 
 /// Tool arguments, as MCP delivers them: a JSON object, not a bare value.

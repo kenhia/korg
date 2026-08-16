@@ -163,6 +163,7 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
             "update_work_item",
             json!({"wi_number": wi.wi_number, "title": "retitled"}),
         ),
+        ("work_item_flow", json!({})),
         // --- cards ---
         ("create_card", json!({"title": "created card"})),
         (

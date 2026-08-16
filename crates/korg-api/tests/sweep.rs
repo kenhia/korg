@@ -610,3 +610,36 @@ async fn the_board_is_one_request_with_every_panel_on_it() {
         "a counter that can disagree with the list beside it is a bug"
     );
 }
+
+/// `GET /api/work-items/flow` (#1318): the same series the MCP tool serves,
+/// over the query-string spelling — default window without a param, narrowed
+/// with one, and the envelope naming horizon and timezone either way.
+#[tokio::test]
+async fn work_item_flow_serves_the_series_over_rest() {
+    let (_pg, router) = app().await;
+
+    let (st, flow) = req(&router, "GET", "/api/work-items/flow", None).await;
+    assert_eq!(st, StatusCode::OK, "{flow:?}");
+    let days = flow["days"].as_array().expect("days");
+    assert_eq!(
+        days.len(),
+        korg_core::repo::FLOW_DAYS_DEFAULT as usize,
+        "the default window"
+    );
+    assert!(flow["horizon"].is_string(), "the clamp boundary is named");
+    assert_eq!(flow["timezone"], "UTC", "the app config's timezone");
+    for key in [
+        "day",
+        "added",
+        "closed",
+        "backlog",
+        "added_durable",
+        "closed_durable",
+    ] {
+        assert!(days[0].get(key).is_some(), "a flow day is missing `{key}`");
+    }
+
+    let (st, narrow) = req(&router, "GET", "/api/work-items/flow?days=3", None).await;
+    assert_eq!(st, StatusCode::OK, "{narrow:?}");
+    assert_eq!(narrow["days"].as_array().expect("days").len(), 3);
+}

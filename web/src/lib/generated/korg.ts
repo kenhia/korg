@@ -1153,6 +1153,74 @@ has_handoff: boolean,
  */
 proposal_node_id: number | null, created: string, updated: string, };
 
+/**
+ * One day of work-item flow (#1318): what arrived, what closed, and where
+ * the backlog stood at that day's end, with the churn-vs-durable split.
+ */
+export type WorkItemFlowDay = { 
+/**
+ * The calendar day, in the timezone the series was computed in.
+ */
+day: string, 
+/**
+ * Work items created this day — from `node.created`, which is complete.
+ * Never from transitions: creating a work item writes no transition row,
+ * so an `added` derived from the log would be silently all zeros.
+ */
+added: number, 
+/**
+ * Work items that moved to `closed` this day, from the transition log.
+ * An item that closes on two different days in the window counts on both;
+ * two closes on one day count once.
+ */
+closed: number, 
+/**
+ * Open (non-`closed`) work items at this day's end, reconstructed from
+ * the transition log. Today's value equals what `list_work_items`
+ * reports as `total`.
+ */
+backlog: number, 
+/**
+ * The `added` that lived (or have so far lived) more than
+ * [`FLOW_DURABLE_AFTER_DAYS`] days.
+ */
+added_durable: number, 
+/**
+ * The `closed` that had lived more than [`FLOW_DURABLE_AFTER_DAYS`] days
+ * when they closed.
+ */
+closed_durable: number, };
+
+/**
+ * The [`work_item_flow`] response (#1318) — korg's one time-series read.
+ */
+export type WorkItemFlowSeries = { 
+/**
+ * One row per day, oldest first, ending today. Consumers take the series
+ * length from here rather than assuming the default window (kfdc #1319
+ * does), so widening the default needs no consumer edit.
+ */
+days: Array<WorkItemFlowDay>, 
+/**
+ * Where the transition log begins. A requested window reaching past this
+ * is clamped to it — days the log cannot answer are absent, never zeros.
+ */
+horizon: string, 
+/**
+ * The IANA timezone the days were bucketed in (`KORG_TIMEZONE`).
+ */
+timezone: string, 
+/**
+ * The durable threshold, so a renderer can label the split without
+ * hardcoding it: [`FLOW_DURABLE_AFTER_DAYS`].
+ */
+durable_after_days: number, 
+/**
+ * Postgres's clock at generation — the same one every timestamp in the
+ * series came from, so ages computed against it are right.
+ */
+generated: string, };
+
 export type WorkItemListLean = { items: Array<WorkItemSummary>, total: number, limit: number, offset: number, 
 /**
  * The rows the defaults hid. `total` is the count *after* filtering, so

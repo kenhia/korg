@@ -83,6 +83,9 @@ fn documented_page_offset() -> i64 {
 fn documented_neighbor_limit() -> i64 {
     repo::NEIGHBOR_LIMIT_DEFAULT
 }
+fn documented_flow_days() -> i64 {
+    repo::FLOW_DAYS_DEFAULT
+}
 
 // --- schema fragments ------------------------------------------------------
 
@@ -301,6 +304,18 @@ pub mod schema {
     pub fn report_limit(_: &mut SchemaGenerator) -> Schema {
         json_schema!({ "type": "integer", "default": super::default_report_limit() })
     }
+
+    /// `work_item_flow`'s window (#1318). Bounded below only: the upper bound
+    /// is the transition horizon, applied at read time as a clamp the response
+    /// reports, never as a schema rejection.
+    pub fn flow_days(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "integer",
+            "minimum": 1,
+            "default": repo::FLOW_DAYS_DEFAULT,
+            "description": "How many days back from today, in the board's timezone. A window reaching past the transition horizon is clamped to the horizon — short series, never zero-filled days."
+        })
+    }
 }
 
 // --- operations with no core `New*`/`*Patch` counterpart --------------------
@@ -446,6 +461,17 @@ pub struct ListWorkItems {
     #[serde(default)]
     #[schemars(schema_with = "schema::offset", default = "documented_page_offset")]
     pub offset: Option<i64>,
+}
+
+/// `work_item_flow` / `GET /api/work-items/flow` (#1318). One optional knob —
+/// the window. Everything else about the read is decided elsewhere: the
+/// timezone is the server's, the horizon is the log's, and the durable
+/// threshold is a constant the response reports.
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Default)]
+pub struct WorkItemFlow {
+    #[serde(default)]
+    #[schemars(schema_with = "schema::flow_days", default = "documented_flow_days")]
+    pub days: Option<i64>,
 }
 
 // `survey_work_items` lived here as a deprecated alias of `list_work_items`

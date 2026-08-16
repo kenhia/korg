@@ -343,3 +343,79 @@ async fn get_board_returns_every_panel_and_takes_no_arguments() {
         "get_board takes no arguments"
     );
 }
+
+// --- the flow series (#1318) --------------------------------------------------
+
+/// `work_item_flow` over MCP: the envelope names its own contract, the rows
+/// carry the churn-vs-durable split, and the advertised schema documents the
+/// default window — the number kfdc must NOT hardcode.
+#[tokio::test]
+async fn work_item_flow_serves_the_series_and_names_its_contract() {
+    let (_pg, pool) = fresh_korg().await;
+    repo::create_project(&pool, "korg").await.unwrap();
+    repo::create_work_item(
+        &pool,
+        korg_core::repo::NewWorkItem {
+            project: Some("korg".into()),
+            ..new::work_item("arrived today")
+        },
+    )
+    .await
+    .unwrap();
+
+    let server = server(pool);
+    let flow = body(
+        &server
+            .call("work_item_flow", args(json!({})))
+            .await
+            .unwrap(),
+    );
+
+    for key in [
+        "days",
+        "horizon",
+        "timezone",
+        "durable_after_days",
+        "generated",
+    ] {
+        assert!(flow.get(key).is_some(), "the flow is missing `{key}`");
+    }
+    let days = flow["days"].as_array().expect("days");
+    assert_eq!(days.len(), korg_core::repo::FLOW_DAYS_DEFAULT as usize);
+    let today = days.last().expect("today's row");
+    for key in [
+        "day",
+        "added",
+        "closed",
+        "backlog",
+        "added_durable",
+        "closed_durable",
+    ] {
+        assert!(today.get(key).is_some(), "a flow day is missing `{key}`");
+    }
+    assert_eq!(today["added"], 1);
+    assert_eq!(today["backlog"], 1);
+    assert_eq!(flow["timezone"], "UTC");
+
+    // A narrower window narrows the series; the envelope stays.
+    let narrow = body(
+        &server
+            .call("work_item_flow", args(json!({"days": 2})))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(narrow["days"].as_array().expect("days").len(), 2);
+
+    // The schema is where an agent learns the default — it must carry it.
+    let schema = korg_mcp::tools::tools()
+        .into_iter()
+        .find(|t| t.name == "work_item_flow")
+        .expect("work_item_flow is advertised")
+        .input_schema
+        .clone();
+    assert_eq!(
+        schema["properties"]["days"]["default"],
+        json!(korg_core::repo::FLOW_DAYS_DEFAULT),
+        "the advertised default and the served default are one constant"
+    );
+}

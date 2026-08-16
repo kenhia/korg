@@ -319,6 +319,22 @@
     "name": "update_work_item"
   },
   {
+    "description": "korg's one time-series read (#1318): daily work-item flow, one row per day in the board's timezone, oldest first, ending today -- {day, added, closed, backlog, added_durable, closed_durable} per row, plus {horizon, timezone, durable_after_days, generated} on the envelope. `added` counts creations, from node.created (complete for every item; creating writes no transition row, so a log-derived added would be silently zero). `closed` counts moves to `closed`, from the transition log. `backlog` is the open (non-closed, unarchived) count at that day's end, reconstructed from the log -- today's value equals list_work_items' `total`. The `*_durable` split is where the signal is: an item is durable once it lived (or has so far lived) more than `durable_after_days` days; everything faster is sprint-internal churn, which is 3 of every 4 closes, so the raw added/closed pair reads ~1:1 forever and says nothing about the backlog. Note `added_durable` is structurally zero for the newest `durable_after_days` days -- durability is only knowable in retrospect. `days` defaults to 6. A window reaching past `horizon` (where the transition log begins; it was deliberately not backfilled) is CLAMPED: the series starts at the horizon and is simply shorter than asked -- days the log cannot answer are absent, never zero-filled, because a zero that means 'no data' renders exactly like 'nothing closed'. Take the series length from the response, not from the default you passed.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "days": {
+          "default": 6,
+          "description": "How many days back from today, in the board's timezone. A window reaching past the transition horizon is clamped to the horizon — short series, never zero-filled days.",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "name": "work_item_flow"
+  },
+  {
     "description": "Create a kanban card. Returns the created card row.",
     "inputSchema": {
       "additionalProperties": false,
