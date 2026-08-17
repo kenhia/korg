@@ -105,10 +105,16 @@ function isErrorCode(v: unknown): v is ErrorCode {
 
 /** The plan payload: a project's items plus its `depends_on` edges,
  *  `[left, right]` = left depends on right. Assembled by the handler rather
- *  than a core struct, so it is declared here. */
+ *  than a core struct, so it is declared here.
+ *
+ *  `items` is the whole project, archived included — the handler walks the
+ *  pages (WI #1391) rather than taking the first 500 and hoping. `total` is
+ *  the corpus size it walked to, so a consumer can check the payload against
+ *  itself instead of trusting that a frontier was computed over everything. */
 export interface PlanResponse {
   items: WorkItemRow[];
   edges: [number, number][];
+  total: number;
 }
 
 /** Shared collection-read params. `archived` omitted = unarchived only (D-3).

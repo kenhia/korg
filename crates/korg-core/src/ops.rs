@@ -448,7 +448,8 @@ pub struct ListWorkItems {
     #[serde(default)]
     pub project: Option<String>,
     /// Which rows. Omit for everything not terminal (`open`, `resolved`,
-    /// `done`); `"all"` to include `closed` too; one status for exactly that.
+    /// `done`, `parked`); `"all"` to include `closed` too; one status for
+    /// exactly that.
     #[serde(default)]
     #[schemars(schema_with = "schema::wi_status_filter")]
     pub wi_status: Option<String>,

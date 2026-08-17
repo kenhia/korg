@@ -193,8 +193,11 @@ pub struct ScheduleRow {
     pub due: bool,
     /// The newest materialised work item, or `None` if this has never fired.
     pub last_wi_number: Option<i64>,
-    /// Whether that item is still `open`/`resolved` — the clause that stops a
-    /// schedule competing with the work item it already produced.
+    /// Whether that item is still unfinished — [`vocab::WI_UNFINISHED_STATUSES`],
+    /// so `parked` counts too (#810) — the clause that stops a schedule
+    /// competing with the work item it already produced. This doc said
+    /// `open`/`resolved` until #1387: the set it names moved in 054 and the
+    /// sentence did not.
     pub outstanding: bool,
     /// How many work items this schedule has produced, over all time (the
     /// `materializes` edges, not the `last_wi_id` pointer).
@@ -356,10 +359,22 @@ pub async fn create_schedule(pool: &PgPool, new: NewSchedule) -> Result<Schedule
 
 /// One schedule, or `None`.
 pub async fn get_schedule(pool: &PgPool, node_id: i64) -> Result<Option<ScheduleRow>> {
+    schedule_row(pool, node_id).await
+}
+
+/// [`get_schedule`] over any executor, so `materialize_schedule` can re-read the
+/// row it has just locked **inside** its transaction (#1390). Under READ
+/// COMMITTED each statement takes a fresh snapshot, so this sees whatever a
+/// racing materialisation committed while we waited on the lock — which is the
+/// entire point of asking again.
+async fn schedule_row<'e, E>(executor: E, node_id: i64) -> Result<Option<ScheduleRow>>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     Ok(
         sqlx::query_as::<_, ScheduleRow>(&format!("{} WHERE s.node_id = $1", schedule_select()))
             .bind(node_id)
-            .fetch_optional(pool)
+            .fetch_optional(executor)
             .await?,
     )
 }
@@ -435,9 +450,10 @@ pub async fn get_schedule_detail(pool: &PgPool, node_id: i64) -> Result<Option<S
 pub struct ScheduleOmitted {
     pub done: i64,
     pub archived: i64,
-    /// How many of the **returned** rows are not yet due — the count a
-    /// `due_only` read hid. Zero when `due_only` was not asked for, so a
-    /// consumer can always tell "nothing is due" from "I filtered it out".
+    /// How many rows `due_only` **hid** for not being due yet — never a count
+    /// of what came back (the returned rows are, by definition, due). Zero when
+    /// `due_only` was not asked for, so a consumer can always tell "nothing is
+    /// due" from "I filtered it out".
     pub not_due: i64,
 }
 
@@ -682,35 +698,11 @@ pub async fn update_schedule(
         .ok_or_else(|| RepoError::NotFound(format!("no schedule with node_id {node_id}")).into())
 }
 
-/// What `materialize_schedule` produced.
-#[derive(Debug, Clone, Serialize, TS)]
-#[ts(export, export_to = "korg.ts")]
-pub struct Materialized {
-    /// The work item that now exists, as a read would return it.
-    pub work_item: WorkItemRow,
-    /// The schedule after firing — new `anchor_at` for a `created` anchor, and
-    /// `status: "done"` if the cadence was `once`.
-    pub schedule: ScheduleRow,
-}
-
-/// Turn a due schedule into a work item (D-2) — the explicit write that stands
-/// in for the daily tick #581 sketched.
-///
-/// `force` materialises a schedule that is not yet due. It exists for the
-/// "we're doing the drill early because the schema just changed" case that
-/// `docs/operations.md` names as a second trigger, and it is a parameter rather
-/// than a separate tool so the refusal can *say* what would lift it. It never
-/// bypasses the outstanding-item check: producing a second copy of a drill whose
-/// first copy is still open is not something a caller can want, and that is the
-/// duplicate-materialisation failure a scheduler would have had.
-pub async fn materialize_schedule(
-    pool: &PgPool,
-    node_id: i64,
-    force: bool,
-) -> Result<Materialized> {
-    let Some(schedule) = get_schedule(pool, node_id).await? else {
-        return Err(RepoError::NotFound(format!("no schedule with node_id {node_id}")).into());
-    };
+/// The three refusals `materialize_schedule` owes a caller, in one place so the
+/// pre-transaction check and the in-transaction re-check (#1390) cannot answer
+/// differently — a second copy of these conditions is how the promise would
+/// rot again.
+fn materialize_gate(schedule: &ScheduleRow, node_id: i64, force: bool) -> Result<()> {
     if schedule.outstanding {
         return Err(RepoError::InvalidInput(format!(
             "schedule {node_id} already materialized work item #{} and it is still \
@@ -743,6 +735,48 @@ pub async fn materialize_schedule(
         ))
         .into());
     }
+    Ok(())
+}
+
+/// What `materialize_schedule` produced.
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct Materialized {
+    /// The work item that now exists, as a read would return it.
+    pub work_item: WorkItemRow,
+    /// The schedule after firing — new `anchor_at` for a `created` anchor, and
+    /// `status: "done"` if the cadence was `once`.
+    pub schedule: ScheduleRow,
+}
+
+/// Turn a due schedule into a work item (D-2) — the explicit write that stands
+/// in for the daily tick #581 sketched.
+///
+/// `force` materialises a schedule that is not yet due. It exists for the
+/// "we're doing the drill early because the schema just changed" case that
+/// `docs/operations.md` names as a second trigger, and it is a parameter rather
+/// than a separate tool so the refusal can *say* what would lift it. It never
+/// bypasses the outstanding-item check: producing a second copy of a drill whose
+/// first copy is still open is not something a caller can want, and that is the
+/// duplicate-materialisation failure a scheduler would have had.
+///
+/// **The gates run twice** (#1390). Once before the transaction, so the common
+/// refusal is cheap and takes no lock; then again on the row this transaction
+/// has locked, because until #1390 the pre-check was the *only* check. Two
+/// callers — realistically one agent retrying a call that timed out — could both
+/// pass the pre-checks, queue on the `FOR UPDATE`, and both insert: two open
+/// copies of the drill, `last_wi_id` pointing at the second. That is precisely
+/// the duplicate the no-scheduler design (051 D-2) exists to prevent, and the
+/// one thing `force` never lifts, so the promise is now kept where it can be.
+pub async fn materialize_schedule(
+    pool: &PgPool,
+    node_id: i64,
+    force: bool,
+) -> Result<Materialized> {
+    let Some(schedule) = get_schedule(pool, node_id).await? else {
+        return Err(RepoError::NotFound(format!("no schedule with node_id {node_id}")).into());
+    };
+    materialize_gate(&schedule, node_id, force)?;
 
     let mut tx = pool.begin().await?;
     // Rendered by Postgres, from the same clock the predicate above read. The
@@ -766,6 +800,15 @@ pub async fn materialize_schedule(
     .bind(node_id)
     .fetch_one(&mut *tx)
     .await?;
+
+    // The row is ours now. Ask the gates again on what it actually says — a
+    // racing materialisation that committed while we queued on that lock has
+    // already moved `last_wi_id` and `anchor_at`, and the pre-transaction
+    // answer is stale (#1390).
+    let Some(locked) = schedule_row(&mut *tx, node_id).await? else {
+        return Err(RepoError::NotFound(format!("no schedule with node_id {node_id}")).into());
+    };
+    materialize_gate(&locked, node_id, force)?;
 
     let project_id: Option<i64> = sqlx::query_scalar("SELECT project_id FROM node WHERE id = $1")
         .bind(node_id)

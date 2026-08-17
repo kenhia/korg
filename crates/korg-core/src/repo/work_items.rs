@@ -418,6 +418,20 @@ pub struct WorkItemSummary {
     /// The live proposal covering this item (WI #824) — "which of these is
     /// already spoken for", the other question that cost N follow-up calls.
     pub proposal_node_id: Option<i64>,
+    /// When the item last changed (WI #1411) — the staleness signal a sweep
+    /// could not get from a lean row.
+    ///
+    /// kfo's Scouting Report proxied age with `wi_number` (creation order) and
+    /// said so in every run; last-touched needed one `get_work_item` per row.
+    /// `updated` only, deliberately: creation age already has a proxy, and the
+    /// missing half was "has anyone come back to this".
+    ///
+    /// The signal is only worth reading while it stays *work* activity —
+    /// korg+ GP-3: an agent-assigned priority must never ride a path that bumps
+    /// it, or a ranked stale item reads as a fresh one.
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub updated: OffsetDateTime,
 }
 
 /// What the lean list's defaults hid (WI #851, extended by #861), computed as a
@@ -498,10 +512,11 @@ pub async fn list_work_items_lean(
         has_details: bool,
         has_handoff: bool,
         proposal_node_id: Option<i64>,
+        updated: OffsetDateTime,
     }
     let rows = sqlx::query_as::<_, Row>(concat!(
         "SELECT w.wi_number, w.node_id, pj.name AS project, w.title, \
-                w.wi_type, w.wi_status, w.wi_tshirt, \
+                w.wi_type, w.wi_status, w.wi_tshirt, n.updated, \
                 (SELECT count(*) FROM comment c WHERE c.node_id = w.node_id) AS comment_count, \
                 (w.details IS NOT NULL AND w.details <> '') AS has_details, ",
         membership_columns!(),
@@ -537,6 +552,7 @@ pub async fn list_work_items_lean(
             has_details: r.has_details,
             has_handoff: r.has_handoff,
             proposal_node_id: r.proposal_node_id,
+            updated: r.updated,
         })
         .collect();
 

@@ -222,10 +222,18 @@ export type BoardProposal = { node_id: number, title: string,
  */
 summary: string, status: string, project: string | null, rank: string, pinned: boolean, comment_count: number, 
 /**
- * The work items this proposal covers, and their statuses. The four
- * counts sum to `covered_count` — `WI_STATUSES` is exactly these four.
+ * The work items this proposal covers, and their statuses. There is one
+ * count per `WI_STATUSES` value and they sum to `covered_count` — a
+ * property the `rollup_buckets_cover_wi_statuses` fence keeps true rather
+ * than this comment claiming it (#1386: it claimed four for the three
+ * sprints `parked` had been the fifth).
  */
 covered_count: number, open: number, resolved: number, done: number, closed: number, 
+/**
+ * Deferred indefinitely (#810). Unfinished, so it counts against progress
+ * the way `open` does, not toward it.
+ */
+parked: number, 
 /**
  * When the proposal row last changed. korg's only staleness signal: it is
  * *last touched*, not last progressed, which is why the board does not
@@ -616,8 +624,9 @@ span: Array<string>, created: string, updated: string, };
 
 /**
  * One slice of a program, with the rollup that stops a consumer crawling
- * (D-5). `open`/`resolved`/`done`/`closed` count the proposal's covered work
- * items, so a board renders progress from `get_program` alone.
+ * (D-5). One count per [`WI_STATUSES`] value buckets the proposal's covered
+ * work items — they sum to `covered_count` — so a board renders progress from
+ * `get_program` alone.
  */
 export type ProgramSlice = { node_id: number, title: string, status: string, 
 /**
@@ -629,7 +638,14 @@ project: string | null,
  * Position within this program. `None` on a slice linked by a bare
  * `relate` without a rank; those sort last.
  */
-rank: string | null, covered_count: number, open: number, resolved: number, done: number, closed: number, };
+rank: string | null, covered_count: number, open: number, resolved: number, done: number, closed: number, 
+/**
+ * Deferred indefinitely (#810) — unfinished work that is not in flight.
+ * Missing here until #1386: parked items were counted in `covered_count`
+ * and nowhere else, so a consumer deriving open-by-subtraction read them
+ * as open.
+ */
+parked: number, };
 
 /**
  * One project plus the areas under it (WI #828).
@@ -953,8 +969,11 @@ due: boolean,
  */
 last_wi_number: number | null, 
 /**
- * Whether that item is still `open`/`resolved` — the clause that stops a
- * schedule competing with the work item it already produced.
+ * Whether that item is still unfinished — [`vocab::WI_UNFINISHED_STATUSES`],
+ * so `parked` counts too (#810) — the clause that stops a schedule
+ * competing with the work item it already produced. This doc said
+ * `open`/`resolved` until #1387: the set it names moved in 054 and the
+ * sentence did not.
  */
 outstanding: boolean, 
 /**
@@ -985,9 +1004,10 @@ materialized: string, };
  */
 export type ScheduleOmitted = { done: number, archived: number, 
 /**
- * How many of the **returned** rows are not yet due — the count a
- * `due_only` read hid. Zero when `due_only` was not asked for, so a
- * consumer can always tell "nothing is due" from "I filtered it out".
+ * How many rows `due_only` **hid** for not being due yet — never a count
+ * of what came back (the returned rows are, by definition, due). Zero when
+ * `due_only` was not asked for, so a consumer can always tell "nothing is
+ * due" from "I filtered it out".
  */
 not_due: number, };
 
@@ -1019,8 +1039,11 @@ due: boolean,
  */
 last_wi_number: number | null, 
 /**
- * Whether that item is still `open`/`resolved` — the clause that stops a
- * schedule competing with the work item it already produced.
+ * Whether that item is still unfinished — [`vocab::WI_UNFINISHED_STATUSES`],
+ * so `parked` counts too (#810) — the clause that stops a schedule
+ * competing with the work item it already produced. This doc said
+ * `open`/`resolved` until #1387: the set it names moved in 054 and the
+ * sentence did not.
  */
 outstanding: boolean, 
 /**
@@ -1282,4 +1305,18 @@ has_handoff: boolean,
  * The live proposal covering this item (WI #824) — "which of these is
  * already spoken for", the other question that cost N follow-up calls.
  */
-proposal_node_id: number | null, };
+proposal_node_id: number | null, 
+/**
+ * When the item last changed (WI #1411) — the staleness signal a sweep
+ * could not get from a lean row.
+ *
+ * kfo's Scouting Report proxied age with `wi_number` (creation order) and
+ * said so in every run; last-touched needed one `get_work_item` per row.
+ * `updated` only, deliberately: creation age already has a proxy, and the
+ * missing half was "has anyone come back to this".
+ *
+ * The signal is only worth reading while it stays *work* activity —
+ * korg+ GP-3: an agent-assigned priority must never ride a path that bumps
+ * it, or a ranked stale item reads as a fresh one.
+ */
+updated: string, };

@@ -156,6 +156,19 @@ pub const WI_TSHIRTS: [&str; 7] = ["XS", "S", "M", "L", "XL", "Huge", "Unknown"]
 /// Kanban columns; mirrors the `card_status` enum in migration 0001.
 pub const CARD_STATUSES: [&str; 6] = ["Backlog", "Research", "OnDeck", "Active", "Done", "Cut"];
 
+/// The columns that answer an awaiting-Ken ask (#1389, D-7).
+///
+/// D-7's rule is *a state only Ken sets clears the marker*, and the kanban is
+/// entirely Ken's board — reaching the last column is him answering, and `Cut`
+/// makes the ask moot the way archiving does. The other four columns are work
+/// in motion and leave the ask standing.
+///
+/// A named constant rather than two literals in the clearing SQL because that
+/// is exactly how `parked` got missed one vocabulary over: hand-written copies
+/// of a status set do not move when the set does.
+/// `card_terminal_statuses_are_card_statuses` fences the spelling.
+pub const CARD_TERMINAL_STATUSES: [&str; 2] = ["Done", "Cut"];
+
 /// Reading-list dispositions; mirrors the `link_disposition` enum (0004).
 pub const LINK_DISPOSITIONS: [&str; 5] = ["Unread", "Done", "Revisit", "Summarized", "VaultSaved"];
 
@@ -359,6 +372,32 @@ pub const EXPORTED: [(&str, &str, &[&str]); 18] = [
     ("ERROR_CODES", "ErrorCode", &crate::error::ERROR_CODES),
 ];
 
+/// Every **named subset** of an [`EXPORTED`] vocabulary — the partitions that
+/// prose legitimately enumerates instead of the whole set (#1387).
+///
+/// The docs fence reads a pipe-span as a claim about a *whole* vocabulary. Tool
+/// descriptions are not like that: they say "everything not terminal
+/// (`open`, `resolved`, `done`, `parked`)" and "a proposal reaching
+/// `done`/`declined`", which are true statements about a partition. Without a
+/// registry of the legal partitions, a fence over that prose can only choose
+/// between rejecting correct sentences and accepting stale ones — F-4 is
+/// precisely a stale one (`open`/`resolved` for what is now three statuses).
+/// So the partitions get names here, and a description may enumerate any set
+/// in this table or in `EXPORTED`, and nothing else.
+pub const PARTITIONS: [(&str, &[&str]); 11] = [
+    ("WI_LIVE_STATUSES", &WI_LIVE_STATUSES),
+    ("WI_TERMINAL_STATUSES", &WI_TERMINAL_STATUSES),
+    ("WI_FINISHED_STATUSES", &WI_FINISHED_STATUSES),
+    ("WI_UNFINISHED_STATUSES", &WI_UNFINISHED_STATUSES),
+    ("PROPOSAL_LIVE_STATUSES", &PROPOSAL_LIVE_STATUSES),
+    ("PROPOSAL_TERMINAL_STATUSES", &PROPOSAL_TERMINAL_STATUSES),
+    ("PROGRAM_LIVE_STATUSES", &PROGRAM_LIVE_STATUSES),
+    ("PROGRAM_TERMINAL_STATUSES", &PROGRAM_TERMINAL_STATUSES),
+    ("SCHEDULE_LIVE_STATUSES", &SCHEDULE_LIVE_STATUSES),
+    ("SCHEDULE_TERMINAL_STATUSES", &SCHEDULE_TERMINAL_STATUSES),
+    ("CARD_TERMINAL_STATUSES", &CARD_TERMINAL_STATUSES),
+];
+
 /// Reject a value outside its vocabulary with the full allowed set in the
 /// message — the error doubles as the documentation an agent needs to retry.
 pub fn validate(value: &str, allowed: &[&str], what: &str) -> Result<(), RepoError> {
@@ -383,11 +422,12 @@ pub fn validate(value: &str, allowed: &[&str], what: &str) -> Result<(), RepoErr
 #[cfg(test)]
 mod partition {
     use super::{
-        PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES, PROGRAM_TERMINAL_STATUSES, PROPOSAL_LIVE_STATUSES,
-        PROPOSAL_STATUSES, PROPOSAL_TERMINAL_STATUSES, REPORT_STATUSES, SCHEDULE_LIVE_STATUSES,
-        SCHEDULE_STATUSES, SCHEDULE_TERMINAL_STATUSES, SOURCE_ASSERTIONS, SOURCE_ASSERTS_UNKNOWN,
-        SOURCE_FRESHNESS, WI_FINISHED_STATUSES, WI_LIVE_STATUSES, WI_STATUSES,
-        WI_TERMINAL_STATUSES, WI_UNFINISHED_STATUSES,
+        CARD_STATUSES, CARD_TERMINAL_STATUSES, PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES,
+        PROGRAM_TERMINAL_STATUSES, PROPOSAL_LIVE_STATUSES, PROPOSAL_STATUSES,
+        PROPOSAL_TERMINAL_STATUSES, REPORT_STATUSES, SCHEDULE_LIVE_STATUSES, SCHEDULE_STATUSES,
+        SCHEDULE_TERMINAL_STATUSES, SOURCE_ASSERTIONS, SOURCE_ASSERTS_UNKNOWN, SOURCE_FRESHNESS,
+        WI_FINISHED_STATUSES, WI_LIVE_STATUSES, WI_STATUSES, WI_TERMINAL_STATUSES,
+        WI_UNFINISHED_STATUSES,
     };
     use std::collections::BTreeSet;
 
@@ -504,6 +544,44 @@ mod partition {
         assert!(
             !WI_FINISHED_STATUSES.contains(&"parked"),
             "`parked` must never satisfy a dependency"
+        );
+    }
+
+    /// Every entry in [`PARTITIONS`] must actually be a subset of some
+    /// [`EXPORTED`] vocabulary, or the tool-description fence it feeds would
+    /// bless prose enumerating values korg does not have.
+    #[test]
+    fn every_partition_is_a_subset_of_a_vocabulary() {
+        for (name, values) in super::PARTITIONS {
+            let set: BTreeSet<&str> = values.iter().copied().collect();
+            assert!(
+                super::EXPORTED.iter().any(|(_, _, all)| {
+                    set.is_subset(&all.iter().copied().collect::<BTreeSet<&str>>())
+                }),
+                "{name} is not a subset of any vocabulary in EXPORTED"
+            );
+            assert!(!set.is_empty(), "{name} is empty");
+        }
+    }
+
+    /// `CARD_TERMINAL_STATUSES` is a subset of the columns, not a parallel
+    /// vocabulary (#1389). It feeds SQL comparisons against `card.status`, so a
+    /// typo or a renamed column would not fail — it would silently stop
+    /// clearing, leaving answered asks in the Commander's Call lane, which is
+    /// the one failure the marker exists to prevent.
+    #[test]
+    fn card_terminal_statuses_are_card_statuses() {
+        let all: BTreeSet<&str> = CARD_STATUSES.into_iter().collect();
+        let terminal: BTreeSet<&str> = CARD_TERMINAL_STATUSES.into_iter().collect();
+        assert!(
+            terminal.is_subset(&all),
+            "not a kanban column: {:?}",
+            terminal.difference(&all).collect::<Vec<_>>()
+        );
+        assert!(
+            !terminal.is_empty() && terminal.len() < all.len(),
+            "the terminal columns are some of the columns — all of them would \
+             clear every ask the moment a card moved"
         );
     }
 

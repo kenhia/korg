@@ -20,7 +20,7 @@ use ts_rs::TS;
 
 use crate::error::RepoError;
 use crate::ops::{self, schema};
-use crate::vocab::{PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES};
+use crate::vocab::{PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES, WI_STATUSES};
 
 use super::awaiting::settle_awaiting;
 use super::comments::Comment;
@@ -236,9 +236,41 @@ pub async fn get_program(pool: &PgPool, node_id: i64) -> Result<Option<ProgramRo
     )
 }
 
+/// The per-status `count(...) FILTER` list every covered-work rollup selects,
+/// derived from [`WI_STATUSES`] rather than hand-listed (#1386, F-1).
+///
+/// Sprint 054 added `parked` to the vocabulary and to both partitions, and
+/// missed the two aggregates that bucket covered work — so a parked item
+/// counted toward `covered_count` and toward no bucket, and the counts stopped
+/// summing to the total. Hand-written bucket lists are the drift surface;
+/// generating them from the vocabulary is what stops status number six
+/// repeating it. `count_expr` differs by call site (`*` under an inner join,
+/// `w.node_id` under a left one), so it is the parameter; the column aliases
+/// are the status names, which is what the row structs' field names must be —
+/// fenced by `rollup_buckets_cover_wi_statuses`.
+pub(super) fn covered_bucket_filters(count_expr: &str) -> String {
+    WI_STATUSES
+        .iter()
+        .map(|status| {
+            format!(", count({count_expr}) FILTER (WHERE w.wi_status = '{status}') AS {status} ")
+        })
+        .collect()
+}
+
+/// The outer half of [`covered_bucket_filters`] for a rollup that aggregates in
+/// a CTE and left-joins it: one `coalesce` per bucket, from the same list, so
+/// the two halves cannot name different sets of buckets.
+pub(super) fn covered_bucket_coalesce(cte: &str) -> String {
+    WI_STATUSES
+        .iter()
+        .map(|status| format!(", coalesce({cte}.{status}, 0) AS {status} "))
+        .collect()
+}
+
 /// One slice of a program, with the rollup that stops a consumer crawling
-/// (D-5). `open`/`resolved`/`done`/`closed` count the proposal's covered work
-/// items, so a board renders progress from `get_program` alone.
+/// (D-5). One count per [`WI_STATUSES`] value buckets the proposal's covered
+/// work items — they sum to `covered_count` — so a board renders progress from
+/// `get_program` alone.
 #[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq, TS)]
 #[ts(export, export_to = "korg.ts")]
 pub struct ProgramSlice {
@@ -257,6 +289,11 @@ pub struct ProgramSlice {
     pub resolved: i64,
     pub done: i64,
     pub closed: i64,
+    /// Deferred indefinitely (#810) — unfinished work that is not in flight.
+    /// Missing here until #1386: parked items were counted in `covered_count`
+    /// and nowhere else, so a consumer deriving open-by-subtraction read them
+    /// as open.
+    pub parked: i64,
 }
 
 /// A program, its ordered slices with per-slice rollups, its comments, and its
@@ -286,13 +323,10 @@ pub async fn get_program_detail(pool: &PgPool, node_id: i64) -> Result<Option<Pr
     };
     // One query for every slice and its work-item rollup: the whole point is
     // that a consumer never crawls, so this must not become N+1 either.
-    let slices = sqlx::query_as::<_, ProgramSlice>(
+    let buckets = covered_bucket_filters("w.node_id");
+    let slices = sqlx::query_as::<_, ProgramSlice>(&format!(
         "SELECT sp.node_id, sp.title, sp.status::text AS status, pj.name AS project, r.rank, \
-                count(w.node_id)                                       AS covered_count, \
-                count(w.node_id) FILTER (WHERE w.wi_status = 'open')     AS open, \
-                count(w.node_id) FILTER (WHERE w.wi_status = 'resolved') AS resolved, \
-                count(w.node_id) FILTER (WHERE w.wi_status = 'done')     AS done, \
-                count(w.node_id) FILTER (WHERE w.wi_status = 'closed')   AS closed \
+                count(w.node_id) AS covered_count{buckets}\
          FROM relationship r \
          JOIN sprint_proposal sp ON sp.node_id = r.right_id \
          JOIN node sn ON sn.id = sp.node_id \
@@ -301,8 +335,8 @@ pub async fn get_program_detail(pool: &PgPool, node_id: i64) -> Result<Option<Pr
          LEFT JOIN workitem w ON w.node_id = cov.right_id \
          WHERE r.left_id = $1 AND r.relationship = 'includes' \
          GROUP BY sp.node_id, sp.title, sp.status, pj.name, r.rank \
-         ORDER BY r.rank ASC NULLS LAST, sp.node_id ASC",
-    )
+         ORDER BY r.rank ASC NULLS LAST, sp.node_id ASC"
+    ))
     .bind(node_id)
     .fetch_all(pool)
     .await?;

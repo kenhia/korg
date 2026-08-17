@@ -629,6 +629,226 @@ fn pipe_spans_in_docs_are_complete_vocabularies() {
     }
 }
 
+/// The same rule one door over: **inside `tools()`' own descriptions** (#1387).
+///
+/// F-4 of the 044–059 re-review: sprint 054 added `parked`, the derived schemas
+/// picked it up, and the hand-written prose around them did not — three
+/// descriptions still enumerated the four-status world, and `relate` claimed
+/// eight labels against a registry of nine. The 050 fence reads `docs/`; tool
+/// descriptions are outside it, and they are the prose agents actually read.
+///
+/// The claim being checked: a run joined by `/`, `|` or `,` whose members are
+/// *all* values of one vocabulary (at least two of them) is an assertion that
+/// these are **the** values, so it must be a set korg actually has — a whole
+/// vocabulary, or one of the named partitions `vocab::PARTITIONS` registers.
+///
+/// "All of them" is what keeps envelope shapes out: `{done, declined,
+/// archived}` reads like two proposal statuses, but `archived` is not one, so
+/// the run is a field list rather than a vocabulary claim. One member is prose
+/// mentioning a value, which is why the floor is two.
+#[test]
+fn value_runs_in_tool_descriptions_are_complete_sets() {
+    for tool in korg_mcp::tools::tools() {
+        let description = tool.description.clone().unwrap_or_default();
+        for run in value_runs(&description) {
+            let is_exactly = |values: &[&str]| {
+                run == values
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<BTreeSet<_>>()
+            };
+            let claims = korg_core::vocab::EXPORTED
+                .iter()
+                .any(|(_, _, values)| run.iter().all(|t| values.contains(&t.as_str())));
+            let complete = korg_core::vocab::EXPORTED
+                .iter()
+                .any(|(_, _, values)| is_exactly(values))
+                || korg_core::vocab::PARTITIONS
+                    .iter()
+                    .any(|(_, values)| is_exactly(values));
+            assert!(
+                !claims || complete,
+                "{}'s description enumerates {run:?}, which is neither a whole \
+                 vocabulary nor a named partition in vocab.rs — a value was \
+                 probably added or retired without updating this prose",
+                tool.name,
+            );
+        }
+    }
+}
+
+/// How the disposal table (`docs/api.md`, WI #855) spells each node kind. The
+/// table is written for a reader, so `sprint_proposal` appears as "proposals" —
+/// but the mapping being *here* is what lets the coverage test below be a fence
+/// rather than a guess.
+const DISPOSAL_ROW_NAMES: [(&str, &str); 9] = [
+    ("workitem", "work items"),
+    ("card", "cards"),
+    ("link", "links"),
+    ("sprint_proposal", "proposals"),
+    ("report", "reports"),
+    ("handoff", "handoffs"),
+    ("program", "programs"),
+    ("schedule", "schedules"),
+    ("attachment", "attachments"),
+];
+
+/// Every node kind has a disposal, so every node kind is in the table (#1388).
+///
+/// The table shipped in #855 and three kinds arrived after it — `program`,
+/// `schedule`, `attachment` — none of which was added. That is not a cosmetic
+/// gap: the doctrine's load-bearing sentence is "a hard delete refuses when the
+/// row is referenced", and an agent applying it to an attachment predicts the
+/// wrong outcome of `DELETE /api/img/:id`, which deliberately does not refuse.
+/// A kind absent from the table is a kind whose disposal an agent will guess.
+#[test]
+fn the_disposal_table_covers_every_node_kind() {
+    let table = section(&read("docs/api.md"), "### Disposal semantics (WI #855)").join("\n");
+    for kind in korg_core::vocab::NODE_KINDS {
+        let spelling = DISPOSAL_ROW_NAMES
+            .iter()
+            .find(|(k, _)| *k == kind)
+            .unwrap_or_else(|| {
+                panic!("NODE_KINDS gained {kind} — give it a DISPOSAL_ROW_NAMES spelling")
+            })
+            .1;
+        assert!(
+            table.contains(spelling),
+            "docs/api.md's disposal table has no row for {kind} (\"{spelling}\") — \
+             every kind has an ending, and one the table omits is one an agent \
+             guesses"
+        );
+    }
+}
+
+/// `relate`'s description enumerates the closed label vocabulary, and until
+/// #1387 it enumerated eight of the registry's nine — `materializes` (sprint
+/// 051) never made it into the prose. The runtime error message is
+/// registry-derived and was right the whole time; only the description lied, so
+/// an agent trusting it believed it could not write a provenance edge it can.
+///
+/// The count word is gone from the description on purpose: a hand-maintained
+/// numeral is one more copy of the same fact. This test is what keeps the list
+/// whole instead.
+#[test]
+fn relate_names_every_registered_label() {
+    let relate = korg_mcp::tools::tools()
+        .into_iter()
+        .find(|t| t.name == "relate")
+        .expect("relate is a tool");
+    let description = relate.description.clone().unwrap_or_default();
+    let named: BTreeSet<String> = backticked(&description).into_iter().collect();
+    for spec in korg_core::relationships::REGISTRY {
+        assert!(
+            named.contains(spec.label),
+            "relate's description never names `{}` — the vocabulary is closed \
+             and the description is where an agent reads it",
+            spec.label
+        );
+    }
+}
+
+/// A fence that extracts nothing passes for free, so this pins the extractor
+/// against the spellings the descriptions actually use — and against the stale
+/// one F-4 found, which must come out as a run that no registered set matches.
+#[test]
+fn the_extractor_reads_the_spellings_descriptions_use() {
+    let run = |text: &str| value_runs(text);
+    let set =
+        |values: &[&str]| -> BTreeSet<String> { values.iter().map(|v| v.to_string()).collect() };
+
+    assert!(
+        run("everything not terminal (`open`, `resolved`, `done`, `parked`) and unarchived")
+            .contains(&set(&korg_core::vocab::WI_LIVE_STATUSES)),
+        "a backticked comma list is an enumeration"
+    );
+    assert!(
+        run("one count per status: open/resolved/done/closed/parked, which sum to it")
+            .contains(&set(&korg_core::vocab::WI_STATUSES)),
+        "a bare slash run is an enumeration"
+    );
+    assert!(
+        run("a proposal reaching `done`/`declined`")
+            .contains(&set(&korg_core::vocab::PROPOSAL_TERMINAL_STATUSES)),
+        "backticks around slash-joined values do not hide the run"
+    );
+    assert!(
+        run("`cadence` is once|weekly|monthly|quarterly|yearly")
+            .contains(&set(&korg_core::vocab::SCHEDULE_CADENCES)),
+        "a pipe run is an enumeration"
+    );
+
+    // The sentence F-4 caught. It must survive extraction as a run, and it must
+    // match nothing — otherwise the fence above cannot bite.
+    let stale = set(&["open", "resolved"]);
+    assert!(run("its last materialized work item is not still open/resolved").contains(&stale));
+    assert!(
+        !korg_core::vocab::EXPORTED
+            .iter()
+            .any(|(_, _, v)| stale == set(v))
+            && !korg_core::vocab::PARTITIONS
+                .iter()
+                .any(|(_, v)| stale == set(v)),
+        "`open/resolved` must match no registered set — it is the stale \
+         two-status spelling of WI_UNFINISHED_STATUSES"
+    );
+}
+
+/// Runs of two or more values joined by `/`, `|` or `,` — with or without
+/// backticks, since the descriptions use both spellings.
+///
+/// Two rules keep prose out. **One separator per run**: `a/b/c, which sums`
+/// ends at `c`, rather than swallowing the next word and quietly turning a real
+/// enumeration into an unrecognisable set the fence would then wave through.
+/// **Comma runs must be fully backticked**: an English sentence is full of
+/// commas, and the descriptions only ever comma-list values in code spans.
+fn value_runs(desc: &str) -> Vec<BTreeSet<String>> {
+    let chars: Vec<char> = desc.chars().collect();
+    let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+    let mut runs = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let mut current: Vec<String> = Vec::new();
+        let mut separator: Option<char> = None;
+        let mut all_quoted = true;
+        loop {
+            // One token: an optionally-backticked word.
+            let quoted = chars.get(i) == Some(&'`');
+            let start = if quoted { i + 1 } else { i };
+            let mut end = start;
+            while end < chars.len() && is_word(chars[end]) {
+                end += 1;
+            }
+            if end == start || (quoted && chars.get(end) != Some(&'`')) {
+                break;
+            }
+            current.push(chars[start..end].iter().collect());
+            all_quoted &= quoted;
+            i = if quoted { end + 1 } else { end };
+            // One separator — the same one throughout — optionally followed by
+            // a single space.
+            let next = match chars.get(i) {
+                Some(&c @ ('/' | '|' | ',')) if separator.unwrap_or(c) == c => c,
+                _ => break,
+            };
+            separator = Some(next);
+            i += 1;
+            if chars.get(i) == Some(&' ') {
+                i += 1;
+            }
+        }
+        if current.len() >= 2 && (separator != Some(',') || all_quoted) {
+            runs.push(current.into_iter().collect());
+        }
+        // Skip to the next token boundary so a rejected run cannot loop.
+        while i < chars.len() && is_word(chars[i]) {
+            i += 1;
+        }
+        i += 1;
+    }
+    runs
+}
+
 // ---------------------------------------------------------------------------
 // Migration headers (WI #862)
 // ---------------------------------------------------------------------------
