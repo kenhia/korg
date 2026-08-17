@@ -117,6 +117,45 @@ Run against a real stack rather than inferred from the tests — scratch Postgre
   lived with is how you get channels nobody looks at.
 - **Flipping schedule 1112 to `fortnightly`** — it cannot be done before the
   deploy, because production validates the cadence against the vocabulary in the
-  image it is running. It is the first post-deploy action, and #1113 stays
-  `resolved` rather than `done` until it happens: flip the cadence and drop the
-  note saying `weekly` was interim.
+  image it is running. It is the first post-deploy action; see below.
+
+## Deployed
+
+**2026-08-17** · image `kubsdb.encke-wahoo.ts.net:5000/korg:4edb599c0328`
+(digest `sha256:5db836a8…`) · rollback target `22b42507a3e6` (sprint 062),
+confirmed present in the registry before building.
+
+The deployed revision is `4edb599`, one commit past the merge: the ship was
+blocked by a dirty tree carrying a concurrent session's correct fix to
+`CLAUDE.md` (migrations live in `crates/korg-core/migrations/`, not
+`crates/korg-migrate/`), which was committed on its own rather than stashed or
+swept into this sprint's PR. Clean-tree-only is the rule the deploy skill exists
+to hold (D-9), and this is what honouring it looks like.
+
+Migration **0028** applied on startup: `migrations 27 → 28`, every row count
+unchanged (1311 nodes, 944 work items, 250 proposals, 49 projects, 43 reports,
+30 cards, 4 links — `node_max` and `seq_last` both still 1412). A DDL-only
+migration that moved a row count would have been the interesting result.
+
+### Verified live
+
+| Item | Check | Result |
+|---|---|---|
+| deploy gate | container revision label vs the commit built | `4edb599c0328…` — match asserted inside the deploy, not after it |
+| #1385 | `GET /api/board` | `due_schedules` present, carrying **#1112** — the schedule the WI was filed about, due since 2026-08-08 |
+| #1385 | Today at `https://kubsdb.encke-wahoo.ts.net:5674/` | amber **"1 DUE"** pill renders beside the report-health pill |
+| #1385 | `tools/list` over MCP | `get_board`'s description names `due_schedules` |
+| #1113 | `tools/list` over MCP | `` `cadence` is once\|weekly\|fortnightly\|monthly\|quarterly\|yearly `` |
+| #1113 | `PATCH /api/schedules/1112` → `fortnightly` | accepted; `due_at` moved 2026-08-08 → **2026-08-15** (anchor 2026-08-01 + 14 days), still due |
+| — | `GET /plan` deep link | 200 |
+
+Schedule 1112's notes were rewritten in the same call: the paragraph explaining
+why it was filed `weekly` "because korg has no fortnightly cadence" is gone,
+replaced by what it now is and when it changed. Leaving that note to rot was the
+failure #1113 explicitly asked to avoid.
+
+**Not smoke-tested live, deliberately:** the outstanding-item clause (a due
+schedule leaving the board when its work item is created, and returning when
+that item finishes). Exercising it means materialising a real drill in
+production; it is covered by `a_materialized_schedule_leaves_the_board_and_returns_when_done`
+in `sprint063.rs`, which drives the full round trip.
