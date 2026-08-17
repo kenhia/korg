@@ -131,3 +131,40 @@ it is a message-cosmetics nit, not a wrong answer.
 
 `korg+/PLAN.md` substrate queue item 1 is done. Amended in this ship per the
 plan's own amend rule (GP-8's other half).
+
+## Deployed
+
+2026-08-17, to kubsdb (`:5674`), built from merged `main` `22b4250`.
+
+| | |
+|---|---|
+| Image | `kubsdb.encke-wahoo.ts.net:5000/korg:22b42507a3e6` |
+| Digest | `sha256:eae9cd18cfc028c72929af1a44ead9bfd93ca0ff1b76721dc06c65df0b4cbf29` |
+| Rollback target | `a7053ae5bdb9` (sprint 060) — confirmed present in the registry before building |
+| Migrations | 27 → 27 — **no migration**, as the bundle promised |
+
+The revision assertion passed (running label equals the commit built), and
+`post-deploy-check.sh --compare` was clean with **every count unchanged**: work
+items 944, cards 30, links 4, projects 49, proposals 250, reports 43, nodes
+1311, `seq_last` 1412 on both sides.
+
+### Verified live
+
+Every additive field checked on the wire, not inferred from the image label:
+
+| Item | Check | Result |
+|---|---|---|
+| #1391 | `GET /api/projects/korg/plan` | `total: 188`, `items: 188` — the payload agrees with itself |
+| #1386 | `GET /api/board` | all 13 live proposals carry `parked`, and every row's five buckets sum to `covered_count` |
+| #1411 | `GET /api/work-items/survey` | rows carry `updated` (`2026-08-16T05:16:45Z` on the first) |
+| #1387 | `tools/list` over MCP | `relate` names all nine labels and no longer says "these eight"; `list_work_items` / `list_schedules` parked-aware; `list_comments` any-kind; `get_board` names `parked`; both awaiting descriptions name `Done`/`Cut` |
+| — | `GET /plan` deep link | 200 |
+
+**Not smoke-tested live, deliberately:** #1389 (card `Done`/`Cut` clears the
+lane) and #1390 (the in-transaction gate re-check) both need *writes* to
+exercise, and production is not the place to manufacture a card ask or race a
+schedule. Both are covered by `sprint062.rs` — #1390's test reproduces the lock
+window rather than approximating it — and their descriptions were verified live
+above. The board's 0 program slices is likewise not a gap: nothing live is
+sliced right now, so the slice assertion had no rows to check beyond the field
+being present in the type.
