@@ -552,22 +552,50 @@ async fn get_node(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
 /// Plan view payload: a project's work items plus its `depends_on` edges
 /// ([left, right] = left depends on right). Frontier/blocked computation
 /// happens client-side — the full item set is already in the payload.
+///
+/// **Full means full (#1391).** This used to take one `LIST_LIMIT_MAX` page and
+/// throw the envelope away, so a project past 500 items silently lost its
+/// newest ones — the read is `ORDER BY wi_number`, so the clip lands exactly
+/// where the live work is — and the payload said nothing a consumer could
+/// notice it by. Both `/plan` and the `plan-status` skill derive a frontier
+/// from this: a clipped item set is not a smaller answer, it is a wrong one.
+/// The pages are walked to `total`, and `total` rides along so the payload can
+/// still be checked against itself. korg, the largest project, holds 178 items,
+/// so this is one page today and stays correct at 501.
+///
+/// **Archived rows are included, on purpose.** It was an undeclared
+/// `archived: None` before; it is now a decision. An archived item is still a
+/// dependency other items were satisfied by, and the graph needs it — dropping
+/// it would turn a met dependency into a silently missing node. What to *show*
+/// is the consumer's call, and `/plan` already filters archived out of its open
+/// lanes.
 async fn project_plan(State(s): State<AppState>, Path(name): Path<String>) -> ApiResult {
-    let items = repo::list_work_items(
-        &s.pool,
-        repo::WorkItemQuery {
-            project: Some(name.clone()),
-            archived: None,
-            page: repo::PageQuery {
-                limit: Some(repo::LIST_LIMIT_MAX),
-                offset: None,
+    let mut items = Vec::new();
+    let total = loop {
+        let page = repo::list_work_items(
+            &s.pool,
+            repo::WorkItemQuery {
+                project: Some(name.clone()),
+                archived: None,
+                page: repo::PageQuery {
+                    limit: Some(repo::LIST_LIMIT_MAX),
+                    offset: Some(items.len() as i64),
+                },
             },
-        },
-    )
-    .await?
-    .items;
+        )
+        .await?;
+        let drained = page.items.is_empty();
+        items.extend(page.items);
+        // `drained` guards the loop against a corpus shrinking mid-walk, where
+        // `total` alone would never be reached.
+        if drained || items.len() as i64 >= page.total {
+            break page.total;
+        }
+    };
     let edges = repo::project_edges(&s.pool, &name, "depends_on").await?;
-    Ok(Json(json!({ "items": items, "edges": edges })))
+    Ok(Json(
+        json!({ "items": items, "edges": edges, "total": total }),
+    ))
 }
 
 // --- daily reports ----------------------------------------------------------

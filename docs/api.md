@@ -241,12 +241,24 @@ three different claims is how a corpus drifts.
 | Kind | Ending | Why |
 |---|---|---|
 | work items, cards, proposals, reports, handoffs | `archived` only | each carries a thread and a decision history |
+| programs | `archived` only (#968) | a program outlives its slices and records how a multi-repo push was sequenced; `done` is its lifecycle end, not a disposal |
+| schedules | `archived` only (#581) | `paused` and `done` are lifecycle — a paused schedule is one deliberately not surfacing, a done one has fired its single occurrence — and the materialisation history hangs off it either way |
+| attachments | **hard delete** (`DELETE /api/img/:id`), and it does **not** refuse when referenced | the one exception below |
 | projects | `archived` only (#828) | a project is the routing target for real work; `archived` already means "not a target for new work", so a delete would have nothing left to mean |
 | links | `archived` **or** `delete_link` | a capture is either something you decided about or something you mistyped |
 | areas | `delete_area` only | an area is a label with a description, not a record — nothing accumulates on it, so there is no history to archive |
 | comments, edges | delete only | correcting them *is* the edit |
 
-**The refuse-if-referenced clause is the load-bearing half.** Without it the
+**Attachments are the one deliberate exception to refuse-if-referenced** (#1388
+recorded it here; the behaviour is sprint 056's). Deleting an image cascades its
+`has_attachment` edges and its comments rather than refusing, because an image
+is bytes, not history — discarding it *is* the point, and a screenshot that
+cannot be removed because something links to it is the failure that design
+avoided. Do not predict `conflict` for `DELETE /api/img/:id` from the doctrine
+above; it will delete.
+
+**The refuse-if-referenced clause is the load-bearing half** everywhere else.
+Without it the
 schema answers the question instead, and answers it wrongly in both directions:
 `relationship` and `comment` both cascade from `node`, so deleting a link would
 take its edges and its whole thread with it; `workitem.area_id` is `ON DELETE
@@ -328,6 +340,7 @@ carry the answer:
 | `proposal_node_id` | both | node id of the **live** proposal covering this item, else `null` |
 | `has_handoff` | both | a `has_handoff` edge leaves this item — durable context is waiting |
 | `has_details` | lean only | non-empty `details`; the full row carries `details` itself |
+| `updated` | both | when the item last changed (#1411) — the staleness signal, `updated` only: `wi_number` already proxies *creation* age, and the missing half was "has anyone come back to this" |
 
 **`proposal_node_id` is null for `done` and `declined` proposals**, by design.
 The question it answers is "is this already spoken for", and a declined
@@ -480,7 +493,7 @@ above: it is one composite object, not `{items, …}`.
 | Field | What it is |
 |---|---|
 | `generated` | when the board was assembled, from **Postgres's** clock — the same one every timestamp here came from, so `generated - awaiting_since` is a correct age |
-| `active` | proposals in `active`, pinned first then rank — each with `summary`, the work-item rollup `covered_count` + `open`/`resolved`/`done`/`closed`, and `synopsis` (korg #1003): the newest comment opening with the `⟦curator⟧` marker as `{body, updated}`, or `null` |
+| `active` | proposals in `active`, pinned first then rank — each with `summary`, the work-item rollup `covered_count` plus one count per `WI_STATUSES` value (they sum to it — #1386), and `synopsis` (korg #1003): the newest comment opening with the `⟦curator⟧` marker as `{body, updated}`, or `null` |
 | `queue` | proposals in `proposed`, same row type, same order |
 | `proposals_omitted` | `{done, declined, archived}` — the same envelope, meaning the same thing, as `list_proposals` |
 | `proposal_edges` | korg #1003: every edge whose **both** endpoints are `active`/`queue` rows — `{left, right, label, directed, origin, created}`. `directed` comes from the registry (read undirected labels symmetrically); `origin`/`created` are the first read surface for D-17's write-side edge provenance, which is how curated edges (`origin: "kfdc-curator"`) stay distinguishable from human ones |
@@ -715,6 +728,13 @@ between its own `report_date`s, or a declared override), a grace window
 Never the last known status — there is deliberately no field on the row that
 could carry it. Restating a stale GREEN is the exact failure this ends.
 
+**Which "today" this counts against.** Staleness is `current_date` — Postgres's
+session date, UTC — while the flow series buckets days in `KORG_TIMEZONE`. A
+source can therefore flip stale up to ~8h off the board's local day boundary.
+Immaterial while the grace window is ≥ 1 day, which it always is (the floor),
+and recorded here only so that a "why is this stale already?" chase ends in one
+paragraph rather than in the SQL.
+
 **A cadence has to be earned.** korg infers one only when the history both holds
 at least three reports *and* **spans at least seven of the inferred cadences**
 (#1097). The count alone is not enough, and the reason is worth keeping:
@@ -782,8 +802,9 @@ An agent reads an image by fetching the `agent` variant to a temp file and
 reading that file natively:
 
 ```sh
-curl -sf http://kubsdb:5674/api/img/img-c2a/agent -o /tmp/shot.png
-curl -sf -F file=@/tmp/shot.png 'http://kubsdb:5674/api/img?owner=582'
+korg=https://kubsdb.encke-wahoo.ts.net:5674
+curl -sf "$korg/api/img/img-c2a/agent" -o /tmp/shot.png
+curl -sf -F file=@/tmp/shot.png "$korg/api/img?owner=582"
 ```
 
 ### The display id
@@ -1081,6 +1102,8 @@ away. The web UI's one-click clear is the same core call.
 | work item → `resolved` / `done` | **no** | "implemented, may still need a user test" is *the* canonical awaiting-Ken state |
 | proposal → `done` / `declined` | **yes** | both are Ken's call on the bundle |
 | program → `done` | **yes** | same |
+| card → `Done` / `Cut` | **yes** (#1389) | the kanban is Ken's board end to end, so reaching its last column is him answering; `Cut` retires the ask the way archiving does |
+| card → any other column | **no** | a card still moving is work in motion, not an answer |
 | any node → `archived` | **yes** | the ask is moot |
 
 Getting that backwards — clearing on `resolved`/`done` — would empty the lane of

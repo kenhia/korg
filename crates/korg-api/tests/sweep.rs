@@ -160,6 +160,63 @@ async fn the_plan_view_returns_items_and_their_intra_project_edges() {
     );
 }
 
+/// The plan payload is the **whole** project, past the one-page ceiling it used
+/// to stop at (WI #1391).
+///
+/// The old handler took one `LIST_LIMIT_MAX` page and dropped the envelope, so
+/// a project past 500 items lost its newest ones — the read orders by
+/// `wi_number` — and said nothing a consumer could notice it by. Both the
+/// `/plan` view and the `plan-status` skill derive a frontier from this set: a
+/// clipped answer is a wrong frontier, not a shorter one.
+///
+/// 501 items, seeded in one statement rather than 501 round trips — the subject
+/// is the handler's paging, not the create path.
+#[tokio::test]
+async fn the_plan_view_walks_past_one_page() {
+    let (_pg, pool, router) = app_with_pool().await;
+    let over_one_page = repo::LIST_LIMIT_MAX + 1;
+
+    let project_id: i64 = sqlx::query_scalar("SELECT id FROM project WHERE name = $1")
+        .bind(PROJECT)
+        .fetch_one(&pool)
+        .await
+        .expect("the harness seeded the test project");
+    sqlx::query(
+        "WITH n AS ( \
+             INSERT INTO node (kind, project_id) \
+             SELECT 'workitem', $1 FROM generate_series(1, $2) \
+             RETURNING id \
+         ) \
+         INSERT INTO workitem (node_id, wi_number, wi_type, wi_status, wi_tshirt, title, content) \
+         SELECT id, id, 'task', 'open', 'S', 'bulk item ' || id, '' FROM n",
+    )
+    .bind(project_id)
+    .bind(over_one_page)
+    .execute(&pool)
+    .await
+    .expect("seed a project past the page ceiling");
+
+    let (st, plan) = req(
+        &router,
+        "GET",
+        &format!("/api/projects/{PROJECT}/plan"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(
+        plan["items"].as_array().expect("items").len() as i64,
+        over_one_page,
+        "every item, not the first {} of them",
+        repo::LIST_LIMIT_MAX
+    );
+    assert_eq!(
+        plan["total"], over_one_page,
+        "`total` is what makes a complete answer distinguishable from a clipped \
+         one — the payload can be checked against itself"
+    );
+}
+
 /// A project with nothing in it answers honestly rather than 404ing — the
 /// `/plan` view renders an empty graph, and `plan-status` reports no work.
 #[tokio::test]

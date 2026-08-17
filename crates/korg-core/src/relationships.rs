@@ -38,8 +38,14 @@ pub struct LabelSpec {
     pub reads: &'static str,
 }
 
-/// Labels korg itself writes or interprets. Free-form labels stay legal —
-/// [`spec`] returns `None` for them and their direction is caller-defined.
+/// Labels korg itself writes or interprets — and, since LB-2 closed the
+/// vocabulary, the only labels `relate` accepts. [`spec`] still returns `None`
+/// for an unregistered label, because readers must keep rendering the
+/// pre-closure edges the corpus already holds; what changed is that nothing new
+/// can join them.
+///
+/// (This doc said "free-form labels stay legal" until #1387 — text older than
+/// the closure it was describing, which is the drift class that WI is about.)
 pub const REGISTRY: [LabelSpec; 9] = [
     LabelSpec {
         label: "covers",
@@ -270,8 +276,16 @@ mod tests {
         }
     }
 
+    /// An unregistered label is unwritable (LB-2 closed the vocabulary at
+    /// `relate`) but still *readable*: pre-closure edges are in the corpus, and
+    /// a reader that refused to render them would lose history. So `spec` says
+    /// "I don't know this one" rather than failing, and direction defaults to
+    /// meaningful — the safe reading for a label nothing declared symmetric.
+    ///
+    /// The rationale here used to say free-form labels stayed legal to write.
+    /// That stopped being true at LB-2 and the comment did not notice (#1387).
     #[test]
-    fn unknown_labels_are_caller_defined_and_keep_their_direction() {
+    fn unknown_labels_are_readable_and_keep_their_direction() {
         assert!(spec("part_of").is_none());
         assert!(direction_is_meaningful("part_of"));
         assert!(!direction_is_meaningful("related-to"));

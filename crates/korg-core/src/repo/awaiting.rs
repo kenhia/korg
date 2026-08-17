@@ -15,6 +15,7 @@ use time::OffsetDateTime;
 use ts_rs::TS;
 
 use crate::error::RepoError;
+use crate::vocab::CARD_TERMINAL_STATUSES;
 
 use super::common::require_node;
 
@@ -119,11 +120,15 @@ async fn awaiting_row(pool: &PgPool, node_id: i64) -> Result<Option<AwaitingRow>
 /// The Commander's Call lane: everything waiting on Ken, oldest ask first.
 ///
 /// **Ghost-free (D-7).** Archived nodes and nodes in a status only Ken sets
-/// (`closed` work items, `done`/`declined` proposals, `done` programs) are
-/// filtered out even if their marker somehow survived — the write rules clear
-/// it, and this is the belt to that pair of braces. A lane that accumulates
-/// answered asks is the failure the whole marker was designed to avoid, one
-/// door over.
+/// (`closed` work items, `done`/`declined` proposals, `done` programs,
+/// `Done`/`Cut` cards) are filtered out even if their marker somehow survived —
+/// the write rules clear it, and this is the belt to that pair of braces. A
+/// lane that accumulates answered asks is the failure the whole marker was
+/// designed to avoid, one door over.
+///
+/// The card arm arrived late (#1389): `set_awaiting` invited marking a card
+/// from the start and neither this filter nor [`settle_awaiting`] knew the
+/// kind, so a card answered on the kanban kept its ghost.
 ///
 /// Note what is *not* filtered: `resolved` and `done` work items stay. "I
 /// implemented it, it needs your user test" is the canonical awaiting-Ken state
@@ -135,10 +140,24 @@ pub async fn list_awaiting(pool: &PgPool) -> Result<Vec<AwaitingRow>> {
             AND COALESCE(w.wi_status, 'open') <> 'closed' \
             AND COALESCE(sp.status::text, 'proposed') NOT IN ('done', 'declined') \
             AND COALESCE(g.status, 'active') <> 'done' \
-          ORDER BY n.awaiting_since ASC, n.id ASC"
+            AND COALESCE(cd.status::text, 'Backlog') <> ALL({card_terminal}) \
+          ORDER BY n.awaiting_since ASC, n.id ASC",
+        card_terminal = sql_list(&CARD_TERMINAL_STATUSES)
     ))
     .fetch_all(pool)
     .await?)
+}
+
+/// A vocabulary array as a SQL literal list, so the clearing rule and the lane
+/// filter both read [`CARD_TERMINAL_STATUSES`] rather than restating it. The
+/// values are compile-time constants from `vocab`, never caller input.
+fn sql_list(values: &[&str]) -> String {
+    let inner = values
+        .iter()
+        .map(|v| format!("'{v}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("(ARRAY[{inner}])")
 }
 
 /// Clear the awaiting marker when the node has reached a state **only Ken
@@ -150,13 +169,19 @@ pub async fn list_awaiting(pool: &PgPool) -> Result<Vec<AwaitingRow>> {
 /// exactly the rows the lane exists to show. `closed` is different: `vocab`
 /// records it as Ken-only.
 ///
+/// A card's version of that line is [`CARD_TERMINAL_STATUSES`] (#1389) — the
+/// kanban is Ken's board end to end, so reaching its last column is him
+/// answering, and `Cut` retires the ask the way archiving does. `update_card`
+/// has always called this function; until #1389 it only ever inherited the
+/// archived clause.
+///
 /// Called from every update path rather than a trigger — LB-2 settled that edge
 /// and lifecycle rules live in core, the one path both transports share.
 pub(super) async fn settle_awaiting<'e, E>(executor: E, node_id: i64) -> Result<()>
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
-    sqlx::query(
+    sqlx::query(&format!(
         "UPDATE node n SET awaiting_since = NULL, awaiting_note = NULL \
          WHERE n.id = $1 AND n.awaiting_since IS NOT NULL AND ( \
                n.archived \
@@ -165,8 +190,12 @@ where
             OR EXISTS (SELECT 1 FROM sprint_proposal sp \
                         WHERE sp.node_id = n.id AND sp.status::text IN ('done', 'declined')) \
             OR EXISTS (SELECT 1 FROM program g \
-                        WHERE g.node_id = n.id AND g.status = 'done'))",
-    )
+                        WHERE g.node_id = n.id AND g.status = 'done') \
+            OR EXISTS (SELECT 1 FROM card cd \
+                        WHERE cd.node_id = n.id \
+                          AND cd.status::text = ANY({card_terminal})))",
+        card_terminal = sql_list(&CARD_TERMINAL_STATUSES)
+    ))
     .bind(node_id)
     .execute(executor)
     .await?;

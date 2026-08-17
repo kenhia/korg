@@ -1,4 +1,5 @@
 .scratch/
+.sprint-defaults
 /target
 /snapshots
 *.dump

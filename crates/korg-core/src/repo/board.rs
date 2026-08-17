@@ -16,7 +16,10 @@ use crate::vocab::{
 use super::awaiting::{list_awaiting, AwaitingRow};
 use super::page::archived_default;
 use super::planning::{planning_rollup, PlanningRollupRow};
-use super::programs::{list_programs, ProgramList, ProgramOmitted, ProgramRow, ProgramSlice};
+use super::programs::{
+    covered_bucket_coalesce, covered_bucket_filters, list_programs, ProgramList, ProgramOmitted,
+    ProgramRow, ProgramSlice,
+};
 use super::proposals::{proposal_omitted, ProposalOmitted};
 use super::reports::{list_report_sources, list_reports, ReportRow, SourceHealth};
 
@@ -55,13 +58,19 @@ pub struct BoardProposal {
     pub rank: Decimal,
     pub pinned: bool,
     pub comment_count: i64,
-    /// The work items this proposal covers, and their statuses. The four
-    /// counts sum to `covered_count` — `WI_STATUSES` is exactly these four.
+    /// The work items this proposal covers, and their statuses. There is one
+    /// count per `WI_STATUSES` value and they sum to `covered_count` — a
+    /// property the `rollup_buckets_cover_wi_statuses` fence keeps true rather
+    /// than this comment claiming it (#1386: it claimed four for the three
+    /// sprints `parked` had been the fifth).
     pub covered_count: i64,
     pub open: i64,
     pub resolved: i64,
     pub done: i64,
     pub closed: i64,
+    /// Deferred indefinitely (#810). Unfinished, so it counts against progress
+    /// the way `open` does, not toward it.
+    pub parked: i64,
     /// When the proposal row last changed. korg's only staleness signal: it is
     /// *last touched*, not last progressed, which is why the board does not
     /// build an event feed out of it (D-7).
@@ -352,6 +361,7 @@ struct BoardProposalRow {
     resolved: i64,
     done: i64,
     closed: i64,
+    parked: i64,
     updated: OffsetDateTime,
 }
 
@@ -371,6 +381,7 @@ impl BoardProposalRow {
             resolved: self.resolved,
             done: self.done,
             closed: self.closed,
+            parked: self.parked,
             updated: self.updated,
             synopsis,
         }
@@ -388,6 +399,7 @@ impl BoardProposalRow {
             resolved: self.resolved,
             done: self.done,
             closed: self.closed,
+            parked: self.parked,
         }
     }
 }
@@ -443,14 +455,12 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
         .iter()
         .map(|s| s.to_string())
         .collect();
-    let rows = sqlx::query_as::<_, BoardProposalRow>(
+    let buckets = covered_bucket_filters("*");
+    let coalesced = covered_bucket_coalesce("cov");
+    let rows = sqlx::query_as::<_, BoardProposalRow>(&format!(
         "WITH cov AS ( \
              SELECT r.left_id AS proposal_id, \
-                    count(*)                                                AS covered_count, \
-                    count(*) FILTER (WHERE w.wi_status = 'open')            AS open, \
-                    count(*) FILTER (WHERE w.wi_status = 'resolved')        AS resolved, \
-                    count(*) FILTER (WHERE w.wi_status = 'done')            AS done, \
-                    count(*) FILTER (WHERE w.wi_status = 'closed')          AS closed \
+                    count(*) AS covered_count{buckets}\
                FROM relationship r \
                JOIN workitem w ON w.node_id = r.right_id \
               WHERE r.relationship = 'covers' \
@@ -460,11 +470,7 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
                 pj.name AS project, sp.rank, sp.pinned, n.archived, \
                 (SELECT count(*) FROM comment cm WHERE cm.node_id = sp.node_id) \
                                                               AS comment_count, \
-                coalesce(cov.covered_count, 0) AS covered_count, \
-                coalesce(cov.open, 0)          AS open, \
-                coalesce(cov.resolved, 0)      AS resolved, \
-                coalesce(cov.done, 0)          AS done, \
-                coalesce(cov.closed, 0)        AS closed, \
+                coalesce(cov.covered_count, 0) AS covered_count{coalesced}, \
                 n.updated \
            FROM sprint_proposal sp \
            JOIN node n ON n.id = sp.node_id \
@@ -472,8 +478,8 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
            LEFT JOIN cov ON cov.proposal_id = sp.node_id \
           WHERE (sp.status::text = ANY($1) AND NOT n.archived) \
              OR sp.node_id = ANY($2) \
-          ORDER BY sp.pinned DESC, sp.rank ASC, sp.node_id ASC",
-    )
+          ORDER BY sp.pinned DESC, sp.rank ASC, sp.node_id ASC"
+    ))
     .bind(&live_statuses)
     .bind(&slice_ids)
     .fetch_all(pool)
