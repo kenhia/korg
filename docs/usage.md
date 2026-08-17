@@ -13,9 +13,11 @@ covers:
 - **Today** — the planning overview and the page to start from: "which sprint
   am I on" is the question it answers at a glance (the daily-plan week board it
   used to carry was removed with the slots feature in sprint 050, WI #965).
-  Carries the latest daily report's status pill, the active proposals list
-  (open by default) and the cards tray (collapsed by default — Ken,
-  2026-07-29). At the top sits the **Awaiting you**
+  Carries the latest daily report's status pill, a **due-schedules pill**
+  (#1385 — the count of what is due right now, linking to `/schedules`, where
+  you can act on it; like the Awaiting lane it renders nothing when nothing is
+  due), the active proposals list (open by default) and the cards tray
+  (collapsed by default — Ken, 2026-07-29). At the top sits the **Awaiting you**
   lane (#969): everything an agent has marked as moving only when Ken acts,
   oldest ask first. It renders **nothing** when the lane is empty — a panel that
   shows an empty state every day is one you learn to skip, and this one has to
@@ -261,7 +263,7 @@ Vocabularies are validated in korg-core, so an unknown value comes back as a
 - report `status`: `ok`, `attention`, `problem`
 - project `status`: `active`, `archived`
 - project `category`: `AI`, `Dashboard`, `EVAL`, `Fun`, `Infrastructure`, `Ops`, `Other`
-- schedule `cadence`: `once`, `weekly`, `monthly`, `quarterly`, `yearly`
+- schedule `cadence`: `once`, `weekly`, `fortnightly`, `monthly`, `quarterly`, `yearly`
 - schedule `anchor_mode`: `completed`, `created`
 - schedule `status`: `active`, `paused`, `done`
 - schedule substitutions: `YEAR`, `MONTH`, `DAY`, `DATE`, `QUARTER`

@@ -368,7 +368,38 @@ events: Array<BoardEvent>,
  * one row per source — single digits — and the ordering already puts every
  * `stale` row first.
  */
-sources: Array<SourceHealth>, };
+sources: Array<SourceHealth>, 
+/**
+ * What is **due right now**, soonest-due first (#1385, sprint 063).
+ *
+ * The finding this answers: schedule 1112 sat due for nine days and
+ * nothing that gets looked at daily could say so. Due-ness was computed
+ * only on `/schedules` and `list_schedules` — the two places you go when
+ * you are already thinking about schedules. That is #950's own lesson ("a
+ * channel nobody looks at is not a channel") reappearing in the feature
+ * built in its honour, and the fix is the same shape #950's was: put it on
+ * the read every daily surface already makes.
+ *
+ * **This is `list_schedules(due_only)`'s rows, not a second predicate.**
+ * Due-ness has exactly one definition (`schedule_due_sql`), so the board
+ * inherits all three of its clauses — active, interval elapsed, and no
+ * outstanding materialised item — including the last one, which is what
+ * stops the block nagging about a drill whose work item is already open
+ * and sitting in the queue.
+ *
+ * **Uncapped, like `sources` and for the same reason**: a cap sorts by
+ * due-ness, so the row it would drop is the one that has been waiting
+ * longest — the exact failure the block exists to catch, inverted. The set
+ * is bounded in practice by construction, since a schedule that fires
+ * leaves the block until its item is finished.
+ *
+ * The rows are `ScheduleRow` — the type `list_schedules` and
+ * `get_schedule` already return (the D-4 move `programs` made with
+ * `ProgramRow`), so a consumer renders a due schedule with the component
+ * it already has. `preview_title` is what materialising would create right
+ * now, substitutions applied, so a panel needs no follow-up read.
+ */
+due_schedules: Array<ScheduleRow>, };
 
 /**
  * A curated synopsis — the newest [`CURATOR_MARKER`]-opened comment on a live

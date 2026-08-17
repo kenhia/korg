@@ -212,14 +212,37 @@ pub const REPORT_STATUSES: [&str; 3] = ["ok", "attention", "problem"];
 // --- time-derived surfacing (sprint 051: #581 + #950) -----------------------
 
 /// How often a [`schedule`] comes round again; mirrors the `schedule.cadence`
-/// CHECK (0025). The four recurring values are #581's own list.
+/// CHECK (0025, widened by 0028). Ordered by interval, shortest first.
 ///
 /// `once` is not a special case with its own storage — it is the cadence whose
 /// interval is **zero**, so `schedule.anchor_at` simply *is* the fire date.
 /// That is what let the one-shot (Ken's DST-recheck example) and the quarterly
 /// restore drill share one node shape instead of two, which korg:1079 argued
 /// was the real cost of the slice that was rejected.
-pub const SCHEDULE_CADENCES: [&str; 5] = ["once", "weekly", "monthly", "quarterly", "yearly"];
+///
+/// **The set mixes two families, and that is what #1113 found.** `weekly` and
+/// `fortnightly` are whole weeks, so they preserve a *weekday*; `monthly`,
+/// `quarterly` and `yearly` advance by calendar month and drift off it
+/// (2026-08-08 is a Saturday, 2026-09-08 is a Tuesday). The original four were
+/// written before anyone had filed a real schedule, and on first contact one of
+/// the two recurring requests — "every two weeks, Saturday noon" — fell outside
+/// them, expressible only as `weekly` with a note saying it was an interim.
+/// `fortnightly` (sprint 063) is the missing member of the week family, added
+/// by the same move `once` established: a cadence is just an interval.
+///
+/// Deliberately **not** generalised to `every_n_weeks: 2`. Named values keep
+/// the vocabulary closed and greppable — the property `validate_status`, the
+/// `schedule_cadence_check` constraint and the docs_drift vocabulary fences all
+/// rest on. The question is recorded here rather than re-derived: revisit it
+/// when a *third* week-based interval is actually asked for, not before.
+pub const SCHEDULE_CADENCES: [&str; 6] = [
+    "once",
+    "weekly",
+    "fortnightly",
+    "monthly",
+    "quarterly",
+    "yearly",
+];
 
 /// Which event advances `schedule.anchor_at` — #581's "two styles", named.
 ///
