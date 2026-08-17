@@ -82,8 +82,9 @@ from one binary; production runs on kubsdb at `:5674`.
 - `crates/korg-core/src/repo/` — queries and projections, one module per
   domain; `mod.rs` re-exports them all, so callers still say `repo::`.
 - `crates/korg-mcp/src/tools.rs` — the MCP tool surface.
-- `crates/korg-migrate/` — numbered migrations; each header states its
-  rollback semantics.
+- `crates/korg-core/migrations/` — numbered migrations; each header states
+  its rollback semantics. (`crates/korg-migrate/` is the legacy kwi/kcard
+  import crate and its snapshot-backed rehearsal suites.)
 - `web/` — the SvelteKit UI.
 
 ### Gotchas
