@@ -35,18 +35,37 @@ use super::relationships::{related_context, RelatedRef};
 use super::selectors::resolve_project;
 use super::work_items::{get_work_item, WorkItemRow, WORKITEM_COMMENT_CAP};
 
-/// How long each cadence waits lives **only** in the SQL `CASE` below and in
-/// [`schedule_select`], deliberately: a Rust-side lookup table would be a second
-/// home for one fact, and the two would drift the way every hand-kept copy in
-/// this codebase has. `once` is **zero**, which is the whole reason the one-shot
-/// needed no second storage shape — its `anchor_at` simply *is* its fire date.
+/// How long each cadence waits, as SQL — **one home for the fact**.
+///
+/// A Rust-side lookup table would be a second home and the two would drift the
+/// way every hand-kept copy in this codebase has, so the intervals live in SQL.
+/// Until #1113 they lived in SQL *twice* — the same `CASE` written out in
+/// [`schedule_due_sql`] and in [`schedule_select`] — and adding `fortnightly`
+/// would have meant adding it to both, with a silently wrong `due_at` on either
+/// side of a miss. One function, called by both, removes the question.
+///
+/// `once` is **zero**, which is the whole reason the one-shot needed no second
+/// storage shape — its `anchor_at` simply *is* its fire date. `fortnightly` is
+/// 14 days rather than "half a month": it is a *week*-family cadence, and whole
+/// weeks are exactly what preserves the weekday (see
+/// [`vocab::SCHEDULE_CADENCES`]).
 ///
 /// The exhaustiveness risk is real and is fenced by a test rather than by the
-/// type system: a cadence added to [`vocab::SCHEDULE_CADENCES`] without a `CASE`
-/// arm here makes `due_at` NULL, which would fail to deserialize rather than
+/// type system: a cadence added to [`vocab::SCHEDULE_CADENCES`] without an arm
+/// here makes `due_at` NULL, which would fail to deserialize rather than
 /// quietly mis-sort. `every_cadence_has_an_interval` (sprint051) drives every
 /// vocabulary value through the real query.
-///
+fn cadence_interval_sql() -> &'static str {
+    "(CASE s.cadence \
+        WHEN 'once'        THEN interval '0 days' \
+        WHEN 'weekly'      THEN interval '7 days' \
+        WHEN 'fortnightly' THEN interval '14 days' \
+        WHEN 'monthly'     THEN interval '1 month' \
+        WHEN 'quarterly'   THEN interval '3 months' \
+        WHEN 'yearly'      THEN interval '1 year' \
+     END)"
+}
+
 /// The SQL fragment that decides due-ness, shared by every read so the
 /// definition cannot fork. Depends on `s` (schedule) and a `now` expression.
 ///
@@ -73,14 +92,9 @@ fn schedule_due_sql() -> String {
         "s.status = 'active' \
      AND NOT EXISTS (SELECT 1 FROM workitem lw WHERE lw.node_id = s.last_wi_id \
                        AND {}) \
-     AND s.anchor_at + (CASE s.cadence \
-            WHEN 'once'      THEN interval '0 days' \
-            WHEN 'weekly'    THEN interval '7 days' \
-            WHEN 'monthly'   THEN interval '1 month' \
-            WHEN 'quarterly' THEN interval '3 months' \
-            WHEN 'yearly'    THEN interval '1 year' \
-         END) <= now()",
-        outstanding_sql("lw.wi_status")
+     AND s.anchor_at + {} <= now()",
+        outstanding_sql("lw.wi_status"),
+        cadence_interval_sql()
     )
 }
 
@@ -242,13 +256,7 @@ fn schedule_select() -> String {
     format!(
         "SELECT s.node_id, s.title, s.template, s.notes, s.cadence, s.anchor_mode, \
                 s.status, s.wi_type, s.wi_tshirt, pj.name AS project, s.anchor_at, \
-                s.anchor_at + (CASE s.cadence \
-                    WHEN 'once'      THEN interval '0 days' \
-                    WHEN 'weekly'    THEN interval '7 days' \
-                    WHEN 'monthly'   THEN interval '1 month' \
-                    WHEN 'quarterly' THEN interval '3 months' \
-                    WHEN 'yearly'    THEN interval '1 year' \
-                 END) AS due_at, \
+                s.anchor_at + {} AS due_at, \
                 ({}) AS due, \
                 lw.wi_number AS last_wi_number, \
                 coalesce({}, false) AS outstanding, \
@@ -263,6 +271,7 @@ fn schedule_select() -> String {
          JOIN node n ON n.id = s.node_id \
          LEFT JOIN project pj ON pj.id = n.project_id \
          LEFT JOIN workitem lw ON lw.node_id = s.last_wi_id",
+        cadence_interval_sql(),
         schedule_due_sql(),
         outstanding_sql("lw.wi_status"),
         substituted("s.title")

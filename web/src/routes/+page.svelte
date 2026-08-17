@@ -5,8 +5,15 @@
     type CardRow,
     type ProposalRow,
     type ReportRow,
+    type ScheduleRow,
   } from "$lib/api";
-  import { ID_CLASS, chip, isCut, reportStatusPill } from "$lib/domain";
+  import {
+    ID_CLASS,
+    chip,
+    isCut,
+    reportStatusPill,
+    scheduleDuePill,
+  } from "$lib/domain";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
   import NodePreview from "$lib/components/NodePreview.svelte";
   import AwaitingLane from "$lib/components/AwaitingLane.svelte";
@@ -21,6 +28,11 @@
   // The most recent daily report, for the health pill beside the heading.
   // `list_reports` orders by report_date DESC, so the head of the list is it.
   let latestReport = $state<ReportRow | null>(null);
+  // What is due right now (#1385). Schedule 1112 sat due for nine days because
+  // due-ness was only ever computed on /schedules — the page you open when you
+  // are already thinking about schedules. This is the human half of the fix;
+  // the machine half is `due_schedules` on get_board.
+  let dueSchedules = $state<ScheduleRow[]>([]);
   let loading = $state(true);
   let loadError = $state<unknown>(null);
   let sourceSearch = $state("");
@@ -57,14 +69,16 @@
   async function load() {
     loadError = null;
     try {
-      const [cardPage, proposalRows, reportRows] = await Promise.all([
+      const [cardPage, proposalRows, reportRows, due] = await Promise.all([
         api.cards(),
         api.proposals(),
         api.reports(),
+        api.schedules({ due_only: true }),
       ]);
       cards = cardPage.items;
       proposals = proposalRows;
       latestReport = reportRows[0] ?? null;
+      dueSchedules = due.items;
     } catch (cause) {
       loadError = cause;
     } finally {
@@ -102,6 +116,21 @@
             data-testid="latest-report-status"
             title={`Daily report ${latestReport.report_date} — ${latestReport.summary}`}
             >{latestReport.status}</a
+          >
+        {/if}
+        <!-- Due schedules (#1385). Rendered only when something IS due, like
+             the Awaiting lane below: a pill reading "0 due" every day is
+             furniture, and furniture is what the eye learns to skip. The title
+             names what is due, so the answer to "due *what*?" needs no click —
+             and the click, when it comes, lands on the page that can
+             materialise it. Same pill as /schedules, from one definition. -->
+        {#if dueSchedules.length}
+          <a
+            href="/schedules"
+            class={scheduleDuePill(true, false)}
+            data-testid="due-schedules"
+            title={dueSchedules.map((s) => s.preview_title).join("\n")}
+            >{dueSchedules.length} due</a
           >
         {/if}
       </div>

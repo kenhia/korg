@@ -504,6 +504,8 @@ above: it is one composite object, not `{items, …}`.
 | `depth` | per-project queue depth — every project, with its `status` |
 | `reports` | the newest 5 |
 | `events` | #977: the newest 20 status transitions, newest first — `{node_id, kind, wi_number, title, project, from_status, to_status, at}`. See below |
+| `sources` | #950: every reporting source with its `freshness` and what it `asserts`. **Uncapped** — see below |
+| `due_schedules` | #1385: what is **due right now**, soonest-due first — `list_schedules(due_only)`'s `ScheduleRow`s, uncapped. See below |
 
 **It takes no arguments**, for the reason `list_awaiting` takes none: it is one
 screen's state, and every filter it could offer is already decided by what the
@@ -558,6 +560,37 @@ would give that kind a half-recorded history — and a feed that is silently
 partial for one kind is worse than one that never claimed to cover it. A
 schedule's real history is its `materializes` edges, which record every firing
 already.
+
+### Due schedules (#1385)
+
+`due_schedules` is what is due **right now**, soonest-due first. It exists
+because the schedules feature computed due-ness correctly and then put it
+nowhere anybody looks: only `/schedules` and `list_schedules`, the two places
+you go when you are *already* thinking about schedules. Schedule 1112 sat due
+for nine days, invisible — #950's own lesson ("a channel nobody looks at is not
+a channel") reappearing in the feature built in its honour.
+
+Three properties, and each is a decision:
+
+- **It is `list_schedules(due_only: true)`'s rows, not a second predicate.**
+  Due-ness has exactly one definition — the three clauses under "Schedules"
+  below — and the board calls the list read to get them. A board query that
+  re-derived due-ness would agree on the day it was written and drift after,
+  and the clause it would most likely drop is the outstanding-item one, which is
+  what stops the block nagging about a drill whose work item is already open.
+- **Uncapped**, for the reason `sources` is: the block is sorted by due-ness, so
+  a cap drops the row that has been waiting longest — the failure it exists to
+  catch, inverted. It is bounded in practice by construction: a schedule that
+  fires leaves the block until its item is finished.
+- **Full `ScheduleRow`s**, the type `list_schedules` and `get_schedule` already
+  return — the same reuse `programs` makes with `ProgramRow`. `preview_title` is
+  what materialising would create right now, substitutions applied, so a panel
+  renders a due row without a follow-up read.
+
+Every consumer of the board inherits it (GP-1 in the korg+ guiding plan: agents
+curate korg, the board renders korg — a panel that needs data korg cannot hold
+is a korg work item, never a side store). korg's own Today page shows the count
+as a pill; kfdc and korg-dash get the block for free.
 
 ### Deconfliction (#978)
 
@@ -688,6 +721,14 @@ due  ⟺  status = 'active'
 - **`once` is not a special case.** It is the cadence whose interval is zero, so
   `anchor_at` *is* the fire date. The one-shot ("recheck the timers after the DST
   transition") and the quarterly restore drill are one node shape.
+- **The cadence set is two families, and picking the wrong one loses a weekday.**
+  `weekly` and `fortnightly` are whole weeks, so they hold the day a schedule
+  fires on; every calendar-month cadence advances by month and drifts off it
+  (2026-08-08 is a Saturday, 2026-09-08 is a Tuesday). "Every other Saturday" is
+  `fortnightly` — which was added in sprint 063 (#1113) after the feature's first
+  live use found the week family had exactly one member and one of the two
+  recurring requests could only be approximated. A third week interval would be
+  the point to reconsider a counted `every_n_weeks`; two is not.
 - **The outstanding clause is the anti-duplicate rule**, and the honest one:
   while the drill's work item is open, that item *is* the schedule's surface.
   `resolved` counts as outstanding here specifically — a drill that "may still

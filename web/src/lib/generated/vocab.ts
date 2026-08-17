@@ -33,7 +33,7 @@ export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 export const PROJECT_CATEGORIES = ["AI", "Dashboard", "EVAL", "Fun", "Infrastructure", "Ops", "Other"] as const;
 export type ProjectCategory = (typeof PROJECT_CATEGORIES)[number];
 
-export const SCHEDULE_CADENCES = ["once", "weekly", "monthly", "quarterly", "yearly"] as const;
+export const SCHEDULE_CADENCES = ["once", "weekly", "fortnightly", "monthly", "quarterly", "yearly"] as const;
 export type ScheduleCadence = (typeof SCHEDULE_CADENCES)[number];
 
 export const SCHEDULE_ANCHORS = ["completed", "created"] as const;

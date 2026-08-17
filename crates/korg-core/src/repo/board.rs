@@ -22,6 +22,7 @@ use super::programs::{
 };
 use super::proposals::{proposal_omitted, ProposalOmitted};
 use super::reports::{list_report_sources, list_reports, ReportRow, SourceHealth};
+use super::schedules::{list_schedules, ScheduleRow};
 
 // --- the board rollup (WI #970) ---------------------------------------------
 
@@ -338,6 +339,35 @@ pub struct BoardRollup {
     /// one row per source — single digits — and the ordering already puts every
     /// `stale` row first.
     pub sources: Vec<SourceHealth>,
+    /// What is **due right now**, soonest-due first (#1385, sprint 063).
+    ///
+    /// The finding this answers: schedule 1112 sat due for nine days and
+    /// nothing that gets looked at daily could say so. Due-ness was computed
+    /// only on `/schedules` and `list_schedules` — the two places you go when
+    /// you are already thinking about schedules. That is #950's own lesson ("a
+    /// channel nobody looks at is not a channel") reappearing in the feature
+    /// built in its honour, and the fix is the same shape #950's was: put it on
+    /// the read every daily surface already makes.
+    ///
+    /// **This is `list_schedules(due_only)`'s rows, not a second predicate.**
+    /// Due-ness has exactly one definition (`schedule_due_sql`), so the board
+    /// inherits all three of its clauses — active, interval elapsed, and no
+    /// outstanding materialised item — including the last one, which is what
+    /// stops the block nagging about a drill whose work item is already open
+    /// and sitting in the queue.
+    ///
+    /// **Uncapped, like `sources` and for the same reason**: a cap sorts by
+    /// due-ness, so the row it would drop is the one that has been waiting
+    /// longest — the exact failure the block exists to catch, inverted. The set
+    /// is bounded in practice by construction, since a schedule that fires
+    /// leaves the block until its item is finished.
+    ///
+    /// The rows are `ScheduleRow` — the type `list_schedules` and
+    /// `get_schedule` already return (the D-4 move `programs` made with
+    /// `ProgramRow`), so a consumer renders a due schedule with the component
+    /// it already has. `preview_title` is what materialising would create right
+    /// now, substitutions applied, so a panel needs no follow-up read.
+    pub due_schedules: Vec<ScheduleRow>,
 }
 
 /// One row of the board's proposal pass, before it is split by panel.
@@ -582,6 +612,12 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
         reports: list_reports(pool, None, BOARD_REPORT_CAP).await?,
         events: list_transitions(pool, BOARD_EVENT_CAP).await?,
         sources: list_report_sources(pool).await?,
+        // Live schedules only (the `list_schedules` default), unarchived, and
+        // due — through the list read itself, so the board cannot drift from
+        // `/schedules` about what "due" means.
+        due_schedules: list_schedules(pool, None, None, true, archived_default())
+            .await?
+            .items,
     })
 }
 

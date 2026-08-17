@@ -677,6 +677,67 @@ fn value_runs_in_tool_descriptions_are_complete_sets() {
     }
 }
 
+/// Every field of the board rollup has a row in `docs/api.md`'s board table
+/// (#1385).
+///
+/// The board is korg's widest contract — kfdc and korg-dash both render it —
+/// and its table is exactly the hand-maintained inventory this file exists to
+/// fence. Two fields had already fallen out of it before this test existed
+/// (`sources`, shipped in 051), so the drift is demonstrated rather than
+/// hypothetical: the table is where a consumer learns a panel is available, and
+/// a field absent from it is a panel nobody wires up.
+///
+/// Read off the **serialized** shape, because that is the wire contract. The
+/// empty literal is the fence's other half: a new field stops this file
+/// compiling, and the reader of that error is one line from the assertion that
+/// says where to document it.
+#[test]
+fn the_board_table_documents_every_rollup_field() {
+    let board = serde_json::to_value(korg_core::repo::BoardRollup {
+        generated: time::OffsetDateTime::UNIX_EPOCH,
+        active: Vec::new(),
+        queue: Vec::new(),
+        proposals_omitted: korg_core::repo::ProposalOmitted {
+            done: 0,
+            declined: 0,
+            archived: 0,
+        },
+        proposal_edges: Vec::new(),
+        blocked: Vec::new(),
+        programs: Vec::new(),
+        programs_omitted: korg_core::repo::ProgramOmitted {
+            done: 0,
+            archived: 0,
+        },
+        awaiting: Vec::new(),
+        depth: Vec::new(),
+        reports: Vec::new(),
+        events: Vec::new(),
+        sources: Vec::new(),
+        due_schedules: Vec::new(),
+    })
+    .expect("the rollup serializes");
+    // The field table only — the `###` subsections below it have tables of
+    // their own, and a row of one of those must not stand in for a missing
+    // top-level field.
+    let table: String = section(&read("docs/api.md"), "## The board rollup (#970)")
+        .into_iter()
+        .take_while(|l| !l.starts_with("### "))
+        .filter(|l| l.starts_with('|'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let documented: BTreeSet<String> = backticked(&table).into_iter().collect();
+
+    for field in board.as_object().expect("the rollup is an object").keys() {
+        assert!(
+            documented.contains(field),
+            "docs/api.md's board table has no row for `{field}` — the board is \
+             the contract kfdc and korg-dash render, and a field the table omits \
+             is a panel nobody knows to wire up",
+        );
+    }
+}
+
 /// How the disposal table (`docs/api.md`, WI #855) spells each node kind. The
 /// table is written for a reader, so `sprint_proposal` appears as "proposals" —
 /// but the mapping being *here* is what lets the coverage test below be a fence
@@ -773,7 +834,7 @@ fn the_extractor_reads_the_spellings_descriptions_use() {
         "backticks around slash-joined values do not hide the run"
     );
     assert!(
-        run("`cadence` is once|weekly|monthly|quarterly|yearly")
+        run("`cadence` is once|weekly|fortnightly|monthly|quarterly|yearly")
             .contains(&set(&korg_core::vocab::SCHEDULE_CADENCES)),
         "a pipe run is an enumeration"
     );
