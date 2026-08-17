@@ -34,6 +34,15 @@ over ceremony.
   while the sprint is running, which is the only time it is useful.
 - If the korg or klams MCP tools are unavailable in your session, say so
   up front — don't silently work around missing infrastructure.
+- A few projects share contract surfaces with siblings and have a
+  **guiding plan** constraining how those change; most have none, and one
+  grep is the whole cost of finding out. Grep the `index.md` routing
+  table in `kai:~/src/tools/cross-project-planning` — a local path on
+  kai, read through kaed from any other host (`root: "kai:src"`, path
+  `tools/cross-project-planning/…`); don't clone a second copy. Not
+  listed → nothing applies. Listed → read the mapped plan folder before
+  planning sessions and before changing a contract surface it names, and
+  amend the plan in the same ship when what you build diverges from it.
 - TDD preferred: write the failing test first when practical.
 
 ### Tooling preferences
