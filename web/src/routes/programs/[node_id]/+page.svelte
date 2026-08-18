@@ -7,7 +7,7 @@
   // program → neighbors → per-proposal get_proposal → per-proposal work items,
   // which is exactly the crawl `get_program` replaces.
   import { page } from "$app/stores";
-  import { api, type ProgramDetail } from "$lib/api";
+  import { api, type ProgramDetail, type ProgramSlice } from "$lib/api";
   import type { ProgramStatus } from "$lib/generated/vocab";
   import MarkdownView from "$lib/components/MarkdownView.svelte";
   import {
@@ -17,11 +17,13 @@
     chip,
     nodePage,
     sliceProgress,
+    sliceUnfinished,
     stamp,
   } from "$lib/domain";
   import { PROGRAM_STATUSES } from "$lib/generated/vocab";
   import { attempt } from "$lib/toast.svelte";
   import Comments from "$lib/components/Comments.svelte";
+  import Dialog from "$lib/components/Dialog.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
 
   const nodeId = $derived(Number($page.params.node_id));
@@ -70,7 +72,7 @@
   // a program row: marking one done clears its awaiting marker server-side,
   // which is why it sits beside the awaiting note rather than in a menu.
   let saving = $state(false);
-  async function setStatus(status: ProgramStatus) {
+  async function commitStatus(status: ProgramStatus) {
     if (!program || program.status === status) return;
     saving = true;
     const r = await attempt(
@@ -79,6 +81,34 @@
     );
     if (r) program = { ...program, status: r.status };
     saving = false;
+  }
+
+  // #1168 — the close-out confirmation. The bare buttons above shipped in 049;
+  // what Ken asked for and did not get was the gate on the one transition that
+  // means "this is over".
+  //
+  // Enabled always, with a confirm — his own preferred half of the ask, and the
+  // right one: a control disabled until every slice is finished cannot close
+  // the program that is *actually* finished but has a slice nobody will ever
+  // pick up, which is the case he hits. Marking done is also reversible (the
+  // `active` button is right there), so this is a "did you mean it" and not a
+  // destructive-action confirm — the difference ConfirmButton's scope note
+  // draws, and why this is a dialog that names the unfinished slices rather
+  // than an inline two-step that just says "Sure?".
+  const unfinished = $derived(
+    (program?.slices ?? [])
+      .map((s) => ({ slice: s, why: sliceUnfinished(s) }))
+      .filter((u): u is { slice: ProgramSlice; why: string } => u.why !== null),
+  );
+
+  let confirming = $state(false);
+
+  async function setStatus(status: ProgramStatus) {
+    if (status === "done" && unfinished.length > 0) {
+      confirming = true;
+      return;
+    }
+    await commitStatus(status);
   }
 </script>
 
@@ -255,3 +285,46 @@
     <Comments node_id={program.node_id} />
   {/if}
 </section>
+
+{#if confirming}
+  <Dialog
+    open={true}
+    onClose={() => (confirming = false)}
+    placement="center"
+    title="Close out this program?"
+    class="max-w-lg"
+  >
+    <div class="space-y-3" data-testid="program-close-confirm">
+      <p class="text-sm">
+        {unfinished.length}
+        {unfinished.length === 1 ? "slice is" : "slices are"} not finished. Marking this
+        program done says the whole arc is over — you can set it back to active if
+        it isn't.
+      </p>
+      <ul class="space-y-1 text-sm">
+        {#each unfinished as u (u.slice.node_id)}
+          <li class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5">
+            <span class={ID_CLASS}>#{u.slice.node_id}</span>
+            <span class="ml-1">{u.slice.title}</span>
+            <span class="ml-1 text-xs text-[var(--color-muted)]">— {u.why}</span>
+          </li>
+        {/each}
+      </ul>
+      <div class="flex justify-end gap-2">
+        <button
+          class="rounded border border-[var(--color-border)] px-3 py-1 text-sm hover:bg-[var(--color-surface-hi)]"
+          onclick={() => (confirming = false)}>Cancel</button
+        >
+        <button
+          class="rounded bg-[var(--color-accent-soft)] px-3 py-1 text-sm hover:bg-[var(--color-accent)]"
+          data-testid="program-close-anyway"
+          disabled={saving}
+          onclick={async () => {
+            confirming = false;
+            await commitStatus("done");
+          }}>Mark done anyway</button
+        >
+      </div>
+    </div>
+  </Dialog>
+{/if}

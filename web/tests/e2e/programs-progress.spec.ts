@@ -116,7 +116,13 @@ test("closing an item moves it from work-complete to verified", async ({
 
 test("a program's status is settable from its own page", async ({ page, request }) => {
   const stamp = Date.now() + 2;
-  const { program } = await seedProgram(request, stamp, ["resolved"]);
+  const { program, slice } = await seedProgram(request, stamp, ["resolved"]);
+  // #1168 put a confirmation in front of `done` when a slice is unfinished, and
+  // a proposal still sitting at `proposed` is unfinished however complete its
+  // work items are. This test is about the control writing at all, so its slice
+  // is closed out first; the gate itself has its own spec
+  // (program-close-out.spec.ts), including the case that reaches this dialog.
+  await request.patch(`/api/proposals/${slice.node_id}`, { data: { status: "done" } });
 
   await page.goto(`/programs/${program.node_id}`);
   const control = page.getByTestId("program-status-control");

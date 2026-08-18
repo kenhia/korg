@@ -347,6 +347,40 @@ export function sliceProgress(s: SliceCounts): {
   };
 }
 
+/** A proposal that is closed out, whichever way it went. Declined counts:
+ *  nothing is waiting on it. */
+const SLICE_FINISHED_STATUSES = ["done", "declined"];
+
+/**
+ * Why this slice is not finished, or null when it is (WI #1168).
+ *
+ * Ken's ask is a program close-out that says "not all the slices are complete,
+ * you sure?", so something has to decide what complete means, and the two
+ * halves of the answer are different vocabularies:
+ *
+ * - the **slice** is a sprint proposal, and its terminal statuses are `done`
+ *   and `declined`;
+ * - its **work items** are complete at `resolved + done + closed` — #978's
+ *   *completion* split, not the visibility one. `resolved` means implemented
+ *   and awaiting Ken, and a program he is about to close by hand is precisely
+ *   the case where that counts as done. `covered_count` includes `parked`
+ *   (#1386), so parked work lands in the remainder here rather than vanishing
+ *   — deferred indefinitely is still not finished.
+ *
+ * A reason string rather than a boolean because the dialog has to *say* which
+ * slices and why: "are you sure" with no evidence is the kind of confirm people
+ * learn to click through.
+ */
+export function sliceUnfinished(s: SliceCounts & { status: string }): string | null {
+  const reasons: string[] = [];
+  if (!SLICE_FINISHED_STATUSES.includes(s.status)) reasons.push(`still ${s.status}`);
+  const remaining = s.covered_count - (s.resolved + s.done + s.closed);
+  if (remaining > 0) {
+    reasons.push(`${remaining} of ${s.covered_count} work items unfinished`);
+  }
+  return reasons.length > 0 ? reasons.join(", ") : null;
+}
+
 /**
  * The bar's two hues, reusing meanings the rest of the UI already carries so
  * the colour is readable before the legend is: emerald is a finished status
@@ -361,14 +395,18 @@ export const PROGRESS_WORK_CLASS = "bg-amber-500";
 /**
  * The kinds with a page of their own, and how to build it.
  *
- * Two entries, and that is the honest size of the set: everything else is
+ * Three entries, and that is the honest size of the set: everything else is
  * rendered inside a list page or the slide-over preview. Add a route here the
  * day a kind grows one, and both the preview's "Open full page" affordance and
- * the awaiting lane pick it up without either being edited.
+ * the awaiting lane pick it up without either being edited — which is exactly
+ * what `sprint_proposal` did when #1162 gave it a page: the magnifier on the
+ * Planning card was the only *new* affordance written, and the other two
+ * followed from this line.
  */
 const OWN_PAGE: Record<string, (node_id: number) => string> = {
   handoff: (id) => `/handoffs/${id}`,
   program: (id) => `/programs/${id}`,
+  sprint_proposal: (id) => `/planning/${id}`,
 };
 
 /** The node's own page, or null when the kind has none. */
@@ -381,15 +419,19 @@ export function nodePage(kind: string, node_id: number): string | null {
  * per-node route.
  *
  * A list page is a genuinely useful destination, not a consolation: it is where
- * the row is, and landing on it beats a dead title. The awaiting lane already
- * shipped this reasoning for `sprint_proposal` → `/planning` (#969); #981 only
- * asks for the rest of the kinds to be treated the same way.
+ * the row is, and landing on it beats a dead title. The awaiting lane shipped
+ * this reasoning first, for `sprint_proposal` → `/planning` (#969); #981 asked
+ * for the rest of the kinds to be treated the same way.
+ *
+ * `sprint_proposal` has since graduated to `OWN_PAGE` (#1162) and is gone from
+ * here rather than kept as a shadowed entry — `nodeHref` checks `OWN_PAGE`
+ * first, so leaving it would be a line that reads like a routing decision and
+ * has not been one since.
  */
 const LIST_PAGE: Record<string, string> = {
   card: "/cards",
   link: "/reading-list",
   report: "/daily-reports",
-  sprint_proposal: "/planning",
   schedule: "/schedules",
 };
 

@@ -39,15 +39,24 @@
   import ConfirmButton from "$lib/components/ConfirmButton.svelte";
   import RowTickers from "$lib/components/RowTickers.svelte";
   import { attempt, notify } from "$lib/toast.svelte";
+  import {
+    ALL_PROJECTS as ALL,
+    readProjectScope,
+    writeProjectScope,
+  } from "$lib/projectScope";
 
-  const ALL = "\u0000all";
   const UNASSIGNED = "Unassigned";
 
   // WI #83 — persist the chosen project so it survives navigating away and
   // back (the page component remounts on client-side nav). SSR-safe.
-  const STICKY_KEY = "korg.workitems.project";
+  //
+  // WI #1310 — and it is the *same* selection the Planning rail shows, so both
+  // the key and the "all projects" sentinel moved to `$lib/projectScope`. `ALL`
+  // is that sentinel under this page's own name: every branch below reads
+  // better as `current === ALL` than as a comparison with an imported constant.
   // WI #678 — the rail's grouping mode is a view preference, not a navigation
   // step: it should survive the remount for the same reason the project does.
+  // Unlike the project it stays per-page — see projectScope.ts.
   const STICKY_GROUP_KEY = "korg.workitems.groupByCategory";
   function readSticky(key: string): string | null {
     try {
@@ -404,7 +413,7 @@
     const [ps, recent] = await Promise.all([api.projects(), api.recentProject()]);
     projects = ps;
     if (current === ALL) {
-      const stored = readSticky(STICKY_KEY);
+      const stored = readProjectScope();
       if (stored !== null && (stored === ALL || ps.some((p) => p.name === stored))) {
         current = stored;
       } else if (recent.project) {
@@ -555,7 +564,7 @@
 
   async function pick(name: string) {
     current = name;
-    writeSticky(STICKY_KEY, name);
+    writeProjectScope(name);
     detail = null;
     creating = false;
     await loadItems();
