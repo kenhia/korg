@@ -219,3 +219,41 @@ page-level filter and a corpus-wide search should not read as the same control.
   there and that the next step is a different kind of index.
 - `attachment` filenames are unindexed. Deliberate, and trivially reversible if
   "which image was that" ever becomes a real question.
+
+## Deployed
+
+**2026-08-18** — `kubsdb.encke-wahoo.ts.net:5674`, image
+`kubsdb.encke-wahoo.ts.net:5000/korg:4c7d0249627f`
+(`org.opencontainers.image.revision=4c7d0249627fa340fedd0a22bedcb53a2659e7c6`,
+the squash-merge of PR #71). Rollback target: `korg:e292e855fed4` (sprint 065),
+confirmed present in the registry before the build.
+
+Backups verified current beforehand — `korg-20260818-031940.sql.gz`, 1.59 MB,
+larger than the previous night's — which matters more than usual here, because
+a rollback across 0029 is a schema boundary and needs a dump restore rather than
+a re-tag.
+
+**Migration 28 → 29, and the counts prove it was DDL-only.**
+`scripts/post-deploy-check.sh --compare` diffed every tracked count against the
+pre-deploy baseline: cards 30, links 4, projects 50, proposals 250, reports 43,
+work items 945, nodes 1312 — **all unchanged**, `node_max` and the sequence
+still 1414. The only deltas were `migrations 28 → 29` and `migration_max
+28 → 29`. Schema landed as declared: nine `search_tsv` columns, nine
+`*_search_idx` GIN indexes. Database 15 MB → **23 MB**, matching the migration
+header's stated cost (a tsvector is the same order of size as its document).
+
+Verified live over the tailnet FQDN, not just `/api/health`:
+
+| check | result |
+|---|---|
+| Identifier `WI-836` | **strict** (not relaxed), 10 hits — `korg:836#comment-441` and `WI-836` itself at ranks 1–2 |
+| Prose: *"what does korg-migrate reset actually truncate"* | **relaxed**, `WI-528` at rank 1 — the suite's keyed answer |
+| …its snippet | carries `TRUNCATE node, project, area RESTART IDENTITY CASCADE` verbatim — answers without a follow-up read |
+| Default scope | 1 live hit with `omitted {terminal: 20, archived: 0}` — the envelope reporting what it hid |
+| MCP `search` over `POST /mcp` | 3 hits, `relaxed:false`, `omitted` present — the agent transport, not just REST |
+| `/search`, `/`, `/work-items` | HTTP 200 |
+| Header box in the **deployed** bundle | `Search korg…` + its `sr-only` label found in the layout chunk; the page chunk carries `Search everything` |
+
+The revision assertion in the deploy script passed, so the running container is
+provably the commit that was built — the check that catches a `compose pull`
+which silently did nothing.
