@@ -119,6 +119,21 @@ covers:
   — so a reviewer responds with a comment rather than editing the document.
   Not on the top nav; it is reached from the work the handoff belongs to, and
   links back to it.
+- **Search** (`/search`) — full-text search over the whole corpus: every node
+  kind that carries prose, plus every comment. The box sits in the **header**,
+  on every page, rather than in the top nav: search is something you do *from*
+  where you are, not a place you go, and a tab would put the box one click
+  further from everywhere that is not it. The query lives entirely in the URL,
+  so a result set is linkable and Back works.
+
+  All terms are required; when that finds nothing the search relaxes to any
+  term and **says so** — a relaxed result set is a broad one and the page will
+  not let it pass for a precise one. `"quoted phrases"` and `-excluded` work,
+  and a query carrying an exclusion is never relaxed. By default only live rows
+  are searched (each kind's own terminal state excluded, archived excluded);
+  **Search everything** turns both off, which is what most questions about a
+  decision already taken need. Hits open in the same slide-over preview the
+  rest of the UI uses. See [api.md](api.md#search-1177) for the contract.
 
 ### Behaviour common to every page
 
