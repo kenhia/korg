@@ -104,6 +104,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/report-sources", get(list_report_sources))
         .route("/api/report-sources/:source", patch(set_report_source))
         .route("/api/awaiting", get(list_awaiting))
+        .route("/api/search", get(search))
         .route("/api/board", get(board))
         .route("/api/nodes/:id/awaiting", put(set_awaiting))
         .route("/api/reports", get(list_reports))
@@ -317,6 +318,39 @@ async fn survey_work_items(State(s): State<AppState>, Query(q): Query<SurveyQuer
 #[derive(Deserialize)]
 struct FlowQuery {
     days: Option<i64>,
+}
+
+/// Full-text search (#1177). REST spells `archived` as `true|false|all` and
+/// otherwise takes the same knobs as the MCP `search` tool, funnelling into the
+/// same `repo::SearchQuery` — the web box and an agent get identical answers.
+#[derive(Debug, serde::Deserialize)]
+struct SearchParams {
+    q: String,
+    kind: Option<String>,
+    project: Option<String>,
+    scope: Option<String>,
+    archived: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+async fn search(State(s): State<AppState>, Query(p): Query<SearchParams>) -> ApiResult {
+    let results = repo::search(
+        &s.pool,
+        repo::SearchQuery {
+            q: p.q,
+            kind: p.kind,
+            project: p.project,
+            scope: p.scope,
+            archived: parse_archived(p.archived.as_deref())?,
+            page: repo::PageQuery {
+                limit: p.limit,
+                offset: p.offset,
+            },
+        },
+    )
+    .await?;
+    Ok(Json(json!(results)))
 }
 
 /// The backlog-trend read (#1318): one row per day in the board's timezone,

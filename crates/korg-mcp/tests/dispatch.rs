@@ -263,6 +263,11 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
         ),
         // --- the board rollup (#970) ---
         ("get_board", json!({})),
+        // --- search (#1177) ---
+        (
+            "search",
+            json!({"q": "handed off by the fence", "scope": "all"}),
+        ),
         // --- handoffs ---
         (
             "create_handoff",
@@ -421,8 +426,11 @@ async fn collection_reads_return_the_shape_the_instructions_promise() {
     // concluded from "you didn't ask for archived ones".
     let filtered = named_in_instructions("the filtered ones");
 
-    // The `list_*` tools are exactly the collection reads the instructions
-    // summarise, now that the `survey_work_items` alias is gone (#871).
+    // The `list_*` tools plus `search` are exactly the collection reads the
+    // instructions summarise, now that the `survey_work_items` alias is gone
+    // (#871). `search` (#1177) is the one whose name does not start `list_` —
+    // it is a collection read all the same, and leaving it out of this check
+    // would exempt the newest shape from the fence built for exactly this.
     // `neighbors` carries its own shape and is named in docs/api.md's shape
     // table instead.
     let classified: BTreeSet<&str> = paginated
@@ -434,7 +442,7 @@ async fn collection_reads_return_the_shape_the_instructions_promise() {
     let advertised: BTreeSet<String> = korg_mcp::tools::tools()
         .iter()
         .map(|t| t.name.to_string())
-        .filter(|n| n.starts_with("list_"))
+        .filter(|n| n.starts_with("list_") || n == "search")
         .collect();
     let unclassified: Vec<&String> = advertised
         .iter()
@@ -481,6 +489,26 @@ async fn collection_reads_return_the_shape_the_instructions_promise() {
                 "the instructions say `{name}` carries `omitted` {{closed, archived}}, \
                  but it returned {value} — a sweep cannot tell a narrowed count from a \
                  complete one without it"
+            );
+        }
+        // `search` narrows by default too, and carries two fields nothing else
+        // does. `relaxed` is the load-bearing one: khound's Gate A failure was
+        // a query path that returned zero while reporting health, so an answer
+        // that cannot say whether it is strict or broad is the bug, not a
+        // cosmetic omission.
+        if name == "search" {
+            let omitted = value.get("omitted");
+            assert!(
+                omitted.is_some_and(|o| o.get("terminal").is_some() && o.get("archived").is_some()),
+                "`{name}` must carry `omitted` {{terminal, archived}}, but returned {value}"
+            );
+            assert!(
+                value.get("relaxed").is_some_and(|r| r.is_boolean()),
+                "`{name}` must say whether it relaxed to any-term, but returned {value}"
+            );
+            assert!(
+                value.get("parsed").is_some_and(|p| p.is_string()),
+                "`{name}` must report the tsquery it ran, but returned {value}"
             );
         }
     }

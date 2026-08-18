@@ -1,6 +1,7 @@
 <script lang="ts">
   import "../app.css";
   import { dev } from "$app/environment";
+  import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import Toaster from "$lib/components/Toaster.svelte";
 
@@ -46,6 +47,32 @@
   // Work Items wants room for its table but not edge-to-edge — ~10% gutters
   // each side (80% width), keeping a little breathing space.
   const roomy = $derived($page.url.pathname.startsWith("/work-items"));
+
+  // Search (#1177) is in the header rather than the nav on purpose: it is
+  // something you do *from* a page, not a page you go to. A tab would make it a
+  // destination and put the box one click further from everywhere that is not
+  // it. The field keeps whatever /search is currently showing, so editing the
+  // query from the results page works without a second input.
+  let term = $state("");
+  $effect(() => {
+    term = $page.url.pathname === "/search"
+      ? ($page.url.searchParams.get("q") ?? "")
+      : "";
+  });
+
+  function submitSearch(e: SubmitEvent) {
+    e.preventDefault();
+    const q = term.trim();
+    if (!q) return;
+    // Carry the scope and kind already in play so refining a query does not
+    // silently reset "search everything" back to the live-only default.
+    const params = new URLSearchParams({ q });
+    for (const key of ["scope", "kind"]) {
+      const v = $page.url.pathname === "/search" ? $page.url.searchParams.get(key) : null;
+      if (v) params.set(key, v);
+    }
+    goto(`/search?${params}`);
+  }
 </script>
 
 <div class="min-h-screen">
@@ -93,6 +120,21 @@
           {item.label}
         </a>
       {/each}
+
+      <!-- The placeholder names korg deliberately. Page-level filter boxes are
+           also called "search", and this one searches the whole corpus rather
+           than the table in front of you — a distinction the Work Items filter
+           and this box were briefly indistinguishable on. -->
+      <form class="ml-auto flex items-center" onsubmit={submitSearch}>
+        <label class="sr-only" for="korg-search">Search korg</label>
+        <input
+          id="korg-search"
+          type="search"
+          bind:value={term}
+          placeholder="Search korg…"
+          class="w-40 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-sm focus:w-64 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] sm:w-56"
+        />
+      </form>
     </nav>
   </header>
 

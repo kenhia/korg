@@ -41,6 +41,7 @@ mod proposals;
 mod relationships;
 mod reports;
 mod schedules;
+mod search;
 mod selectors;
 mod work_items;
 
@@ -65,4 +66,5 @@ pub use proposals::*;
 pub use relationships::*;
 pub use reports::*;
 pub use schedules::*;
+pub use search::*;
 pub use work_items::*;

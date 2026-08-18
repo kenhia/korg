@@ -19,7 +19,7 @@ pub fn server_instructions() -> &'static str {
      Mutations validate their target and return the updated entity; errors are isError \
      results carrying {message, code} where code is one of invalid_input, not_found, \
      conflict, internal. Paginated collection reads (list_work_items, list_cards, \
-     list_links) return {items, total, limit, offset}, where `total` is the \
+     list_links, search) return {items, total, limit, offset}, where `total` is the \
      whole filtered corpus on every page — including one whose offset overshot the last \
      row, which returns no items and the same total; \
      the unpaginated ones (list_reports, list_areas, \
@@ -58,6 +58,16 @@ pub fn server_instructions() -> &'static str {
      A report source that filed on a cadence and then stopped is itself an alert: \
      list_report_sources says whether korg can still believe each one, and anything \
      not `fresh` asserts `unknown` rather than its last known status. \
+     Search is a full-text read over the WHOLE corpus — every node kind plus every \
+     COMMENT, which is where resolutions, verdicts and recon notes live. Reach for it \
+     instead of paging a list and reading rows yourself when you are looking for \
+     something rather than surveying: it is measurably better than a title scan, and it \
+     is the only read that can see a comment. It is lexical, so phrase the query in the \
+     words the record would use. Two of its response fields decide how to read the rest: \
+     `relaxed` true means the all-terms query found nothing and this is the any-term \
+     fallback (a broad answer, with a `total` to match), and by default it searches only \
+     LIVE rows — pass scope:\"all\" whenever you are chasing something already decided \
+     and closed, which is most historical questions. \
      When you want the WHOLE state of the work — what is being worked, what is queued, \
      what spans repos, what is waiting on Ken — call get_board once instead of walking \
      the queue proposal by proposal; it takes no arguments and is the read that exists \

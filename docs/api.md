@@ -31,6 +31,7 @@ enumerates the tools a third time. All three are drift-tested against
 | Programs | `create_program`, `get_program`, `list_programs`, `update_program` |
 | Awaiting Ken | `set_awaiting`, `list_awaiting` |
 | Board | `get_board` |
+| Search | `search` |
 | Reports | `create_report`, `list_reports`, `get_report`, `list_report_sources`, `set_report_source` |
 | Schedules | `create_schedule`, `get_schedule`, `list_schedules`, `update_schedule`, `materialize_schedule` |
 | Handoffs | `create_handoff`, `get_handoff`, `update_handoff` |
@@ -158,13 +159,19 @@ the same envelope", which was true of four of them:
 
 | Shape | Reads |
 |---|---|
-| `{items, total, limit, offset}` | `list_work_items`, `list_cards`, `list_links` |
+| `{items, total, limit, offset}` | `list_work_items`, `list_cards`, `list_links`, `search` |
 | `{items, total, limit, truncated}` | `neighbors` (`truncated`, not `offset` — it caps rather than pages) |
 | bare array | `list_reports`, `list_areas`, `list_comments`, `list_awaiting`, `list_report_sources`, `list_attachments` |
 | `{items, omitted}` | `list_proposals`, `list_programs`, `list_projects`, `list_schedules` |
 
-(`omitted` counts the rows a read's own defaults hid. `list_work_items` carries
-it *in addition to* the paginated envelope.)
+(`omitted` counts the rows a read's own defaults hid. `list_work_items` and
+`search` carry it *in addition to* the paginated envelope. `search` adds two
+fields no other read has — `relaxed`, saying whether the all-terms query was
+falling back to any-term, and `parsed`, the tsquery Postgres actually ran.
+Both are reported rather than inferred: khound's Gate A failure was a query
+path that returned zero while reporting health, and a caller that cannot tell
+a strict answer from a relaxed one cannot tell a precise result from a broad
+one.)
 
 The bare-array reads are the ones with no natural paging story — a project has a
 handful of areas, a node has a handful of comments, and there is one
@@ -413,6 +420,77 @@ postcondition refuses to apply if a marked summary has no `notes` beside it.
 counts what the archived filter hid, and the two terminal counts are taken only
 over rows that passed it, so no proposal is counted twice. A field is `0` when
 you asked to see that class.
+
+## Search (#1177)
+
+One lexical read over the whole corpus: every node kind that carries prose,
+plus **one document per comment**. Comments are the point. A resolution
+comment, a review verdict, a bring-up recon note — none of that is reachable by
+scanning titles, and on the frozen acceptance suite
+(`kubs0:~/khound-eval/suite-002.toml`, 12 korg-content queries) full-content
+search answers 12/12 at rank 1 where a title-only scan answers 9/12 at rank 3.
+
+`search` (MCP) and `GET /api/search` (REST) take the same knobs and return the
+same rows.
+
+### Query semantics
+
+**All terms are required.** When that matches nothing the query is relaxed to
+**any term**, and `relaxed: true` says so. Both halves matter:
+
+- The relaxation is WI 1001's contract — "all-terms-required by default, relax
+  when empty" — and prose questions land on it almost every time, because a
+  ten-word question rarely has a document containing all ten words.
+- Reporting it is korg's addition. khound shipped the relaxation on one query
+  path and not the other; the un-relaxed path returned zero for every prose
+  query while reporting `ok, hits=0`, and nothing noticed for a whole gate run.
+  A caller that cannot tell a strict answer from a relaxed one cannot tell a
+  precise result from a broad one — and under relaxation `total` counts
+  any-term matches, which is frequently most of the corpus.
+
+`"quoted phrases"` and a leading `-` to exclude both work. **A query carrying an
+exclusion is never relaxed**: `foo -bar` relaxed to `foo | !bar` would match
+every document *without* `bar`, inverting the request. Someone who typed an
+exclusion meant a precise query, so the honest answer to "nothing matched" is
+nothing.
+
+`parsed` reports the tsquery that actually produced the results — stemming
+applied, stop words dropped, and the any-term form when `relaxed` is true.
+Reporting the parse that was *abandoned* would describe a search that did not
+happen.
+
+### Scoping
+
+By default only **live** rows are searched: each kind's own terminal state is
+excluded, matching what its list read hides (`closed` work items,
+`done`/`declined` proposals, `done` programs, `Done`/`Cut` cards), and archived
+rows are excluded too. A comment inherits its parent's state, so closing an item
+takes its discussion out of the default view with it — otherwise the default
+would hide a decision and show the argument about it.
+
+`omitted` is `{terminal, archived}`, counted as a cascade so nothing is
+double-counted.
+
+**Pass `scope: "all"` whenever you are chasing something already decided.** Every
+one of the acceptance suite's keyed nodes is closed or resolved, which is the
+shape of most historical questions; the default is tuned for "what is in
+flight", not "what did we conclude". This is why scoping is a **filter** and
+never a ranking term — a not-done *discount* would make the same answers
+merely harder to find, which is worse than absent because it looks like working.
+
+### What it is not
+
+Lexical, not semantic: it matches words, not meaning. A query sharing no
+vocabulary with its answer misses, and no ranking knob fixes that. Measured on
+an independent query set whose wording deliberately avoids the target titles,
+the hit rate is 3/5 rather than the suite's 12/12 — the suite's queries were
+written by someone looking at the target node. Phrase the query in the words the
+record itself would use.
+
+There is also **no index to maintain**. The tsvectors are generated columns
+(migration 0029), so Postgres keeps them current inside the writing
+transaction: a write is searchable the moment it lands, there is no refresh, no
+rebuild, and no staleness for a hit to report.
 
 ## Two-level reads
 
