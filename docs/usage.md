@@ -413,7 +413,9 @@ returned only by `get_project` and REST, never by the lean `list_projects` or
 the instructions roster.
 
 `category` is a **closed vocabulary** (WI #678):
-`AI | Dashboard | EVAL | Fun | Infrastructure | Ops | Other`. It was free text
+`AI | Dashboard | EVAL | Fun | Infrastructure | Ops | Other`. `EVAL` marks
+harness residue — the `eval` project is where evaluation runs file it, per
+[eval-convention.md](eval-convention.md). It was free text
 until migration 0018 and had drifted to `ai`/`AI`/`tooling`/`infra`/`fun`/NULL;
 `update_project` now validates it the way every other vocabulary is validated,
 and the edit panel offers a select rather than a text box. `null` is still

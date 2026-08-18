@@ -443,3 +443,111 @@ fn noisy_png(width: u32, height: u32) -> Vec<u8> {
         .expect("encode noisy png");
     out
 }
+
+// === #1146: the agent variant that is the original ==========================
+
+/// A small paste stores ONE copy of itself and still answers `/agent`.
+///
+/// The bug this fences, from the images program close-out: `img-46b` on #1115
+/// had a 43,911-byte `:agent` variant beside a 24,598-byte original at
+/// identical 1019x311 dimensions. The re-encode was faithful and pointless —
+/// the original was already inside the vision ceiling, and `image`'s PNG
+/// encoder is worse at it than whatever produced the paste. Every screenshot
+/// small enough to matter was paying double storage for a second copy.
+///
+/// What must hold afterwards is the whole contract in one place: the byte
+/// saving is real (no second blob on disk), and NOTHING an agent does changes
+/// — `/agent` still serves, still decodes, still declares its type. An agent
+/// told to fetch the agent variant must never need to know how korg stored it.
+#[tokio::test]
+async fn a_small_paste_serves_its_agent_variant_from_the_original_blob() {
+    let (_guard, _pool, router, root) = app_with_images().await;
+
+    let original = png(1019, 311);
+    let (status, body) = upload(&router, "paste.png", &original, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let img_id = body["img_id"].as_str().expect("img_id").to_string();
+
+    // On disk: the original and a thumb, and no third file duplicating it.
+    let dir = korg_img::Store::new(&root).dir(korg_img::ImgId::parse(&img_id).unwrap());
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .expect("the attachment's directory exists")
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["original.png", "thumb.png"],
+        "no agent.png sitting beside an original it is a bigger copy of"
+    );
+
+    // In the read surface: both sizes are still listed, and the agent one says
+    // where its bytes really come from.
+    let variants = body["variants"].as_array().expect("variants block");
+    assert_eq!(variants.len(), 2, "both sizes are still advertised: {body}");
+    let agent_row = variants
+        .iter()
+        .find(|v| v["variant"] == "agent")
+        .expect("the agent size is still listed");
+    assert_eq!(agent_row["is_original"], true);
+    assert_eq!(
+        agent_row["byte_size"].as_u64().unwrap(),
+        original.len() as u64,
+        "it reports what fetching it actually costs, not zero"
+    );
+    assert_eq!(
+        variants.iter().find(|v| v["variant"] == "thumb").unwrap()["is_original"],
+        false,
+        "the thumb is a real downscale and has its own blob"
+    );
+
+    // And over the wire the agent notices nothing at all.
+    let (status, headers, served) = raw(
+        &router,
+        "GET",
+        &format!("/api/img/{img_id}/agent"),
+        None,
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "the agent URL still serves");
+    assert_eq!(headers["content-type"], "image/png");
+    assert_eq!(served, original, "and the bytes are the original's");
+    let decoded = image::load_from_memory(&served).expect("it decodes");
+    assert_eq!((decoded.width(), decoded.height()), (1019, 311));
+}
+
+/// The `agent` URL of an image too big to fit is unaffected — it has a real
+/// downscaled blob, and #1146 must not have taught the serve path to fall back
+/// to an oversized original when a variant is genuinely missing.
+#[tokio::test]
+async fn an_oversized_image_still_serves_a_downscaled_agent_variant() {
+    let (_guard, _pool, router, _root) = app_with_images().await;
+
+    let (_, body) = upload(&router, "wide.png", &png(3000, 500), None).await;
+    let img_id = body["img_id"].as_str().unwrap();
+
+    let agent_row = body["variants"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["variant"] == "agent")
+        .expect("agent variant");
+    assert_eq!(agent_row["is_original"], false);
+
+    let (status, _, served) = raw(
+        &router,
+        "GET",
+        &format!("/api/img/{img_id}/agent"),
+        None,
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        image::load_from_memory(&served).unwrap().width(),
+        korg_img::AGENT_LONG_EDGE,
+        "still capped at the vision ceiling"
+    );
+}

@@ -185,6 +185,18 @@ impl Variant {
         }
     }
 
+    /// Whether an original of these dimensions is **already** what this variant
+    /// would be — it fits inside the box, so resizing it is a no-op (#1146).
+    ///
+    /// This is deliberately about pixels and nothing else, because it is the
+    /// half of the rule a *reader* can evaluate: a caller resolving
+    /// `/api/img/<id>/agent` has the original's dimensions and no idea what the
+    /// encoder would have chosen. See [`prepare`] for the write-side rule,
+    /// which is stricter.
+    pub fn fits_original(self, width: u32, height: u32) -> bool {
+        width.max(height) <= self.long_edge()
+    }
+
     pub fn long_edge(self) -> u32 {
         match self {
             Variant::Thumb => THUMB_LONG_EDGE,
@@ -269,6 +281,12 @@ impl Prepared {
 /// EXIF stripping is not a step here and never appears as one: a variant is
 /// encoded from decoded pixels, so the metadata is gone by construction. The
 /// original keeps its bytes exactly, EXIF included — it is the archival copy.
+/// The one `agent` variant that is *not* encoded (see [`skips_the_re_encode`])
+/// is the original, EXIF and all.
+///
+/// A caller must therefore not assume every [`Variant`] appears in
+/// [`Prepared::variants`]. An absent one means the original already satisfies
+/// it — [`Variant::fits_original`] is how a reader re-derives that.
 pub fn prepare(bytes: &[u8]) -> Result<Prepared, ImgError> {
     if bytes.is_empty() {
         return Err(ImgError::Empty);
@@ -296,20 +314,73 @@ pub fn prepare(bytes: &[u8]) -> Result<Prepared, ImgError> {
     // exists for — land on PNG through that rule, and photographs on JPEG,
     // without either being special-cased by source type.
     let lossless = image.color().has_alpha();
+    let mime = mime_of(format);
 
     let mut variants = Vec::with_capacity(VARIANTS.len());
     for variant in VARIANTS {
-        variants.push(encode_variant(&image, variant, lossless)?);
+        let encoded = encode_variant(&image, variant, lossless)?;
+        if supplanted_by_the_original(&encoded, bytes.len(), width, height) {
+            continue;
+        }
+        variants.push(encoded);
     }
 
     Ok(Prepared {
-        mime: mime_of(format),
+        mime,
         width,
         height,
         byte_size: bytes.len() as u64,
         content_hash: format!("{:x}", Sha256::digest(bytes)),
         variants,
     })
+}
+
+/// #1146: when the re-encode came out no smaller than the original, throw it
+/// away and let the original be the `agent` variant.
+///
+/// Found in the images program close-out: `img-46b`'s `:agent` variant was
+/// 43,911 bytes against a 24,598-byte original at identical 1019x311
+/// dimensions. Nothing was broken — the variant was a faithful re-encode of an
+/// already-small PNG, and `image`'s encoder is simply worse at it than whatever
+/// produced the paste. Every small screenshot was paying roughly double its
+/// storage for a copy of itself.
+///
+/// Two conditions, and note which one is *measured*:
+///
+/// - **it fits** ([`Variant::fits_original`]) — otherwise the variant is a real
+///   downscale, and it earns its bytes even when it has more of them, because
+///   the point of `agent` is pixels the model will actually look at.
+/// - **it is not smaller** — checked against the encoded bytes rather than
+///   predicted from the mime type.
+///
+/// The prediction was the first shape of this fix and it was wrong. "Same mime
+/// family, so the re-encode is redundant" misses the case korg exists for: an
+/// **opaque** screenshot PNG encodes to JPEG, a different family, and JPEG at
+/// q82 loses badly to PNG on flat UI colour — a synthetic 800x600 gradient
+/// measured 42,193 bytes of JPEG against 9,878 of PNG. Predicting by type kept
+/// the bigger file precisely where the bug bites hardest. Encoding and then
+/// looking costs one throwaway encode of an image already under 1568px, which
+/// is milliseconds, and it cannot be wrong about the thing it is measuring.
+///
+/// Only `agent` is ever reached: `fits_original` is asked of the agent ceiling,
+/// and #1146 scoped it there deliberately — `thumb` is 400px, so an original
+/// small enough to qualify is tiny either way, and the thumb is what the UI
+/// renders everywhere.
+///
+/// The cost, stated because it is real: the `agent` URL now serves the
+/// original's bytes, so it carries whatever EXIF the original carried. See
+/// [`encode_variant`] — that stripping was always incidental, and the original
+/// has been served EXIF-and-all at `/api/img/<id>` since the feature shipped,
+/// so this exposes nothing a caller could not already fetch.
+fn supplanted_by_the_original(
+    encoded: &PreparedVariant,
+    original_bytes: usize,
+    width: u32,
+    height: u32,
+) -> bool {
+    encoded.variant == Variant::Agent
+        && Variant::Agent.fits_original(width, height)
+        && encoded.bytes.len() >= original_bytes
 }
 
 /// Resize (never upscale) and encode one variant.
@@ -324,9 +395,18 @@ fn encode_variant(
     let resized = if image.width().max(image.height()) > edge {
         Some(image.resize(edge, edge, image::imageops::FilterType::Lanczos3))
     } else {
-        // Already small enough. It is still re-encoded rather than copied —
-        // that is what strips the EXIF, and a variant that is sometimes the
-        // original's bytes and sometimes not is a variant with two contracts.
+        // Already small enough, and still re-encoded rather than copied.
+        //
+        // This used to be justified as "a variant that is sometimes the
+        // original's bytes and sometimes not is a variant with two contracts".
+        // #1146 accepted the second contract for `agent` — see
+        // `skips_the_re_encode`, which decides that before we are ever called —
+        // because the measured cost of the tidier rule was double storage on
+        // every small paste. What reaches here is a re-encode that is worth
+        // doing: a `thumb`, or an `agent` whose type is genuinely changing.
+        //
+        // EXIF stripping was always a side effect of this branch rather than a
+        // purpose of it, so a skipped `agent` keeps the original's metadata.
         None
     };
     let source = resized.as_ref().unwrap_or(image);
@@ -383,6 +463,33 @@ mod tests {
         image::DynamicImage::ImageRgba8(buf)
             .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
             .expect("encode test png");
+        out
+    }
+
+    /// A PNG with **no** alpha channel. Its variants encode as JPEG, which
+    /// makes it the case `skips_the_re_encode` must NOT skip.
+    fn opaque_png(width: u32, height: u32) -> Vec<u8> {
+        let buf = image::RgbImage::from_fn(width, height, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
+        });
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgb8(buf)
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
+        out
+    }
+
+    /// An opaque PNG of pseudo-random noise: incompressible for PNG, exactly
+    /// what JPEG's lossy coding is good at. The mirror image of `opaque_png`.
+    fn noisy_png(width: u32, height: u32) -> Vec<u8> {
+        let buf = image::RgbImage::from_fn(width, height, |x, y| {
+            let n = x.wrapping_mul(2_654_435_761) ^ y.wrapping_mul(40_503);
+            image::Rgb([(n >> 3) as u8, (n >> 11) as u8, (n >> 19) as u8])
+        });
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgb8(buf)
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
         out
     }
 
@@ -451,25 +558,124 @@ mod tests {
         // An image already inside a bound keeps its size rather than being
         // blown up to fill it.
         let small = prepare(&png(120, 90)).expect("prepare");
-        for variant in VARIANTS {
-            let v = small.variant(variant).unwrap();
-            assert_eq!((v.width, v.height), (120, 90), "{variant} upscaled");
-        }
+        let thumb = small.variant(Variant::Thumb).unwrap();
+        assert_eq!((thumb.width, thumb.height), (120, 90), "thumb upscaled");
+        assert!(
+            small.variant(Variant::Agent).is_none(),
+            "and at 120x90 the agent variant is the original itself (#1146)"
+        );
     }
 
     #[test]
     fn alpha_decides_the_variant_format_not_the_source_format() {
+        // Both samples are over the agent ceiling on purpose, so every variant
+        // is really encoded and the format rule is what is under test rather
+        // than #1146's skip.
+        //
         // Screenshots arrive as PNG-with-alpha and must not be flattened.
-        let with_alpha = prepare(&png(50, 50)).unwrap();
+        let with_alpha = prepare(&png(2000, 50)).unwrap();
         for variant in VARIANTS {
             assert_eq!(with_alpha.variant(variant).unwrap().mime, "image/png");
         }
         // Photographs have no alpha to lose, and JPEG is a lot smaller.
-        let without = prepare(&jpeg(50, 50)).unwrap();
+        let without = prepare(&jpeg(2000, 50)).unwrap();
         assert_eq!(without.mime, "image/jpeg");
         for variant in VARIANTS {
             assert_eq!(without.variant(variant).unwrap().mime, "image/jpeg");
         }
+    }
+
+    // === #1146: an agent variant that would only be a bigger copy ===========
+
+    /// The bug, in the shape it was found: an already-small PNG whose `:agent`
+    /// re-encode came out *larger* than the original it was made from.
+    ///
+    /// `img-46b` on #1115 measured 43,911 bytes of variant against a 24,598-byte
+    /// original at identical 1019x311 dimensions. The fix is to notice and skip,
+    /// so the assertion is about the variant's absence — and about the reason
+    /// being derivable from the original alone, which is what the serve path has.
+    #[test]
+    fn an_agent_variant_that_could_only_be_a_bigger_copy_is_not_written() {
+        let prepared = prepare(&png(1019, 311)).expect("prepare");
+
+        assert!(
+            prepared.variant(Variant::Agent).is_none(),
+            "the original is inside the vision ceiling and the re-encode
+             measured no smaller, so it is a second copy of the same pixels
+             that costs more to keep"
+        );
+        assert!(
+            prepared.variant(Variant::Thumb).is_some(),
+            "the thumb is a real downscale and is untouched by #1146"
+        );
+        assert!(
+            Variant::Agent.fits_original(prepared.width, prepared.height),
+            "and a reader holding only the original's dimensions can work out              why the variant is missing — that is how the agent URL still              resolves"
+        );
+    }
+
+    /// The case that killed the first version of this fix, kept as its fence.
+    ///
+    /// An **opaque** PNG has no alpha, so its variants encode as JPEG — a
+    /// different mime family. The first rule read "same mime family, so the
+    /// re-encode is redundant" and would have kept this variant on the grounds
+    /// that a conversion is real work. It is real work that makes the file four
+    /// times bigger: JPEG at q82 is poor at flat synthetic colour, which is what
+    /// UI screenshots are made of. Measuring gets this right; predicting from
+    /// the type keeps the larger file exactly where the bug bites hardest.
+    #[test]
+    fn a_bigger_re_encode_is_dropped_even_when_it_changes_the_type() {
+        let prepared = prepare(&opaque_png(800, 600)).expect("prepare");
+        assert_eq!(prepared.mime, "image/png", "no alpha, but still a PNG");
+
+        assert!(
+            prepared.variant(Variant::Agent).is_none(),
+            "the JPEG conversion is larger than the PNG it came from, so the
+             original is the better agent variant despite the type change"
+        );
+    }
+
+    /// The converse, so the rule cannot be read as "small originals never get a
+    /// variant": a re-encode that genuinely shrinks is kept even though the
+    /// original fits. It is about bytes, not about fitting.
+    #[test]
+    fn a_smaller_re_encode_is_kept_even_though_the_original_fits() {
+        let prepared = prepare(&noisy_png(800, 600)).expect("prepare");
+
+        let agent = prepared
+            .variant(Variant::Agent)
+            .expect("photographic noise is what JPEG is good at");
+        assert_eq!(agent.mime, "image/jpeg");
+        assert_eq!(
+            (agent.width, agent.height),
+            (800, 600),
+            "no downscale — this variant earns its place on bytes alone"
+        );
+        assert!(
+            (agent.bytes.len() as u64) < prepared.byte_size,
+            "{} should beat {}",
+            agent.bytes.len(),
+            prepared.byte_size
+        );
+    }
+
+    /// A JPEG small enough to fit skips too: re-encoding an already-lossy JPEG
+    /// at q82 is generation loss that also fails to save anything.
+    #[test]
+    fn an_already_lossy_original_is_not_re_encoded_either() {
+        let prepared = prepare(&jpeg(300, 200)).expect("prepare");
+        assert_eq!(prepared.mime, "image/jpeg");
+        assert!(prepared.variant(Variant::Agent).is_none());
+    }
+
+    /// And an image over the ceiling is unaffected, whatever its type: that
+    /// variant is a real downscale and is the whole point of the feature.
+    #[test]
+    fn an_oversized_original_still_gets_its_agent_variant() {
+        let prepared = prepare(&png(3000, 100)).expect("prepare");
+        let agent = prepared.variant(Variant::Agent).expect("a real downscale");
+        assert_eq!(agent.width, AGENT_LONG_EDGE);
+        assert!(!Variant::Agent.fits_original(prepared.width, prepared.height));
     }
 
     #[test]

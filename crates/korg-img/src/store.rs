@@ -140,7 +140,7 @@ fn ext(mime: &str) -> Result<&'static str, ImgError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{prepare, VARIANTS};
+    use crate::prepare;
 
     fn temp_root(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -182,11 +182,31 @@ mod tests {
             Some(bytes.as_slice()),
             "the original is kept byte-exact"
         );
-        for variant in VARIANTS {
-            let v = prepared.variant(variant).unwrap();
-            let path = store.variant_path(id, variant, v.mime).unwrap();
+        for v in &prepared.variants {
+            let path = store.variant_path(id, v.variant, v.mime).unwrap();
             assert_eq!(store.read(&path).unwrap().as_deref(), Some(&v.bytes[..]));
         }
+
+        // The store writes what `prepare` produced and nothing else — which
+        // since #1146 is not always every variant. This 64x32 sample is well
+        // inside the agent ceiling and re-encodes no smaller, so its agent
+        // variant IS the original and no second blob is written for it. The
+        // absence is the storage win, so it is asserted rather than assumed.
+        assert!(
+            prepared.variant(Variant::Agent).is_none(),
+            "a 64x32 paste needs no agent variant"
+        );
+        let mut names: Vec<String> = std::fs::read_dir(store.dir(id))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            ["original.png", "thumb.png"],
+            "no agent.png duplicating the original beside it"
+        );
 
         // Two attachments never share a directory, whatever their content.
         let other = ImgId::from_node_id(3115).unwrap();

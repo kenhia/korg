@@ -284,6 +284,14 @@ impl SourceHealth {
 /// `list_report_sources` / `GET /api/report-sources` — every known source with
 /// its freshness, most-alarming first.
 ///
+/// Order is **stale → fresh → unrated → retired**, then oldest report first
+/// inside each bucket. Ranking by freshness rather than by date is #1398's fix:
+/// the key used to be `is_stale DESC, last_report_date ASC`, which was right
+/// about stale and then sorted unrated against fresh *by date* — and an unrated
+/// source is unrated precisely because it filed once and stopped, so its date is
+/// always old. Six one-off probes therefore rendered above kmon, the only source
+/// still filing. The panel led with noise and buried its own signal.
+///
 /// The whole derivation is one query, and it is a read: no state is stored about
 /// staleness, which is what makes it immune to the failure mode it detects. A
 /// stored `is_stale` flag needs something to maintain it, and that something can
@@ -295,11 +303,17 @@ impl SourceHealth {
 /// FULL OUTER JOINs `report_source` so a declared-but-never-filed source still
 /// appears; `judged` lets a declared cadence beat an inferred one and refuses to
 /// infer below [`SOURCE_MIN_HISTORY`]; `graced` defaults grace to the cadence
-/// itself, floor one day.
+/// itself, floor one day; `rated` resolves the freshness.
 ///
-/// The final SELECT is where **the #950 rule** lives, in one place: only a
-/// `fresh` source's own status ever reaches a caller, and every other row
-/// asserts [`vocab::SOURCE_ASSERTS_UNKNOWN`].
+/// `rated` exists so freshness is decided **once**. It used to be an expression
+/// repeated three times — in the SELECT, in the `asserts` guard and in the
+/// ORDER BY — and three copies of a rule is three places for it to drift.
+///
+/// That collapse is also what makes **the #950 rule** readable rather than
+/// merely true: `asserts` is now literally "fresh sources assert their status,
+/// everything else asserts [`vocab::SOURCE_ASSERTS_UNKNOWN`]", which is the rule
+/// as written. The old spelling re-derived freshness from its four parts and
+/// happened to agree.
 ///
 /// **Do not put `--` comments in this string.** The literal is `\`-continued, so
 /// no newline survives into the SQL and a `--` silently comments out the entire
@@ -366,36 +380,35 @@ pub async fn list_report_sources(pool: &PgPool) -> Result<Vec<SourceHealth>> {
                          ELSE coalesce(j.declared_grace::bigint, greatest(1, j.cadence_days)) \
                     END                                                  AS grace_days \
                FROM judged j \
-         ) \
-         SELECT g.source, \
-                CASE WHEN g.retired                     THEN 'retired' \
-                     WHEN g.cadence_days IS NULL \
-                       OR g.last_report_date IS NULL     THEN 'unrated' \
-                     WHEN (current_date - g.last_report_date) \
-                            > (g.cadence_days + g.grace_days) THEN 'stale' \
-                     ELSE 'fresh' END                                    AS freshness, \
-                CASE WHEN NOT g.retired \
-                      AND g.cadence_days IS NOT NULL \
-                      AND g.last_report_date IS NOT NULL \
-                      AND (current_date - g.last_report_date) \
-                            <= (g.cadence_days + g.grace_days) \
-                     THEN g.last_status ELSE '{}' END                    AS asserts, \
-                g.last_report_date, g.last_report_node_id, \
-                (current_date - g.last_report_date)::bigint              AS days_since, \
-                g.cadence_days, \
-                (g.declared_cadence IS NOT NULL)                         AS cadence_declared, \
-                g.grace_days, \
-                (g.last_report_date + (g.cadence_days + g.grace_days)::int) AS due_by, \
-                greatest(0, coalesce((current_date - g.last_report_date) \
-                            - (g.cadence_days + g.grace_days), 0))::bigint AS overdue_days, \
-                g.report_count, g.history_span_days, g.note \
-           FROM graced g \
-          ORDER BY (CASE WHEN g.retired THEN 'retired' \
-                         WHEN g.cadence_days IS NULL OR g.last_report_date IS NULL THEN 'unrated' \
+         ), \
+         rated AS ( \
+             SELECT g.*, \
+                    CASE WHEN g.retired                     THEN 'retired' \
+                         WHEN g.cadence_days IS NULL \
+                           OR g.last_report_date IS NULL     THEN 'unrated' \
                          WHEN (current_date - g.last_report_date) \
                                 > (g.cadence_days + g.grace_days) THEN 'stale' \
-                         ELSE 'fresh' END) = 'stale' DESC, \
-                   g.last_report_date ASC NULLS FIRST, g.source ASC",
+                         ELSE 'fresh' END                                AS freshness \
+               FROM graced g \
+         ) \
+         SELECT r.source, r.freshness, \
+                CASE WHEN r.freshness = 'fresh' \
+                     THEN r.last_status ELSE '{}' END                    AS asserts, \
+                r.last_report_date, r.last_report_node_id, \
+                (current_date - r.last_report_date)::bigint              AS days_since, \
+                r.cadence_days, \
+                (r.declared_cadence IS NOT NULL)                         AS cadence_declared, \
+                r.grace_days, \
+                (r.last_report_date + (r.cadence_days + r.grace_days)::int) AS due_by, \
+                greatest(0, coalesce((current_date - r.last_report_date) \
+                            - (r.cadence_days + r.grace_days), 0))::bigint AS overdue_days, \
+                r.report_count, r.history_span_days, r.note \
+           FROM rated r \
+          ORDER BY CASE r.freshness WHEN 'stale'   THEN 0 \
+                                    WHEN 'fresh'   THEN 1 \
+                                    WHEN 'unrated' THEN 2 \
+                                    ELSE                3 END, \
+                   r.last_report_date ASC NULLS FIRST, r.source ASC",
         vocab::SOURCE_ASSERTS_UNKNOWN
     ))
     .fetch_all(pool)

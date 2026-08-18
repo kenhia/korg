@@ -237,6 +237,9 @@ three different claims is how a corpus drifts.
 >
 > **Test residue is a `category`, not a disposal.** `EVAL` (migration 0018)
 > already makes harness leakage findable as a group; it needs no new ending.
+> The convention that puts it there is
+> [eval-convention.md](eval-convention.md) — evaluation runs write to the
+> `eval` project, and that page is written to be handed to an eval agent.
 
 | Kind | Ending | Why |
 |---|---|---|
@@ -866,12 +869,32 @@ path and no cache layer:
 | `thumb` | 400 px | inline display and the attachment list |
 | `agent` | 1568 px | agent reads — Anthropic vision downscales past this, so larger is pure waste |
 
-Neither variant upscales. Both are re-encoded from decoded pixels, which is
-what strips EXIF; the encoding follows the *pixels* rather than the source
-format, so anything with an alpha channel stays PNG and everything else becomes
-JPEG. korg accepts PNG, JPEG, GIF, WebP and BMP, sniffed from the bytes — the
-upload's declared `Content-Type` is ignored, because a claim about a file is not
-a file.
+Neither variant upscales. A variant that is encoded is encoded from decoded
+pixels, which is what strips EXIF; the encoding follows the *pixels* rather than
+the source format, so anything with an alpha channel stays PNG and everything
+else becomes JPEG. korg accepts PNG, JPEG, GIF, WebP and BMP, sniffed from the
+bytes — the upload's declared `Content-Type` is ignored, because a claim about a
+file is not a file.
+
+**A variant is not always a separate file (#1146).** When the original already
+fits a variant's long edge *and* re-encoding it comes out no smaller, korg keeps
+one copy instead of two and that variant's URL serves the original's bytes. Both
+conditions are measured, not predicted: an opaque screenshot PNG encodes to JPEG,
+a different type entirely, and loses badly to PNG on flat UI colour — so "is it a
+different mime family" is the wrong question and only the byte count answers it.
+
+Nothing changes for a caller fetching images. `/api/img/:id/agent` still resolves
+and still serves that size; **an agent told to fetch the `agent` variant never has
+to know how korg stored it.** The read surface says so anyway, in the variant's
+`is_original` flag, for the two callers that care: byte accounting must not add
+such a variant's `byte_size` to the original's, and a caller already holding the
+original can skip the fetch. Two consequences worth stating:
+
+- that variant carries whatever **EXIF** the original carried, since no re-encode
+  stripped it. The original has always been served EXIF-intact at the bare id, so
+  this exposes nothing a caller could not already fetch.
+- in practice only `agent` is ever affected. `thumb` is 400 px, so an original
+  small enough to qualify is tiny either way.
 
 Serve responses carry `Cache-Control: public, max-age=31536000, immutable`. That
 is a statement of fact, not a gamble: an id is a node id, and a re-upload is a
