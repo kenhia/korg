@@ -33,7 +33,8 @@ covers:
   (D-7). Every kind the lane renders is clickable — kinds with a page of their
   own go there, the rest to the list they live on.
 - **Work Items** — create, edit, archive, set parent/area, and manage
-  relationships and comments. Project selection is sticky across navigation.
+  relationships and comments. Project selection is sticky across navigation,
+  and since #1310 it is the *same* selection the Planning rail shows.
   Filters include tags (AND-combined, collapsed by default) and `Only Prop`,
   which narrows the list to the work items a sprint proposal *covers* — the
   `sprint` field is free text and usually empty, so the `covers` edges are the
@@ -55,13 +56,30 @@ covers:
 - **Link Up** — relate any node to any other across kinds via the generalized
   `relationship` edge. **Not on the top nav** as of sprint 029 — linking is
   an agent request in practice — but `/link-up` still serves.
-- **Planning** — the agent-planning queue: `sprint_proposal` nodes (a title +
-  summary bundled with the work items they cover), drag-orderable by rank,
-  with pin-to-top. Start/Decline/Done buttons drive the status lifecycle; a
-  copy icon copies a `/start-sprint korg:<node_id>` prompt. Each card carries
-  its tags and `queued <date>`; the **title** opens the proposal's own preview,
-  which is where its comments live — the pre-sprint premise check leaves its
-  findings there, and until sprint 055 nothing in the web app could show them.
+- **Planning** (`/planning`, `/planning/:node_id`) — the agent-planning queue:
+  `sprint_proposal` nodes (a title + summary bundled with the work items they
+  cover), drag-orderable by rank, with pin-to-top. Start/Decline/Done buttons
+  drive the status lifecycle; a copy icon copies a `/start-sprint
+  korg:<node_id>` prompt. Each card carries its tags and `queued <date>`; the
+  **title** opens the proposal's own preview, which is where its comments live —
+  the pre-sprint premise check leaves its findings there, and until sprint 055
+  nothing in the web app could show them.
+
+  The **magnifier** beside pin and copy opens the proposal's own page (#1162).
+  The two are different questions and korg keeps both: the pop-out is the quick
+  look, and the page is where `notes` — the unbounded analysis half of the #860
+  split, routinely hundreds of lines — gets a readable column instead of a
+  collapsed `<details>` at `max-w-md`. The page carries the same status control,
+  the covered items as a list (each previewable, each linking into Work Items),
+  the `has_handoff`/`depends_on` edges, and the comment thread. Because
+  `sprint_proposal` is now a kind with a page of its own, the generic preview's
+  "Open full page ↗" and the awaiting lane route to it without either being
+  taught about proposals.
+
+  The rail's **selected project is shared with Work Items** (#1310) — one
+  stored scope, so bouncing between the two pages no longer means bouncing
+  between two selections. Grouping mode stays per-page: a scope is where you
+  are, a sort is how you are looking.
 - **Programs** (`/programs`, `/programs/:node_id`) — the layer above Planning
   (#968). A program `includes` sprint proposals, ordered, and is where
   cross-project work is legal; a proposal itself stays single-project. The list
@@ -80,6 +98,18 @@ covers:
   encodes the same three states from the same computation, so the two cannot
   disagree. The header carries an active/holding/done control, so a program is
   finishable from the browser rather than only over REST.
+
+  Marking a program **done** is gated by a confirmation when any slice is
+  unfinished (#1168), and the dialog names them: a slice is unfinished if its
+  proposal has not reached `done`/`declined`, or if its work items are not all
+  work-complete (`resolved + done + closed` — the same completion split the
+  rollup uses, so `parked` work counts as remaining). Enabled always rather
+  than disabled until everything is finished, because the program that is
+  genuinely over but carries a slice nobody will pick up must still close — and
+  the transition is reversible, so this is a "did you mean it", not a
+  destructive-action confirm. The control stays on the detail page only: a list
+  row carries `slice_count` and `span` and no per-slice rollup, so a button
+  there could only warn blindly, and the warning is the point.
 - **Handoff pages** (`/handoffs/:node_id`) — the first per-node detail route
   (WI #621), and until sprint 044 the only one. A handoff's `has_handoff` ref opens the slide-over preview
   anywhere it appears; "Open full page ↗" on that preview navigates here (it is

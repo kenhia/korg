@@ -10,6 +10,13 @@
   // from the projects of the proposals it includes, is what each row shows
   // instead, and it is the column worth reading: it is the answer to "which
   // repos does this touch" that a proposal could never give honestly.
+  //
+  // #1168 asked whether the close-out control belongs on these rows too, since
+  // the list is where a finished program is most likely to be *noticed*. It
+  // does not, and the reason is in the payload: `ProgramRow` carries
+  // `slice_count` and `span`, and no per-slice rollup. A close-out button here
+  // could only warn blindly or not warn at all — and the warning IS the item.
+  // The row already links to the page that has both the counts and the control.
   import { onMount } from "svelte";
   import { api, type ProgramRow } from "$lib/api";
   import type { ProgramStatus } from "$lib/generated/vocab";

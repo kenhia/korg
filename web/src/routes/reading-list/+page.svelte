@@ -105,7 +105,12 @@
     <ul class="divide-y divide-[var(--color-border)] rounded border border-[var(--color-border)] bg-[var(--color-surface)]">
       {#each links as link (link.node_id)}
         <li class="px-3 py-2">
-          <div class="flex items-center justify-between gap-3">
+          <!-- No `justify-between` (WI #1115). Each child sized to its content
+               and the leftover width was spread *between* all four, so a row's
+               Edit button landed wherever that row's title length left it — a
+               different x on every row. The anchor absorbs the slack instead
+               (below), which leaves nothing to distribute. -->
+          <div class="flex items-center gap-3">
             <!-- #980: a link is a node an agent cites by id (mark_link_read,
                  update_link both take node_id), so the id is on the row.
                  #1107: and now it opens the link's preview, which is where its
@@ -131,7 +136,7 @@
               href={link.url}
               target="_blank"
               rel="noreferrer"
-              class="truncate text-sm text-[var(--color-accent)] hover:underline"
+              class="min-w-0 flex-1 truncate text-sm text-[var(--color-accent)] hover:underline"
             >
               {link.title ?? link.url}
             </a>
@@ -143,8 +148,14 @@
                 (editing = editing === link.node_id ? null : link.node_id)}
               >Edit</button
             >
+            <!-- Fixed width, not `px-1.5` alone: the chip is the last item, so
+                 its width sets where Edit ends up, and `Unread` / `Summarized`
+                 / `VaultSaved` are three different widths. Without this Edit is
+                 consistent for a given disposition and still wobbles between
+                 rows — a column only by coincidence. `w-24` fits the longest
+                 label (`Summarized`) at this size with room to spare. -->
             <span
-              class="shrink-0 rounded px-1.5 py-0.5 text-xs"
+              class="w-24 shrink-0 rounded px-1.5 py-0.5 text-center text-xs"
               class:bg-[var(--color-surface-hi)]={link.disposition !== "Done"}
               class:text-[var(--color-muted)]={link.disposition !== "Done"}
               class:bg-[var(--color-accent-soft)]={link.disposition === "Done"}

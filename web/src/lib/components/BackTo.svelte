@@ -12,6 +12,7 @@
   // to whatever you were doing before, which is a different promise than the
   // label makes.
   import { goto } from "$app/navigation";
+  import { modalOpen } from "./Dialog.svelte";
 
   let {
     href,
@@ -23,6 +24,14 @@
   }
 
   function onKeyDown(e: KeyboardEvent) {
+    // Nor while a modal is open — the #1121 rule, which this component was
+    // missing. `showModal()` makes the page inert for pointer and focus but a
+    // keydown still reaches `window`, so Escape-to-close-the-preview also fired
+    // Escape-to-leave-the-page: the slide-over shut and the page navigated out
+    // from under it, in one keystroke. The handoff page's own handler has
+    // guarded this since #1121; putting it here covers every page that uses
+    // this control, present and future.
+    if (modalOpen()) return;
     // Not while typing — Escape belongs to the field then (clearing a search,
     // closing its own dropdown).
     const tag = (e.target as HTMLElement)?.tagName;
