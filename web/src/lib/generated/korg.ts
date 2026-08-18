@@ -78,7 +78,19 @@ variant: string, mime: string, width: number, height: number, byte_size: number,
 /**
  * Where to fetch these bytes. Relative — see `korg_img::ROUTE_PREFIX`.
  */
-url: string, };
+url: string, 
+/**
+ * True when these bytes **are** the original's (#1146): the original was
+ * already inside this size's ceiling and re-encoding it came out no
+ * smaller, so korg kept one copy instead of two.
+ *
+ * The `url` still works and still serves this size — that is the whole
+ * point — so a caller fetching images can ignore this field entirely. It
+ * is here for the ones that would otherwise be misled: an accounting
+ * reader must not add `byte_size` to the original's, and a caller that
+ * already holds the original can skip the fetch outright.
+ */
+is_original: boolean, };
 
 /**
  * One row of the awaiting lane.

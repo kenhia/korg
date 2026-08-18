@@ -171,18 +171,28 @@ async fn serve(s: AppState, raw_id: &str, variant: Option<Variant>) -> Result<Re
         .await?
         .ok_or_else(|| not_found(format!("no attachment {id}")))?;
 
-    let mime = match variant {
-        None => row.mime.clone(),
-        Some(v) => row
-            .variants
-            .iter()
-            .find(|stored| stored.variant == v.as_str())
-            .map(|stored| stored.mime.clone())
-            .ok_or_else(|| not_found(format!("attachment {id} has no {v} variant")))?,
-    };
-    let path = match variant {
-        None => s.images.original_path(id, &mime)?,
-        Some(v) => s.images.variant_path(id, v, &mime)?,
+    // Which blob answers this request. A variant korg listed as `is_original`
+    // has no blob of its own (#1146): the original already fit the size and
+    // re-encoding it came out no smaller, so one copy serves both URLs. The
+    // read surface decides that, not this route — `repo::get_attachment` is the
+    // single place the rule lives, and serving is just doing what it said.
+    let (mime, path) = match variant {
+        None => (row.mime.clone(), s.images.original_path(id, &row.mime)?),
+        Some(v) => {
+            let stored = row
+                .variants
+                .iter()
+                .find(|stored| stored.variant == v.as_str())
+                .ok_or_else(|| not_found(format!("attachment {id} has no {v} variant")))?;
+            if stored.is_original {
+                (row.mime.clone(), s.images.original_path(id, &row.mime)?)
+            } else {
+                (
+                    stored.mime.clone(),
+                    s.images.variant_path(id, v, &stored.mime)?,
+                )
+            }
+        }
     };
 
     let store = s.images.clone();

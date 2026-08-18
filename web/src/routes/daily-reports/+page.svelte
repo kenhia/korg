@@ -89,12 +89,19 @@
           {:else if s.freshness === "unrated"}
             <!-- Say WHY korg declined (#1097). "unrated" with no reason reads as
                  a bug; with the span it reads as a source that has not yet shown
-                 a pattern — which is exactly what it is. -->
+                 a pattern — which is exactly what it is.
+
+                 An operator note REPLACES the generic advice rather than joining
+                 it (#1398): a source can be unrated on purpose — kyac is
+                 interactive, run when Ken runs it, so `unrated` is the honest
+                 state and "declare a cadence" is the wrong thing to tell the
+                 next reader. A row someone made a decision about should show
+                 the decision. -->
             <span class="text-xs text-[var(--color-muted)]">
               {s.report_count}
               {s.report_count === 1 ? "report" : "reports"}{s.history_span_days
                 ? ` over ${s.history_span_days} days`
-                : ""} — no cadence korg will believe yet; declare one to rate it
+                : ""} — {s.note ?? "no cadence korg will believe yet; declare one to rate it"}
             </span>
           {:else if s.freshness === "retired"}
             <span class="text-xs text-[var(--color-muted)]">

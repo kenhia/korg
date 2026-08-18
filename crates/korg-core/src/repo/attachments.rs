@@ -118,6 +118,16 @@ pub struct AttachmentVariantRow {
     pub byte_size: i64,
     /// Where to fetch these bytes. Relative — see `korg_img::ROUTE_PREFIX`.
     pub url: String,
+    /// True when these bytes **are** the original's (#1146): the original was
+    /// already inside this size's ceiling and re-encoding it came out no
+    /// smaller, so korg kept one copy instead of two.
+    ///
+    /// The `url` still works and still serves this size — that is the whole
+    /// point — so a caller fetching images can ignore this field entirely. It
+    /// is here for the ones that would otherwise be misled: an accounting
+    /// reader must not add `byte_size` to the original's, and a caller that
+    /// already holds the original can skip the fetch outright.
+    pub is_original: bool,
 }
 
 /// An attachment as every read returns it.
@@ -188,6 +198,93 @@ const ATTACHMENT_SELECT: &str = "SELECT a.node_id, a.filename, a.mime, a.byte_si
      JOIN node n ON n.id = a.node_id \
      LEFT JOIN project pj ON pj.id = n.project_id";
 
+#[derive(sqlx::FromRow)]
+struct VariantRow {
+    node_id: i64,
+    variant: String,
+    mime: String,
+    width: i32,
+    height: i32,
+    byte_size: i64,
+}
+
+/// The `variants` block of one attachment: every stored size, plus the ones
+/// korg deliberately did not store.
+///
+/// #1146 lets `prepare` drop a variant whose re-encode came out no smaller than
+/// an original that already fits — so since that change, "no `agent` row" is a
+/// normal state meaning *the original is the agent variant*, not a missing one.
+/// The read surface hides that: the size is still listed and its URL still
+/// serves, because an agent being told to fetch `/agent` should never have to
+/// care how korg stored it. Only `is_original` gives it away, for the callers
+/// that need to know (byte accounting, and anyone already holding the original).
+///
+/// Reconstructed from the original's own dimensions rather than from a stored
+/// flag, so it needs no migration and cannot fall out of step with the blobs:
+/// [`korg_img::Variant::fits_original`] is the same predicate `prepare` used.
+/// An absent row for a size the original does NOT fit stays absent — that one
+/// is a genuinely missing variant, and it still 404s.
+///
+/// Order is korg-img's, smallest ceiling first, with any name korg-img no
+/// longer knows tailing alphabetically. Stable whatever the storage did.
+fn attachment_variants(
+    all: &[VariantRow],
+    base: &AttachmentBase,
+    id: korg_img::ImgId,
+) -> Vec<AttachmentVariantRow> {
+    let stored: Vec<&VariantRow> = all.iter().filter(|v| v.node_id == base.node_id).collect();
+
+    let mut rows: Vec<AttachmentVariantRow> = stored
+        .iter()
+        .map(|v| AttachmentVariantRow {
+            variant: v.variant.clone(),
+            mime: v.mime.clone(),
+            width: v.width,
+            height: v.height,
+            byte_size: v.byte_size,
+            url: match korg_img::Variant::parse(&v.variant) {
+                Ok(known) => id.variant_url(known),
+                // A variant name korg-img no longer knows: report the row
+                // rather than dropping it, and let the URL 404 honestly
+                // instead of pretending the size is gone.
+                Err(_) => format!("{}/{}", id.url(), v.variant),
+            },
+            is_original: false,
+        })
+        .collect();
+
+    for variant in korg_img::VARIANTS {
+        let missing = !stored.iter().any(|v| v.variant == variant.as_str());
+        if missing && variant.fits_original(base.width.max(0) as u32, base.height.max(0) as u32) {
+            rows.push(AttachmentVariantRow {
+                variant: variant.as_str().to_string(),
+                mime: base.mime.clone(),
+                width: base.width,
+                height: base.height,
+                // The original's size, because that is what fetching this URL
+                // actually costs. `is_original` is what stops an accounting
+                // reader adding it to the original's again — a zero here would
+                // have balanced that sum by lying about the payload.
+                byte_size: base.byte_size,
+                url: id.variant_url(variant),
+                is_original: true,
+            });
+        }
+    }
+
+    rows.sort_by_key(|r| match korg_img::Variant::parse(&r.variant) {
+        Ok(known) => (
+            korg_img::VARIANTS
+                .iter()
+                .position(|v| *v == known)
+                .unwrap_or(usize::MAX),
+            String::new(),
+        ),
+        Err(_) => (usize::MAX, r.variant.clone()),
+    });
+    rows
+}
+
 /// Turn base rows into full ones, fetching every variant in **one** query
 /// rather than one per attachment — a work item with six screenshots would
 /// otherwise be seven round-trips for a read that is meant to be free.
@@ -200,15 +297,6 @@ async fn hydrate_attachments(
     }
     let ids: Vec<i64> = bases.iter().map(|b| b.node_id).collect();
 
-    #[derive(sqlx::FromRow)]
-    struct VariantRow {
-        node_id: i64,
-        variant: String,
-        mime: String,
-        width: i32,
-        height: i32,
-        byte_size: i64,
-    }
     let variants = sqlx::query_as::<_, VariantRow>(
         "SELECT node_id, variant, mime, width, height, byte_size \
            FROM attachment_variant WHERE node_id = ANY($1) ORDER BY node_id, variant",
@@ -228,6 +316,7 @@ async fn hydrate_attachments(
         } else {
             "linked"
         };
+        let variant_rows = attachment_variants(&variants, &base, id);
         rows.push(AttachmentRow {
             node_id: base.node_id,
             img_id: id.to_string(),
@@ -240,24 +329,7 @@ async fn hydrate_attachments(
             state: state.to_string(),
             owner_node_ids: base.owner_node_ids,
             url: id.url(),
-            variants: variants
-                .iter()
-                .filter(|v| v.node_id == base.node_id)
-                .map(|v| AttachmentVariantRow {
-                    variant: v.variant.clone(),
-                    mime: v.mime.clone(),
-                    width: v.width,
-                    height: v.height,
-                    byte_size: v.byte_size,
-                    url: match korg_img::Variant::parse(&v.variant) {
-                        Ok(known) => id.variant_url(known),
-                        // A variant name korg-img no longer knows: report the
-                        // row rather than dropping it, and let the URL 404
-                        // honestly instead of pretending the size is gone.
-                        Err(_) => format!("{}/{}", id.url(), v.variant),
-                    },
-                })
-                .collect(),
+            variants: variant_rows,
             project: base.project,
             tags: base.tags,
             archived: base.archived,
