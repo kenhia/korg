@@ -28,6 +28,8 @@ const ROUTES = [
   "/schedules",
   "/reading-list",
   "/link-up",
+  // Search joined the header in sprint 066 (#1177).
+  "/search",
 ];
 
 /** Scan the current page and return `[violations, printable detail]`. */

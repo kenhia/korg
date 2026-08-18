@@ -31,7 +31,12 @@ async function openWorkItem(page: Page, wi: number) {
   await page.goto("/work-items");
   await page.waitForLoadState("networkidle");
   await page.getByLabel("Find a work item or node by id").fill(String(wi));
-  await page.getByRole("button", { name: "Go" }).click();
+  // `exact` because getByRole's name match is a case-insensitive SUBSTRING by
+  // default, and the Work Items page renders one button per project — so any
+  // project whose name contains "go" (`e2e-due-pill-gone-…`, filed by the
+  // schedules suite running in parallel) turns this into a strict-mode
+  // violation. It passed only while that project happened not to exist yet.
+  await page.getByRole("button", { name: "Go", exact: true }).click();
   await page.getByRole("row", { name: new RegExp(`\\b${wi}\\b`) }).first().click();
 }
 

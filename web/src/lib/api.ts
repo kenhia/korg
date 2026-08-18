@@ -31,6 +31,7 @@ import type {
   ScheduleDetail,
   ScheduleList,
   ScheduleRow,
+  SearchResults,
   SourceHealth,
   WorkItemDetail,
   WorkItemListLean,
@@ -222,6 +223,25 @@ async function httpMaybe<T>(method: string, path: string): Promise<T | null> {
 type Patch<T> = Partial<T>;
 
 export const api = {
+  // search (#1177)
+  /** Full-text search over every node kind plus every comment.
+   *
+   *  `scope` defaults to live rows only on the server; the page passes `"all"`
+   *  explicitly when the "everything" toggle is on. `archived` is REST's
+   *  tri-state spelling, so `"all"` there means "archived too" — the two are
+   *  independent and the toggle sets both, because "search everything" that
+   *  still hid archived rows would be a lie the UI told itself.
+   */
+  search: (params: {
+    q: string;
+    kind?: string;
+    project?: string;
+    scope?: string;
+    archived?: string;
+    limit?: number;
+    offset?: number;
+  }) => http<SearchResults>("GET", `/api/search${listQuery({ ...params })}`),
+
   // daily reports
   reports: (source?: string) =>
     http<ReportRow[]>("GET", `/api/reports${listQuery({ source })}`),

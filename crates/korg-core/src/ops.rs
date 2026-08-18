@@ -118,6 +118,30 @@ pub mod schema {
         json_schema!({ "type": ["string", "null"], "enum": variants })
     }
 
+    /// What `search` may be narrowed to: every node kind that carries prose,
+    /// plus `comment` — which is not a node kind but IS a document, and the one
+    /// that most often holds the answer (#1177).
+    ///
+    /// Derived from `NODE_KINDS` rather than listed, minus `attachment`: an
+    /// attachment is a filename and a mime type, so offering it as a filter
+    /// would promise a search that can only ever return nothing.
+    pub fn search_kind(_: &mut SchemaGenerator) -> Schema {
+        let mut variants: Vec<Value> = vocab::NODE_KINDS
+            .iter()
+            .filter(|k| **k != "attachment")
+            .map(|k| Value::String((*k).into()))
+            .collect();
+        variants.push(Value::String("comment".into()));
+        variants.push(Value::Null);
+        json_schema!({ "type": ["string", "null"], "enum": variants })
+    }
+
+    /// `search` scope. Omitted means live rows only; `"all"` is the whole
+    /// corpus, terminal and archived included.
+    pub fn search_scope(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({ "type": ["string", "null"], "enum": ["live", "all", null] })
+    }
+
     pub fn non_empty(_: &mut SchemaGenerator) -> Schema {
         json_schema!({ "type": "string", "minLength": 1 })
     }
@@ -462,6 +486,57 @@ pub struct ListWorkItems {
     #[serde(default)]
     #[schemars(schema_with = "schema::offset", default = "documented_page_offset")]
     pub offset: Option<i64>,
+}
+
+/// `search` / `GET /api/search` (WI #1177). One required argument and four
+/// narrowings; the ranking is not a knob (see `repo::search`).
+#[derive(Debug, Clone, Deserialize, JsonSchema, Default)]
+pub struct Search {
+    /// Plain terms. All terms are required; when that matches nothing the
+    /// query is relaxed to any-term and the response says `relaxed: true`.
+    /// Quoted `"exact phrases"` and a leading `-` to exclude both work, and a
+    /// query carrying an exclusion is never relaxed.
+    #[schemars(schema_with = "schema::non_empty")]
+    pub q: String,
+    /// Restrict to one document kind.
+    #[serde(default)]
+    #[schemars(schema_with = "schema::search_kind")]
+    pub kind: Option<String>,
+    /// Project name to filter by. A comment inherits its parent's project.
+    #[serde(default)]
+    pub project: Option<String>,
+    /// Which rows. Omit for live ones only — each kind's own terminal state is
+    /// excluded, matching what its list read hides. `"all"` searches
+    /// everything, which is what you want when chasing a decision that was
+    /// settled and closed.
+    #[serde(default)]
+    #[schemars(schema_with = "schema::search_scope")]
+    pub scope: Option<String>,
+    #[serde(default = "archived_default")]
+    #[schemars(schema_with = "schema::archived_filter")]
+    pub archived: ArchivedFilter,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::limit", default = "documented_page_limit")]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    #[schemars(schema_with = "schema::offset", default = "documented_page_offset")]
+    pub offset: Option<i64>,
+}
+
+impl From<Search> for repo::SearchQuery {
+    fn from(a: Search) -> Self {
+        Self {
+            q: a.q,
+            kind: a.kind,
+            project: a.project,
+            scope: a.scope,
+            archived: a.archived,
+            page: PageQuery {
+                limit: a.limit,
+                offset: a.offset,
+            },
+        }
+    }
 }
 
 /// `work_item_flow` / `GET /api/work-items/flow` (#1318). One optional knob —

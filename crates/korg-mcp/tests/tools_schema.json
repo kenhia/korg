@@ -1414,6 +1414,81 @@
     "name": "list_awaiting"
   },
   {
+    "description": "Full-text search across the WHOLE corpus in one call (korg #1177): every node kind that carries prose -- work items, proposals, programs, cards, reports, handoffs, schedules, links -- plus one document per COMMENT, which is where the answer usually is. A resolution comment, a review verdict, a recon note: none of that is reachable by scanning titles, and title-scanning is measurably the worse tool (9/12 vs 12/12 on the frozen acceptance suite). Reach for this INSTEAD of paging list_work_items and reading rows yourself.\n\nReturns {items, total, limit, offset, omitted, relaxed, parsed}. Each item is lean and routable: node_id, comment_id (set only for comments, so \"this item matched\" is distinguishable from \"someone said this on it\"), kind, `locator` (`WI-836`, `korg:1395`, `korg:1395#comment-777` -- the spelling Ken and skills already use), title, status, project, `score`, `updated`, and a bounded `snippet` centred on the matched terms rather than the head of the document. Bodies are NOT here by design -- follow the locator with get_work_item / get_proposal / get_report when the snippet is not enough.\n\nQuery semantics: ALL terms are required. When that matches nothing the query is relaxed to ANY term and `relaxed: true` says so -- always read that flag, because a relaxed answer is a broad one and its `total` counts any-term matches (frequently most of the corpus). Quoted \"exact phrases\" and a leading `-` to exclude both work; a query carrying an exclusion is NEVER relaxed, because `foo -bar` relaxed would invert what you asked for. `parsed` shows the tsquery Postgres actually ran (stemming applied, stop words dropped), which is how you diagnose a surprising result set without guessing.\n\nScoping: by default only LIVE rows are searched -- each kind's own terminal state is excluded, matching what its list read hides (`closed` work items, `done`/`declined` proposals, `done` programs, `Done`/`Cut` cards), and archived rows are excluded too. `omitted` is {terminal, archived}, counted as a cascade so nothing is double-counted, and it is how you know a narrow answer was narrowed. **Pass scope:\"all\" whenever you are chasing something that was decided and closed** -- which is most historical questions; the default is tuned for \"what is in flight\", not \"what did we conclude\". Narrow further with `kind` (one document kind) and `project` (a comment inherits its parent's project).\n\nRanking is fixed and deliberately not a knob. This is a LEXICAL search: it matches words, not meaning, so a query sharing no vocabulary with its answer will miss -- phrase it in the words the record would use.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "default": false,
+          "description": "Omit for unarchived only (the default); true for archived only; null for both.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "Restrict to one document kind.",
+          "enum": [
+            "workitem",
+            "card",
+            "link",
+            "sprint_proposal",
+            "report",
+            "handoff",
+            "program",
+            "schedule",
+            "comment",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": 200,
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "project": {
+          "description": "Project name to filter by. A comment inherits its parent's project.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "q": {
+          "description": "Plain terms. All terms are required; when that matches nothing the\nquery is relaxed to any-term and the response says `relaxed: true`.\nQuoted `\"exact phrases\"` and a leading `-` to exclude both work, and a\nquery carrying an exclusion is never relaxed.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "scope": {
+          "description": "Which rows. Omit for live ones only — each kind's own terminal state is\nexcluded, matching what its list read hides. `\"all\"` searches\neverything, which is what you want when chasing a decision that was\nsettled and closed.",
+          "enum": [
+            "live",
+            "all",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "q"
+      ],
+      "type": "object"
+    },
+    "name": "search"
+  },
+  {
     "description": "The whole board in ONE call (korg #970) -- what a dashboard needs, instead of the 17-call crawl the 2026-07-31 backlog review had to do. Takes NO arguments: it is one screen's state, and every filter it could offer is already decided by what the panels are. Returns {generated, active, queue, proposals_omitted, proposal_edges, blocked, programs, programs_omitted, awaiting, depth, reports, events, sources, due_schedules}. `active` and `queue` are the `active` and `proposed` proposals, pinned-first-then-rank, each with `summary`, a work-item rollup (covered_count plus one count per status: open/resolved/done/closed/parked, which sum to it) so progress renders without a call per proposal, and `synopsis` -- the newest comment opening with the ⟦curator⟧ marker (korg #1003, the machine-curated line; null when none). `proposals_omitted` is the usual {done, declined, archived}. `proposal_edges` (korg #1003) are every edge whose BOTH endpoints are active/queue rows -- {left, right, label, directed (from the registry -- read undirected labels symmetrically), origin, created}, the read surface for edge provenance, which is how curated edges (origin \"kfdc-curator\") stay distinguishable from human ones. `programs` are the live programs, each with its ordered `slices` exactly as get_program returns them. `blocked` (korg #978) is the DETERMINISTIC half of Deconfliction: every UNMET depends_on holding up a live row, one entry per (row, blocker) pair -- {proposal, via, dependent, dependent_wi_number, blocker, blocker_kind, blocker_wi_number, blocker_title, blocker_project, blocker_status, sequenced_by}. `via` is \"proposal\" when the row itself carries the edge and \"covered\" when one of its covered work items does; both count. Unfinished is derived from the vocabulary per kind, so a `done` work item does NOT block (that is the completion split, not the list-visibility one). One hop only, and an archived blocker does not block -- a row held blocked forever by something nobody will ever do is worse than one that frees up. `sequenced_by` names the live program whose ordered slices ALREADY express this dependency (kfdc #1070), so a render can drop what Operations is drawing anyway instead of showing the same data twice; null when there is none. `events` (korg #977) is the ticker: the newest 20 status transitions, newest first -- {node_id, kind, wi_number, title, project, from_status, to_status, at}. A write that does not CHANGE the status produces no event, which is the whole point: `node.updated` advances on any edit, so a feed built from it would date a proposal by its last tag edit. The log starts at migration 0026 and was deliberately NOT backfilled (there was no honest history to backfill from), so an empty ticker means \"nothing has moved since the migration\", never \"nothing has ever moved\". `awaiting` is list_awaiting's lane, `depth` is per-project queue depth (every project, with its `status`), `reports` the newest 5, and `sources` (korg #950) is every reporting source with its `freshness` (fresh|stale|retired|unrated) and what it `asserts` (ok|attention|problem|unknown) -- anything not `fresh` asserts `unknown`, never a last known status, which is the whole point: a stale GREEN is how korg lied about the fleet for 11 days in July 2026. `sources` is deliberately UNCAPPED where `reports` is 5 -- a cap could push a stale source off the board behind fresher ones, which inverts the failure it exists to catch. `due_schedules` (korg #1385) is what is DUE RIGHT NOW, soonest-due first: exactly `list_schedules(due_only:true)`'s rows, so due-ness keeps its single definition and the board inherits all three clauses -- active, interval elapsed, and no outstanding materialized item (a drill whose work item is already open does not nag from here). Uncapped for the same reason `sources` is: the row a cap would drop is the one that has waited longest. It exists because schedule 1112 sat due for nine days where nothing that gets looked at daily could say so. There is deliberately NO counters block -- live proposals is active+queue, shipped is proposals_omitted.done, awaiting is awaiting.length, projects is depth filtered by status; a counter that can disagree with the list beside it is a bug. `generated` is Postgres's clock, the same one every timestamp here came from, so ages computed against it are right. For one proposal's covered items, one program's detail, or anything paged, use that entity's own read.",
     "inputSchema": {
       "additionalProperties": false,

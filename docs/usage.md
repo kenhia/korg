@@ -119,6 +119,21 @@ covers:
   — so a reviewer responds with a comment rather than editing the document.
   Not on the top nav; it is reached from the work the handoff belongs to, and
   links back to it.
+- **Search** (`/search`) — full-text search over the whole corpus: every node
+  kind that carries prose, plus every comment. The box sits in the **header**,
+  on every page, rather than in the top nav: search is something you do *from*
+  where you are, not a place you go, and a tab would put the box one click
+  further from everywhere that is not it. The query lives entirely in the URL,
+  so a result set is linkable and Back works.
+
+  All terms are required; when that finds nothing the search relaxes to any
+  term and **says so** — a relaxed result set is a broad one and the page will
+  not let it pass for a precise one. `"quoted phrases"` and `-excluded` work,
+  and a query carrying an exclusion is never relaxed. By default only live rows
+  are searched (each kind's own terminal state excluded, archived excluded);
+  **Search everything** turns both off, which is what most questions about a
+  decision already taken need. Hits open in the same slide-over preview the
+  rest of the UI uses. See [api.md](api.md#search-1177) for the contract.
 
 ### Behaviour common to every page
 
@@ -227,6 +242,7 @@ describing a route that no longer exists.
 | `PATCH` | `/api/report-sources/:source` | Declare a source's cadence, grace window, retirement or note. Every field is an override; `null` returns it to derivation. |
 | `GET` | `/api/awaiting` | Everything waiting on Ken, oldest ask first, across every node kind. |
 | `PUT` | `/api/nodes/:id/awaiting` | Set or clear the awaiting-Ken marker on any node (`{awaiting, note}`). The UI's one-click clear is this call with `awaiting: false`. |
+| `GET` | `/api/search` | Full-text search over every node kind plus every comment. `q` is required; narrow with `kind`, `project`, `scope` (`live` default, `all` for the whole corpus), `archived` (`true\|false\|all`), `limit`, `offset`. Returns the paginated envelope plus `omitted`, `relaxed` (the all-terms query found nothing and this is the any-term fallback) and `parsed` (the tsquery Postgres ran). |
 | `GET` | `/api/board` | The whole board in one request: active sprints with progress, the ranked queue, what is blocked and by what, programs with slices, the awaiting lane, per-project depth, newest reports, the status-transition ticker, and every reporting source's freshness. No parameters — see [api.md](api.md#the-board-rollup-970). |
 | `GET` | `/api/reports` | List agent reports (filters `source`, `limit`; newest first). |
 | `GET` | `/api/reports/:node_id` | One report with its findings and comments. |

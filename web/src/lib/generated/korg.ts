@@ -1102,6 +1102,71 @@ materialized_count: number,
 preview_title: string, archived: boolean, comment_count: number, tags: Array<string>, category: string | null, created: string, updated: string, };
 
 /**
+ * One search hit. Lean by design: `snippet` is bounded, and the locator plus
+ * `node_id`/`comment_id` are enough to route a follow-up read.
+ */
+export type SearchHit = { node_id: number, 
+/**
+ * Set when the hit is a comment, so a caller can tell "this item matched"
+ * from "someone said this on it" without parsing the locator.
+ */
+comment_id: number | null, kind: string, 
+/**
+ * `WI-836`, `korg:1395`, `korg:1395#comment-777` — what to open next, and
+ * the same spelling Ken and agents already use for the thing.
+ */
+locator: string, 
+/**
+ * Absent for comments, which have no title of their own.
+ */
+title: string | null, 
+/**
+ * The node's own status, where its kind has one.
+ */
+status: string | null, project: string | null, 
+/**
+ * A fragment centred on the matched terms, not the head of the document.
+ */
+snippet: string, score: number, updated: string, };
+
+/**
+ * What the default scope hid, as a cascade so nothing is counted twice:
+ * `archived` is what the archived filter excluded, and `terminal` is counted
+ * only over the rows that passed it.
+ *
+ * A field is 0 when the caller asked to see that class, so each name stays
+ * true under every setting.
+ */
+export type SearchOmitted = { 
+/**
+ * Rows in their kind's own terminal state — `closed` work items,
+ * `done`/`declined` proposals, `done` programs, `Done`/`Cut` cards.
+ */
+terminal: number, archived: number, };
+
+export type SearchResults = { items: Array<SearchHit>, total: number, limit: number, offset: number, omitted: SearchOmitted, 
+/**
+ * True when the all-terms parse matched nothing and this answer is the
+ * any-term relaxation (WI 1001's contract).
+ *
+ * It is reported rather than hidden because the failure this feature was
+ * built out of was a silently-unrelaxed query path returning zero while
+ * claiming health (khound's Gate A M3). A caller that cannot tell strict
+ * from relaxed cannot tell a precise answer from a broad one.
+ */
+relaxed: boolean, 
+/**
+ * The tsquery that actually produced these results, as Postgres understood
+ * it — stop words dropped, stemming applied, phrases preserved. Present so
+ * a surprising result set can be diagnosed without a database session.
+ *
+ * When `relaxed` is true this is the any-term query, not the all-terms one
+ * that found nothing: reporting the parse that was *abandoned* would
+ * describe a search that did not happen.
+ */
+parsed: string, };
+
+/**
  * One reporting source's freshness — the #950 projection.
  *
  * Read the two state fields together and note what is *not* here: there is no
