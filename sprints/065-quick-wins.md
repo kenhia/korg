@@ -124,3 +124,43 @@ convention page — specifically so nobody later "fixes" it by archiving it.
 - `docs/eval-convention.md` has no drift check. Cheap options exist (assert it
   names a live `PROJECT_CATEGORIES` value) but none that would catch the way it
   is most likely to rot — the `eval` project being renamed or archived.
+
+## Deployed
+
+**2026-08-18** · image `kubsdb.encke-wahoo.ts.net:5000/korg:e292e855fed4`
+(digest `sha256:8d1c9f4b0de6…`) · rollback target `5b130a7187ad` (sprint 064),
+confirmed present in the registry before building.
+
+No migration this sprint, and the check says so: `migrations 28 → 28`, every row
+count identical across the deploy (1311 nodes, 944 work items, 250 proposals, 50
+projects, 43 reports, 30 cards, 4 links; `node_max` and `seq_last` both 1412).
+The revision gate ran inside the deploy rather than after it — the running
+container's `org.opencontainers.image.revision` was asserted equal to the commit
+built, which is the one check a silently-cached `compose pull` cannot pass.
+
+### Verified live
+
+| Item | Check | Result |
+|---|---|---|
+| deploy gate | container revision label vs the commit built | `e292e855fed4…` — asserted inside the deploy |
+| #1398 | `GET /api/report-sources` | **`kmon` (fresh) leads**, `kyac` (unrated) below it, five retired rows tail — monotonic in stale → fresh → unrated → retired. The same data under the old key put kyac first and kmon last |
+| #1398 | deployed bundle, `nodes/4.*.js` | carries `.note??"no cadence korg will believe yet…"` — the branch that lets kyac's row render *why* it is deliberately unrated instead of the generic "declare a cadence" advice |
+| #1146 | `POST /api/img`, 1019×311 opaque screenshot (the bug's own dimensions) | `agent` variant returns **`is_original: true`**, 1,914 bytes, `image/png` |
+| #1146 | `GET /api/img/img-585/agent` | 200, `image/png`, **byte-identical** to the uploaded original |
+| #1146 | blobs on disk | `original.png` + `thumb.jpg` only — **no `agent.jpg`** |
+| #1146 | `DELETE /api/img/img-585` | `{"deleted":true}`, directory gone, record 404s |
+| — | `GET /plan` deep link | 200 |
+
+**The live upload is the measured-versus-predicted case, by luck of being a
+realistic screenshot.** It is opaque, so korg would encode its `agent` variant
+as JPEG — a *different* mime family. Under this item's originally-specified rule
+("already ≤1568px **and same mime family**") that variant would therefore have
+been kept, and at q82 it measures **12,288 bytes against a 1,914-byte original**:
+six times the file, stored beside it, for the same pixels. The shipped rule
+measures instead and wrote nothing. The thumb tells the same story from the
+other side — 4,877 bytes of JPEG from a 1,914-byte PNG source — and is left
+alone deliberately, since it is a real downscale the UI renders everywhere.
+
+The test attachment was discarded, so nothing was left in production; that
+discard doubles as the live check that a skipped variant cannot double-delete
+or miss, since `Store::remove` takes the whole directory.
