@@ -684,6 +684,10 @@ async fn work_item_flow_serves_the_series_over_rest() {
         "the default window"
     );
     assert!(flow["horizon"].is_string(), "the clamp boundary is named");
+    assert!(
+        flow.get("backlog_before").is_some(),
+        "the window delta's baseline is on the envelope (#1432)"
+    );
     assert_eq!(flow["timezone"], "UTC", "the app config's timezone");
     for key in [
         "day",

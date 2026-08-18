@@ -730,8 +730,8 @@ read rather than growing its own queries).
 `work_item_flow` (REST: `GET /api/work-items/flow?days=N`) is korg's one
 time-series read: one row per day in the board's timezone, oldest first,
 ending today — `{day, added, closed, backlog, added_durable, closed_durable}`
-per row, with `{horizon, timezone, durable_after_days, generated}` on the
-envelope. It exists because the raw open count is the wrong instrument for the
+per row, with `{backlog_before, horizon, timezone, durable_after_days,
+generated}` on the envelope. It exists because the raw open count is the wrong instrument for the
 backlog: measured 2026-08-15, 77.6% of all closed work items lived under one
 day (sprint-internal task lists opened and closed in one session), so a plain
 added-vs-closed chart reads ~1:1 forever whatever the backlog does. The
@@ -761,16 +761,52 @@ status when nothing has moved since. A close counts on the day it happened
 (once per day, even if an item closes twice that day); a reopened item rejoins
 the backlog on the day of its reopening.
 
+### The window delta needs `backlog_before` (#1432)
+
+`backlog_before` is the open count at the end of the day **immediately
+before** `days[0]`. It is on the envelope rather than in the series because no
+row inside the window can be it: every row's `backlog` is that day's *end*, so
+`days[0]` already has its own arrivals and closures applied. Differencing the
+series ends therefore measures one day less than the `added`/`closed` sums do.
+
+    delta = days.last().backlog - backlog_before     ✅ same days the sums cover
+    delta = days.last().backlog - days[0].backlog    ❌ off by day one's own net
+
+The invariant that ties the two halves of a panel together:
+
+    backlog_before + Σ(added - closed) == days.last().backlog
+
+This shipped because kfdc's Rate of Fire panel used the second form and
+printed `in 119  out 136 … -8/6d` — where `119 − 136` is `−17`. The series was
+never wrong; it was being asked a question its rows could not answer. Fixing
+it consumer-side (fetch `days + 1`, drop the first row) was rejected: it puts
+horizon reasoning back in the caller, and it degrades silently at the horizon,
+rendering N−1 days under an "N day" label — the same class of bug.
+
+`backlog_before` is **`null` when the window starts at `horizon`**: there is
+no prior day the log can answer for. Never `0` there — a zero is a real
+backlog level and would read as "the backlog was empty".
+
+### Window and durability lag
+
+The default window is 10 days (`FLOW_DAYS_DEFAULT` in
+`crates/korg-core/src/repo/flow.rs`). It launched at 6, chosen so the whole
+window sat inside the transition horizon on the day it shipped (Ken,
+2026-08-15), and widened to 10 on 2026-08-18 (#1433) once the log covered
+eleven days — ten for the window, one for the baseline above. Widening further
+is the same one-constant edit and needs no date check: a window past the log's
+coverage is clamped, and the response says so.
+
 One property worth knowing before rendering: `added_durable` is structurally
 zero for the newest `durable_after_days` days of any series — an arrival's
-durability is only knowable in retrospect — so at the launch default
-(`days` = 6, threshold 7) that column is all zeros until the window widens.
-`closed_durable` has no such lag: an item closing today may have lived months.
-
-The default window is 6 days, chosen so the whole window sits inside the
-transition horizon at ship time (Ken, 2026-08-15); widening it to 10 after
-2026-08-18 is a one-constant change (`FLOW_DAYS_DEFAULT` in
-`crates/korg-core/src/repo/flow.rs`).
+durability is only knowable in retrospect. At the launch 6-day default that
+made the column all zeros; at 10 (threshold 7) only the newest 7 days are
+structurally zero, so a **summed** `added_durable` covers just the oldest part
+of the window while a summed `closed_durable` covers all of it. Those two are
+not comparable, and a totals line printing them side by side without saying so
+is a new instance of exactly the problem this read exists to solve.
+`closed_durable` itself has no lag: an item closing today may have lived
+months.
 
 This is a rollup like the board, not a collection read: it returns no
 `{items, total, limit, offset}` envelope and takes no `archived` filter (the

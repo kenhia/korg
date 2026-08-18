@@ -1333,6 +1333,26 @@ export type WorkItemFlowSeries = {
  */
 days: Array<WorkItemFlowDay>, 
 /**
+ * Open (non-`closed`) work items at the end of the day **immediately
+ * before** `days[0]` — the window's baseline, and the one number the
+ * series structurally cannot supply (#1432).
+ *
+ * Every row's `backlog` is the count at that day's *end*, so `days[0]`
+ * already has its own arrivals and closures applied. Differencing the
+ * first and last rows therefore measures one day less than `added` and
+ * `closed` do, and a consumer that labels both with the same window
+ * length is off by exactly the first day's net (kfdc's panel read
+ * `-8/6d` where the flow said `-17`). Against this baseline the window
+ * delta is `days.last().backlog - backlog_before`, over the same days
+ * the sums cover, and the invariant
+ * `backlog_before + Σ(added - closed) == days.last().backlog` holds.
+ *
+ * `null` when the window starts at `horizon`: there is no prior day the
+ * log can answer for. Never `0` in that case — a zero here is a real
+ * backlog level and would read as "the backlog was empty".
+ */
+backlog_before: number | null, 
+/**
  * Where the transition log begins. A requested window reaching past this
  * is clamped to it — days the log cannot answer are absent, never zeros.
  */

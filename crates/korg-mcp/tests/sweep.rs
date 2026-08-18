@@ -373,6 +373,7 @@ async fn work_item_flow_serves_the_series_and_names_its_contract() {
 
     for key in [
         "days",
+        "backlog_before",
         "horizon",
         "timezone",
         "durable_after_days",
