@@ -115,3 +115,31 @@ Against the restored dump, before teardown:
   column. That is Ken's spec read literally ("right justified" for the
   group rows, "to left of the pencil" for projects). If he wants them
   aligned instead it is a one-line pad on the group rows.
+
+## Deployed
+
+**2026-08-19**, image `kubsdb.encke-wahoo.ts.net:5000/korg:62db604c9bb6`
+(revision `62db604c9bb60c5f93a6631d355b70b550d3e42d`, the squash-merge of
+PR #73). Rollback target: `4c8ec330c6c9` (sprint 067), confirmed present
+in the registry before building.
+
+The deploy's revision gate passed — the running container's
+`org.opencontainers.image.revision` label matches the commit built, so the
+`compose pull` was real rather than a cache hit.
+
+`scripts/post-deploy-check.sh --compare` green: every row count identical
+across the deploy (work_items 963, proposals 259, projects 50, cards 30,
+reports 44, links 4), 29 migrations before and after — this sprint carried
+none.
+
+Verified live, per work item:
+
+- **#1414** — `GET /api/proposals/rollup` returns 50 rows, none missing the
+  `category` key, and the three `EVAL` rows (`eval`, `feedhub`, `loglens`)
+  are exactly the residue the datum exists to let a consumer drop.
+- **#1412** — `get_attachment(img_id: "img-c2a")` over production MCP:
+  `no attachment with node_id 3114 (img-c2a)`. Both spellings.
+- **#1442** — the Work items rail renders all three figures on the live
+  instance: `All projects 157`, `INFRASTRUCTURE 36`, and a per-project
+  count beside each pencil. The 157 matches the API's own
+  `sum(wi_total)`, so rail and endpoint agree in production.
