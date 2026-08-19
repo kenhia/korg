@@ -77,6 +77,15 @@ Containment comes from the `EVAL` category and the project's description,
 which tells any agent reading the routing roster that real work does not
 belong there.
 
+That makes eval residue visible to every project-spanning read, which is why
+`category` now rides the project rollup as well as `ProjectRow` (#1414, sprint
+068): `get_board`'s `depth` and `GET /api/proposals/rollup` carry it, so a
+consumer drops EVAL rows from the one read it was already making. korg does
+**not** filter them for you and ships no `is_eval` flag — an EVAL project is
+the tier below every tier, and the project-tiers design (korg+ plan GP-10) is
+meant to absorb this exclusion rather than have a parallel switch grow beside
+it.
+
 ## Cleaning up after a run
 
 By hand, and quickly — that is the trade this convention accepted:
