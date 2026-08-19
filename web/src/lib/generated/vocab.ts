@@ -21,7 +21,7 @@ export type Disposition = (typeof LINK_DISPOSITIONS)[number];
 export const PROPOSAL_STATUSES = ["proposed", "active", "done", "declined"] as const;
 export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 
-export const PROGRAM_STATUSES = ["active", "holding", "done"] as const;
+export const PROGRAM_STATUSES = ["queued", "active", "holding", "done"] as const;
 export type ProgramStatus = (typeof PROGRAM_STATUSES)[number];
 
 export const REPORT_STATUSES = ["ok", "attention", "problem"] as const;

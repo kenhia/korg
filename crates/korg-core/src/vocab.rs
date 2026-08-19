@@ -186,21 +186,72 @@ pub const PROPOSAL_LIVE_STATUSES: [&str; 2] = ["proposed", "active"];
 /// `list_proposals` unless asked for, and counted in its `omitted`.
 pub const PROPOSAL_TERMINAL_STATUSES: [&str; 2] = ["done", "declined"];
 
-/// Program lifecycle (#968, sprint 044); mirrors the `program.status` CHECK
-/// (0023). A program is the cross-project layer: it `includes` proposals,
-/// ordered, and outlives any one of them.
+/// The proposals somebody has actually **begun** (#1424, sprint 069) — a
+/// different cut from live/terminal, and the one a program's `queued` state is
+/// defined against.
+///
+/// Not the complement of `proposed`, which is the tempting shortcut: `declined`
+/// is a decision *not* to do the work, so a program whose only slice was
+/// dropped was never started. `done` is here because work that shipped was
+/// plainly begun, whether or not anyone remembered to mark it `active` on the
+/// way through — a program cannot be waiting to start on a slice that has
+/// already finished.
+///
+/// One name because three places ask the same question and must not diverge:
+/// `create_program`'s initial status, the promotion out of `queued`, and 0030's
+/// backfill.
+pub const PROPOSAL_STARTED_STATUSES: [&str; 2] = ["active", "done"];
+
+/// Program lifecycle (#968, sprint 044; `queued` added #1424, sprint 069);
+/// mirrors the `program.status` CHECK (0023, widened by 0030). A program is the
+/// cross-project layer: it `includes` proposals, ordered, and outlives any one
+/// of them. Ordered as the lifecycle reads: `queued` → `active` ⇄ `holding` →
+/// `done`.
 ///
 /// `holding` is the state a program spends most of its life in and the reason
 /// this is not just `active`/`done` — a program whose current slice has shipped
 /// and whose next one is not started is neither finished nor in flight, and
 /// collapsing that into `active` would make the Operations panel claim work is
 /// underway when nobody is on it.
-pub const PROGRAM_STATUSES: [&str; 3] = ["active", "holding", "done"];
+///
+/// **`queued` is that same argument one step earlier**, and it exists because
+/// the panel made exactly that claim: 0023 defaulted the column to `active` and
+/// `create_program` never wrote it, so a program that had been planned and not
+/// begun rendered with an ACTIVE callout (#1424, with the screenshot). It means
+/// precisely *no slice of this program has started* — not "ready", which would
+/// assert a readiness korg cannot check, and not "created", which would name how
+/// the row got here rather than where the work stands.
+///
+/// Read it as a fact about the slices, because that is what korg maintains it
+/// as: every path that can start a slice — `update_proposal`, `create_program`,
+/// `relate` — promotes a `queued` program to `active`, so the state can never
+/// outlive the condition it asserts. It does **not** come back: a program that
+/// has begun and paused is `holding`, which is somebody's decision, and korg
+/// never demotes into `queued` behind them.
+///
+/// This prose is load-bearing rather than decorative. kfdc #1196 exists because
+/// a status value's documentation asserted a meaning korg did not have, and a
+/// plausible-sounding comment kept the resulting bug alive; kfdc switches its
+/// Operations colour on these literals.
+pub const PROGRAM_STATUSES: [&str; 4] = ["queued", "active", "holding", "done"];
+
+/// The state a program is born in — written explicitly by `create_program`
+/// (#526: the vocabulary is the authority, the DB default is the backstop) and
+/// mirrored by 0030's column default so a direct INSERT cannot disagree.
+///
+/// A named constant rather than a literal at the insert site because that is
+/// how the two drifted in the first place: 0023 set a default and the code that
+/// should have owned the choice simply omitted the column.
+pub const PROGRAM_INITIAL_STATUS: &str = "queued";
 
 /// The programs a list read means by default — the ones still going. Same split
-/// as proposals and work items, and fenced by the same partition test so a
-/// fourth status cannot be added without deciding which side it falls on.
-pub const PROGRAM_LIVE_STATUSES: [&str; 2] = ["active", "holding"];
+/// as proposals and work items, and fenced by the same partition test so a new
+/// status cannot be added without deciding which side it falls on.
+///
+/// `queued` is **live**: a program nobody has started yet is the thing the
+/// Operations panel most needs to show, and filing it terminal would hide it
+/// from the read that exists to display it.
+pub const PROGRAM_LIVE_STATUSES: [&str; 3] = ["queued", "active", "holding"];
 
 /// The complement of [`PROGRAM_LIVE_STATUSES`] — excluded from a default
 /// `list_programs` and counted in its `omitted`.
@@ -407,13 +458,14 @@ pub const EXPORTED: [(&str, &str, &[&str]); 18] = [
 /// precisely a stale one (`open`/`resolved` for what is now three statuses).
 /// So the partitions get names here, and a description may enumerate any set
 /// in this table or in `EXPORTED`, and nothing else.
-pub const PARTITIONS: [(&str, &[&str]); 11] = [
+pub const PARTITIONS: [(&str, &[&str]); 12] = [
     ("WI_LIVE_STATUSES", &WI_LIVE_STATUSES),
     ("WI_TERMINAL_STATUSES", &WI_TERMINAL_STATUSES),
     ("WI_FINISHED_STATUSES", &WI_FINISHED_STATUSES),
     ("WI_UNFINISHED_STATUSES", &WI_UNFINISHED_STATUSES),
     ("PROPOSAL_LIVE_STATUSES", &PROPOSAL_LIVE_STATUSES),
     ("PROPOSAL_TERMINAL_STATUSES", &PROPOSAL_TERMINAL_STATUSES),
+    ("PROPOSAL_STARTED_STATUSES", &PROPOSAL_STARTED_STATUSES),
     ("PROGRAM_LIVE_STATUSES", &PROGRAM_LIVE_STATUSES),
     ("PROGRAM_TERMINAL_STATUSES", &PROGRAM_TERMINAL_STATUSES),
     ("SCHEDULE_LIVE_STATUSES", &SCHEDULE_LIVE_STATUSES),

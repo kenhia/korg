@@ -20,6 +20,7 @@ use super::common::{
     validate_status, wi_handle,
 };
 use super::page::ArchivedFilter;
+use super::programs::promote_queued_programs_over;
 use super::relationships::{related_context, RelatedRef};
 use super::selectors::{project_name_for_id, resolve_project};
 use super::work_items::{node_id_for_wi, WORKITEM_COMMENT_CAP};
@@ -641,6 +642,12 @@ pub async fn update_proposal(
         .execute(&mut *tx)
         .await?;
         record_transition(&mut *tx, node_id, &before, v).await?;
+        // #1424: starting a slice starts the program above it. A `queued`
+        // program asserts that none of its slices has begun, and this is the
+        // usual way that stops being true — start-sprint marking slice 1
+        // `active`. No-op unless the new status is a start and some program
+        // over this proposal is still queued.
+        promote_queued_programs_over(&mut *tx, node_id).await?;
     }
     if let Some(v) = patch.rank {
         sqlx::query("UPDATE sprint_proposal SET rank = $2 WHERE node_id = $1")
