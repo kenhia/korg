@@ -169,3 +169,37 @@ weakening:
   out of scope: this sprint is the state *before* `active`, not a general
   program state machine, and `holding` is a deliberate statement in a way
   `queued` is not. Filed on #1424.
+
+## Deployed 2026-08-19
+
+- **Image** `kubsdb.encke-wahoo.ts.net:5000/korg:d5fc8a0181f7`
+  (digest `sha256:5539160b0b29…`), from merge commit `d5fc8a0`.
+- **Rollback target** `korg:62db604c9bb6` (sprint 068), confirmed present in
+  the registry before building. Note that rollback is image-only: 0030 is a
+  schema migration, so going back across it needs a restore, not a re-tag.
+- **Backup** before deploy: `korg-20260819-032116.sql.gz`, 1,624,496 bytes —
+  from this morning and larger than the night before.
+
+Verified live:
+
+| check | result |
+|---|---|
+| running revision == commit built | `d5fc8a0181f7fa8a…`, asserted in the deploy script |
+| `post-deploy-check.sh --compare` | OK, exit 0 |
+| migrations | 29 → **30** (0030 applied) |
+| every row count vs baseline | **unchanged** — cards 30, links 4, projects 50, proposals 259, reports 44, work items 963, nodes 1345 |
+| program statuses | **23 `done` + 1 `holding`, 91 `includes` edges — identical to the pre-deploy baseline** |
+| `GET /api/programs?status=queued` | 200, `{"items":[],"omitted":{"archived":0,"done":23}}` |
+| `GET /api/programs?status=ready` | `invalid_input` — *"expected one of: queued, active, holding, done"* |
+| board `programs` block | serves 1447 as `holding` with 2 slices; `programs_omitted.done` 23 |
+| deep links | `/`, `/plan`, `/programs`, `/programs/1447` all 200 |
+
+**The migration's backfill moved zero rows in production, as rehearsed before
+the sprint was written.** That is the result, not a shortfall: §3 only
+considers `active` programs and excludes any with a started slice, and the
+corpus holds none. The row counts above are the evidence it changed no data
+while adding the state.
+
+The refusal message is the most useful single check here — it is korg's own
+vocabulary answering, so it proves the new value reached the deployed binary
+rather than just the database.
