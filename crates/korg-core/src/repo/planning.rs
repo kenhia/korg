@@ -42,6 +42,25 @@ pub struct PlanningRollupRow {
     /// by it rather than carrying a parallel project counter that could disagree
     /// with these rows; the Planning rail simply ignores it.
     pub status: String,
+    /// The project's category (see `PROJECT_CATEGORIES`), or `None` for one the
+    /// vocabulary has not claimed. Added in sprint 068 (#1414) for the same
+    /// reason `status` was added in 045: this read returns *every* project, so
+    /// a board-only consumer needs the datum to dim or drop a row without a
+    /// second call — which `get_board`'s one-call contract is exactly the
+    /// promise not to require.
+    ///
+    /// The case that forced it is `EVAL`. Sprint 065 (#466) made the `eval`
+    /// residue bucket a permanently **active** project, because #884 makes an
+    /// archived project refuse writes — so eval residue is visible to every
+    /// project-spanning surface until a consumer excludes it, and `status`
+    /// cannot express "real project" versus "harness residue".
+    ///
+    /// Deliberately the raw category and nothing more (korg+ plan GP-10,
+    /// project tiers as data): the tiers read this is meant to grow into
+    /// treats EVAL as the tier below every tier, so this ships as a datum that
+    /// design absorbs rather than as an `is_eval` flag it would have to
+    /// deprecate.
+    pub category: Option<String>,
     /// Live proposals filed against this project.
     pub proposals: i64,
     /// Live, unarchived work items a live proposal covers.
@@ -89,7 +108,7 @@ pub async fn planning_rollup(pool: &PgPool) -> Result<Vec<PlanningRollupRow>> {
                 AND sp.status::text IN ('proposed', 'active') \
               GROUP BY sn.project_id \
          ) \
-         SELECT pj.name AS project, pj.status, \
+         SELECT pj.name AS project, pj.status, pj.category, \
                 coalesce(props.proposals, 0) AS proposals, \
                 coalesce(wi.wi_in_proposal, 0) AS wi_in_proposal, \
                 coalesce(wi.wi_total, 0) AS wi_total \

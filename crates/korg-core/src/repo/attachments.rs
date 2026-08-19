@@ -30,6 +30,29 @@ use crate::error::RepoError;
 use super::common::{node_kind, require_kind, require_non_empty};
 use super::relationships::relate;
 
+/// The "no such attachment" message, naming **both** spellings of the id
+/// (#1412, F-9 nit 5 of the 044–059 surface re-review).
+///
+/// An attachment has one identity in two notations: the decimal node id and
+/// `img-<hex>`, which is that same number in hex. `get_attachment` accepts
+/// either and resolves to the decimal one before it reads, so a miss on
+/// `img-c2a` used to come back as `no attachment with node_id 3114` — accurate,
+/// and momentarily unrecognisable as an answer to what was asked. Naming both
+/// is the fix that does not need the caller's spelling threaded through every
+/// layer that could produce the message, and it is strictly more useful than
+/// echoing: the reader gets the translation whichever spelling they came in
+/// with.
+///
+/// The hex half is omitted rather than faked for a non-positive id — node ids
+/// are `BIGSERIAL` and `ImgId` refuses those, so there is no honest `img-`
+/// spelling to print.
+pub fn attachment_not_found(node_id: i64) -> String {
+    match korg_img::ImgId::from_node_id(node_id) {
+        Ok(img) => format!("no attachment with node_id {node_id} ({img})"),
+        Err(_) => format!("no attachment with node_id {node_id}"),
+    }
+}
+
 /// How long a `pending` attachment lives before the sweeper takes it — the
 /// paste-before-save grace period (handoff D5). Long enough that an interrupted
 /// edit survives a coffee break, short enough that a day's abandoned pastes do
@@ -442,7 +465,7 @@ pub async fn create_attachment(pool: &PgPool, new: NewAttachment) -> Result<Atta
     tx.commit().await?;
     get_attachment(pool, node_id)
         .await?
-        .ok_or_else(|| RepoError::NotFound(format!("no attachment with node_id {node_id}")).into())
+        .ok_or_else(|| RepoError::NotFound(attachment_not_found(node_id)).into())
 }
 
 /// One attachment by node id. `None` when that node is missing or is not an
@@ -506,7 +529,7 @@ pub async fn attach_attachment(
     .await?;
     get_attachment(pool, node_id)
         .await?
-        .ok_or_else(|| RepoError::NotFound(format!("no attachment with node_id {node_id}")).into())
+        .ok_or_else(|| RepoError::NotFound(attachment_not_found(node_id)).into())
 }
 
 /// Delete an attachment's record. The caller removes its blobs.
