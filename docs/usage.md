@@ -104,7 +104,7 @@ covers:
   most: `N / <N / N` means all the work is done and it is waiting on Ken, which
   the old single count rendered as `0/N` and read as "not started". The bar
   encodes the same three states from the same computation, so the two cannot
-  disagree. The header carries an active/holding/done control, so a program is
+  disagree. The header carries a queued/active/holding/done control, so a program is
   finishable from the browser rather than only over REST.
 
   Marking a program **done** is gated by a confirmation when any slice is
@@ -313,7 +313,7 @@ Vocabularies are validated in korg-core, so an unknown value comes back as a
 - card `status`: `Backlog`, `Research`, `OnDeck`, `Active`, `Done`, `Cut`
 - link `disposition`: `Unread`, `Done`, `Revisit`, `Summarized`, `VaultSaved`
 - proposal `status`: `proposed`, `active`, `done`, `declined`
-- program `status`: `active`, `holding`, `done`
+- program `status`: `queued`, `active`, `holding`, `done`
 - report `status`: `ok`, `attention`, `problem`
 - project `status`: `active`, `archived`
 - project `category`: `AI`, `Dashboard`, `EVAL`, `Fun`, `Infrastructure`, `Ops`, `Other`

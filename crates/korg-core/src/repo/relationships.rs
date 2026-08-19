@@ -11,6 +11,7 @@ use crate::error::RepoError;
 use crate::relationships;
 
 use super::common::{cross_project_covers, node_kind, node_project, wi_handle};
+use super::programs::promote_queued_programs_over;
 use super::selectors::unknown_label;
 
 // --- generalized relationships --------------------------------------------
@@ -151,6 +152,12 @@ pub async fn relate(
     // **without** one is still a no-op. Without this there is no reorder path
     // short of unrelate + relate, which would churn a slice's provenance just to
     // move it up a position.
+    //
+    // Transactional since sprint 069: the `includes` case below has to land
+    // with the edge or not at all. A program's `queued` state is a claim about
+    // its slices, so an edge that commits without the promotion leaves the
+    // claim false — and the panel back to reporting the wrong thing.
+    let mut tx = pool.begin().await?;
     let id: i64 = sqlx::query(
         "INSERT INTO relationship (left_id, right_id, relationship, created, origin, rank) \
          VALUES ($1, $2, $3, now(), $4, $5) \
@@ -163,9 +170,22 @@ pub async fn relate(
     .bind(label)
     .bind(origin)
     .bind(rank)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?
     .get("id");
+
+    // #1424: attaching a slice is the third way a program's "nothing has
+    // started" claim can stop being true, and the one a rule living only in
+    // `update_proposal` would miss — `relate` is the documented way to extend a
+    // program after it exists (api.md). Label-gated rather than unconditional
+    // so the cost is one comparison on every other edge, and kept here for the
+    // reason this file already gives twice: core is the one write path both
+    // transports share, never a trigger that can drift from it.
+    if label == "includes" {
+        promote_queued_programs_over(&mut *tx, right).await?;
+    }
+
+    tx.commit().await?;
     Ok(id)
 }
 

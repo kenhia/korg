@@ -1237,7 +1237,7 @@ drop leaves that belief intact.
 | project | **required** | **refused** — `span` is derived from the slices |
 | bundles | work items, via `covers` | proposals, via `includes` |
 | order | queue `rank` on the node | position `rank` on the **edge** |
-| statuses | `proposed` → `active` → `done`/`declined` | `active` ⇄ `holding` → `done` |
+| statuses | `proposed` → `active` → `done`/`declined` | `queued` → `active` ⇄ `holding` → `done` |
 
 **Order lives on the edge.** Position is a property of the containment, not of
 the proposal — a proposal included by two programs has two positions, and only
@@ -1255,6 +1255,29 @@ project, `covered_count` and per-status work-item counts — plus comments and t
 program whose current slice has shipped and whose next has not started is
 neither finished nor in flight, and collapsing the two would have a board claim
 work is underway when nobody is on it.
+
+**`queued` is that argument one step earlier** (#1424). 0023 defaulted the
+column to `active` and `create_program` never wrote it, so a program that had
+been planned and not begun rendered on kfdc's Operations panel with an ACTIVE
+callout — the board making exactly the claim `holding` exists to prevent. A
+program is born `queued`, and it means *no slice of this program has started*:
+not "ready", which asserts a readiness korg cannot check, and not "created",
+which names how the row got here rather than where the work stands.
+
+Consumers may read it as a **fact about the slices**, because korg maintains it
+as one. Every path that can start a slice promotes a `queued` program to
+`active` in the same transaction — `update_proposal`, `create_program` over a
+slice already running, and `relate` attaching one afterwards — so the state
+cannot outlive the condition it asserts. "Started" is `active` **or** `done`:
+`declined` is a decision not to do the work, while work that shipped was begun
+whether or not anyone marked it `active` on the way through. The promotion is
+one-directional; a program that has begun and paused is `holding`, and nothing
+demotes into `queued` behind you.
+
+`queued` is a **live** status, so it rides `list_programs`' default set and the
+board's Operations panel without a filter change. Per korg+ GP-13, a consumer
+switches on this value rather than reconstructing it from the slice statuses
+itself.
 
 ### Awaiting Ken (#969)
 

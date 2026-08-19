@@ -69,8 +69,11 @@ async fn node_preview_renders_a_program() {
         preview.title, "kfdc Phase 0 — the board substrate",
         "the real title, not the `program #<id>` fallback"
     );
+    // Read off the row rather than spelled out, so this keeps testing "status
+    // is a badge" instead of pinning whichever status a fresh program is born
+    // in — it was `active` until #1424 made it `queued`.
     assert!(
-        preview.badges.iter().any(|b| b == "active"),
+        preview.badges.contains(&created.row.status),
         "status is a badge: {:?}",
         preview.badges
     );

@@ -792,7 +792,10 @@ async fn the_lane_is_oldest_first_and_carries_each_kind_status() {
     assert!(wi_row.wi_number.is_some());
 
     let program_row = lane.iter().find(|r| r.kind == "program").unwrap();
-    assert_eq!(program_row.status.as_deref(), Some("active"));
+    // `queued` since sprint 069 (#1424) — this program has no slices, so it has
+    // not started. The claim under test is that the lane resolves each kind's
+    // own status, not what a fresh program's status happens to be.
+    assert_eq!(program_row.status.as_deref(), Some("queued"));
     assert_eq!(program_row.title, "the program");
     assert!(
         program_row.project.is_none(),

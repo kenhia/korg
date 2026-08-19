@@ -216,7 +216,8 @@ pub mod schema {
     }
     /// The `list_programs` row filter (#968). Same shape and same reason as
     /// `proposal_status_filter`: omitting it means the live set
-    /// (`active` + `holding`), so `"all"` is the only way to reach `done`.
+    /// (`queued` + `active` + `holding`), so `"all"` is the only way to reach
+    /// `done`.
     pub fn program_status_filter(_: &mut SchemaGenerator) -> Schema {
         let mut variants = strings(&vocab::PROGRAM_STATUSES);
         variants.push(Value::String("all".into()));

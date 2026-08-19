@@ -43,7 +43,12 @@
     }
   }
 
+  // Keyed by the vocabulary, so a new status is a compile error here rather
+  // than an undefined class at runtime. `queued` (#1424) is deliberately the
+  // coolest of the four: it is the one state that means nobody is on this yet,
+  // and it must not read as louder than `active` — which is the whole bug.
   const statusPill: Record<ProgramStatus, string> = {
+    queued: "bg-sky-900/60 text-sky-300",
     active: "bg-emerald-900/60 text-emerald-300",
     holding: "bg-amber-900/60 text-amber-300",
     done: "bg-neutral-800 text-neutral-400",

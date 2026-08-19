@@ -1282,7 +1282,7 @@
     "name": "get_program"
   },
   {
-    "description": "List programs, pinned first then rank then node_id. Returns {items, omitted} -- NOT a bare array; `omitted` is {done, archived}, the rows the defaults hid. Defaults: live programs only (`active` + `holding`), unarchived. Pass status:\"all\" (or one status) for the rest. There is no detail flag and no project filter: a program has no project of its own (its `span` is derived and is on every row), and with a 500-character `aim` the full row is already the lean one. `holding` means started but nothing currently in flight -- it is the state a program spends most of its life in, and it is deliberately not collapsed into `active`.",
+    "description": "List programs, pinned first then rank then node_id. Returns {items, omitted} -- NOT a bare array; `omitted` is {done, archived}, the rows the defaults hid. Defaults: live programs only (`queued` + `active` + `holding`), unarchived. Pass status:\"all\" (or one status) for the rest. There is no detail flag and no project filter: a program has no project of its own (its `span` is derived and is on every row), and with a 500-character `aim` the full row is already the lean one. Two of the four statuses exist because \"active\" alone would lie in both directions. `queued` (korg #1424) means NO slice has started -- a program is born there, and korg promotes it the moment any slice does, so you may read it as a fact about the slices rather than reconstructing one. `holding` means started but nothing currently in flight -- it is the state a program spends most of its life in, and it is deliberately not collapsed into `active`.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1296,6 +1296,7 @@
         },
         "status": {
           "enum": [
+            "queued",
             "active",
             "holding",
             "done",
@@ -1350,6 +1351,7 @@
         },
         "status": {
           "enum": [
+            "queued",
             "active",
             "holding",
             "done"

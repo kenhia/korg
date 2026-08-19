@@ -223,9 +223,16 @@ async fn the_ticker_covers_work_items_proposals_and_programs_newest_first() {
 
     let events = list_transitions(&pool, BOARD_EVENT_CAP).await.unwrap();
     let kinds: Vec<&str> = events.iter().map(|e| e.kind.as_str()).collect();
+    // Two program events, not one, since sprint 069 (#1424): starting the slice
+    // promoted the program out of `queued`, and that promotion is a status
+    // change like any other — it belongs in the ticker exactly as a hand-made
+    // one does. It shares a transaction (and therefore an `at`) with the
+    // proposal transition that caused it, so this doubles as the tie-break
+    // assertion the doc comment above is about: the id orders them, and the
+    // effect sorts above its cause.
     assert_eq!(
         kinds,
-        vec!["program", "sprint_proposal", "workitem"],
+        vec!["program", "program", "sprint_proposal", "workitem"],
         "newest first, and all three update paths write the log"
     );
     assert_eq!(events[0].title, "the programme");
@@ -233,7 +240,11 @@ async fn the_ticker_covers_work_items_proposals_and_programs_newest_first() {
         events[0].project, None,
         "a program carries no project by construction (#968 D-6)"
     );
-    assert_eq!(events[1].title, "bundle");
+    assert_eq!(
+        events[1].title, "the programme",
+        "the promotion #1424 added — same program, one event older"
+    );
+    assert_eq!(events[2].title, "bundle");
     assert!(
         events.windows(2).all(|w| w[0].at >= w[1].at),
         "the feed is monotonically newest-first"

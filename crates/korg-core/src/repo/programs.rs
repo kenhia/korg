@@ -20,7 +20,10 @@ use ts_rs::TS;
 
 use crate::error::RepoError;
 use crate::ops::{self, schema};
-use crate::vocab::{PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES, WI_STATUSES};
+use crate::vocab::{
+    PROGRAM_INITIAL_STATUS, PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES, PROPOSAL_STARTED_STATUSES,
+    WI_STATUSES,
+};
 
 use super::awaiting::settle_awaiting;
 use super::comments::Comment;
@@ -162,6 +165,20 @@ pub async fn create_program(pool: &PgPool, new: NewProgram) -> Result<ProgramCre
     }
 
     let mut tx = pool.begin().await?;
+
+    // #1424: a program is born `queued` — but only if that is *true*. A program
+    // wrapped around a slice already running is in flight, and starting it
+    // `queued` would strand it there: the promotion below fires on a slice
+    // *changing* status, and this one already changed. Derived rather than
+    // assumed, for the same reason the status is written at all instead of left
+    // to the column default (#526, and 0023's default is what produced the bug).
+    let started = slices_started(&mut *tx, &new.slices).await?;
+    let status = if started {
+        "active"
+    } else {
+        PROGRAM_INITIAL_STATUS
+    };
+
     let node_id: i64 = sqlx::query(
         "INSERT INTO node (kind, project_id, category, tags) \
          VALUES ('program', NULL, $1, $2) RETURNING id",
@@ -173,13 +190,14 @@ pub async fn create_program(pool: &PgPool, new: NewProgram) -> Result<ProgramCre
     .get("id");
 
     sqlx::query(
-        "INSERT INTO program (node_id, title, aim, notes, rank, pinned) \
-         VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO program (node_id, title, aim, notes, status, rank, pinned) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(node_id)
     .bind(&new.title)
     .bind(&new.aim)
     .bind(&new.notes)
+    .bind(status)
     .bind(new.rank)
     .bind(new.pinned)
     .execute(&mut *tx)
@@ -224,6 +242,89 @@ fn check_program_aim(aim: &str) -> Result<()> {
         ))
         .into());
     }
+    Ok(())
+}
+
+/// Has any of these proposals been begun? (#1424, sprint 069.)
+///
+/// [`PROPOSAL_STARTED_STATUSES`] carries the definition and the reasoning —
+/// `declined` is not a start, `done` is. Empty slice list is `false`: a program
+/// with nothing in it has certainly not started.
+async fn slices_started<'e, E>(executor: E, slices: &[i64]) -> Result<bool>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    if slices.is_empty() {
+        return Ok(false);
+    }
+    let started: Vec<String> = PROPOSAL_STARTED_STATUSES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let any: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM sprint_proposal \
+                         WHERE node_id = ANY($1) AND status::text = ANY($2))",
+    )
+    .bind(slices)
+    .bind(&started)
+    .fetch_one(executor)
+    .await?;
+    Ok(any)
+}
+
+/// Move every `queued` program that includes this proposal to `active`, if the
+/// proposal has been started (#1424, sprint 069).
+///
+/// `queued` asserts a fact about the slices — *none of them has begun* — so it
+/// has to be maintained wherever that fact can change, or the state outlives the
+/// condition and the Operations panel goes back to lying, just in the other
+/// direction. Three paths can change it and all three call this or its sibling:
+/// `update_proposal` (a slice starts under an existing program),
+/// `create_program` (the program is built over a running slice, via
+/// [`slices_started`]) and `relate` (a running slice is attached afterwards).
+///
+/// One statement, so it takes any executor and rides the caller's transaction:
+/// the promotion and the change that caused it commit together or not at all.
+/// The CTE writes the `transition` row itself, so a promotion is in the log
+/// exactly as a hand-made one is (#977) — `record_transition` is not reachable
+/// here because the rows are found and updated in the same query.
+///
+/// Deliberately one-directional and deliberately only out of `queued`.
+/// `holding` is a statement somebody made on purpose — "resting between slices"
+/// — and `done` is finished; neither is korg's to overturn off a slice edit.
+/// Nothing demotes *into* `queued`, either: a program that has begun and paused
+/// is `holding`.
+pub(super) async fn promote_queued_programs_over<'e, E>(
+    executor: E,
+    proposal_node_id: i64,
+) -> Result<()>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let started: Vec<String> = PROPOSAL_STARTED_STATUSES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    sqlx::query(
+        "WITH moved AS ( \
+             UPDATE program g SET status = 'active' \
+              WHERE g.status = $2 \
+                AND EXISTS ( \
+                    SELECT 1 FROM relationship r \
+                      JOIN sprint_proposal sp ON sp.node_id = r.right_id \
+                     WHERE r.left_id = g.node_id \
+                       AND r.relationship = 'includes' \
+                       AND r.right_id = $1 \
+                       AND sp.status::text = ANY($3)) \
+             RETURNING g.node_id) \
+         INSERT INTO transition (node_id, from_status, to_status) \
+         SELECT node_id, $2, 'active' FROM moved",
+    )
+    .bind(proposal_node_id)
+    .bind(PROGRAM_INITIAL_STATUS)
+    .bind(&started)
+    .execute(executor)
+    .await?;
     Ok(())
 }
 
@@ -422,7 +523,8 @@ pub async fn list_programs(
     })
 }
 
-/// Absent → the live set (`active` + `holding`); `"all"` → no filter; anything
+/// Absent → the live set (`queued` + `active` + `holding`); `"all"` → no filter;
+/// anything
 /// else validated and returned alone. Same contract as
 /// [`proposal_status_predicate`].
 fn program_status_predicate(status: Option<&str>) -> Result<Option<Vec<String>>> {
