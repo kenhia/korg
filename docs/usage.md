@@ -44,6 +44,14 @@ covers:
   whole collection, not a first page (WI #762): the list fetches every page, and
   on the rare occasion it stops short it says so in amber — `N of M loaded` —
   with a **Load all** beside it. A count with no such clause is complete.
+
+  The **rail carries open counts** (#1442): a total on "All projects", a
+  subtotal on each category label, and a figure per project beside the edit
+  pencil. "Open" is unarchived and not `closed` — deliberately the set the
+  page's own default filters show, so the number beside a project is the
+  number of rows clicking it produces. It is the Planning rail's `wi_total`,
+  read from the same one-statement rollup, so the two pages cannot disagree
+  about how much work a project has.
 - **Review completed** (`/work-items/review`) — the close-out page, reached by
   the `Review` button beside `Only Prop` rather than from the top nav. Lists
   **only** `done` and `resolved` items (a status-filtered server read, so an

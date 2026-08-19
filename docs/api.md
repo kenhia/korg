@@ -582,7 +582,7 @@ above: it is one composite object, not `{items, …}`.
 | `programs` | live programs, each carrying `slices` exactly as `get_program` returns them |
 | `programs_omitted` | `{done, archived}` |
 | `awaiting` | `list_awaiting`'s lane, unchanged |
-| `depth` | per-project queue depth — every project, with its `status` |
+| `depth` | per-project queue depth — every project, with its `status` and `category` |
 | `reports` | the newest 5 |
 | `events` | #977: the newest 20 status transitions, newest first — `{node_id, kind, wi_number, title, project, from_status, to_status, at}`. See below |
 | `sources` | #950: every reporting source with its `freshness` and what it `asserts`. **Uncapped** — see below |
@@ -603,6 +603,15 @@ that can disagree with the list printed beside it is a bug generator, and adding
 one per panel is the aggregate creep #976 filed a warning about. `depth` carries
 `status` (sprint 045) precisely so the one non-derivable figure became derivable
 instead of becoming a counter.
+
+`depth` carries `category` (sprint 068, #1414) for the same reason and with one
+specific consumer question in mind: `eval` is a permanently **active** project
+(sprint 065 / #466 — #884 makes an archived project refuse writes), so harness
+residue is in every project-spanning read and `status` cannot say so. A consumer
+that wants the real corpus filters `category == "EVAL"` out of `depth` without a
+second call. korg does **not** filter it for you, and deliberately ships no
+`is_eval` flag: the korg+ plan's GP-10 (project tiers as data) treats EVAL as the
+tier below every tier, so this is the datum that design absorbs.
 
 ### The ticker (#977)
 

@@ -126,6 +126,27 @@
     projects.filter((p) => showAllProjects || p.status === "active"),
   );
 
+  // #1442 — open work items per project, keyed by project name.
+  //
+  // "Open" here is `planning_rollup`'s `wi_total`: unarchived and not `closed`.
+  // That is deliberately the *same* set this page's default filters show —
+  // `resetFilters` drops only `closed` and hides archived — so the number
+  // beside a project is the number of rows clicking it produces. The Planning
+  // rail's own doc comment names the failure this avoids: two definitions of
+  // "open work" on one screen is a bug report waiting to happen. The tie is
+  // held by a test (korg-core `sprint068`), not just by this comment.
+  let openCounts = $state<Record<string, number>>({});
+
+  // The three figures Ken asked for (#1442), each summed over what the rail is
+  // actually showing rather than over the whole roster — so the total agrees
+  // with the rows beneath it when "show all projects" is off.
+  const allOpen = $derived(
+    visibleProjects.reduce((n, p) => n + (openCounts[p.name] ?? 0), 0),
+  );
+  function groupOpen(ps: ProjectRow[]): number {
+    return ps.reduce((n, p) => n + (openCounts[p.name] ?? 0), 0);
+  }
+
   // WI #678 — the rail groups by category. Grouped is the default (Ken,
   // 2026-07-29, after living with both): the colour runs only pay off when they
   // are contiguous. Alphabetical is one click away and the choice sticks, so
@@ -296,6 +317,12 @@
     if (patch.wi_status !== undefined && isHiddenByDefault(patch.wi_status)) {
       quickEditKeep = new Set(quickEditKeep).add(item.wi_number);
     }
+    // Quick Edit deliberately does not reload the list — a row closed here
+    // stays put so it can be tweaked or undone — so it is the one mutation the
+    // rail's counts do not learn about via `loadItems` (#1442). Closing an item
+    // from here and watching the rail keep the old number is exactly the "the
+    // count disagrees with the page" complaint this feature exists to answer.
+    if (patch.wi_status !== undefined) await refreshOpenCounts();
   }
 
   // Area is stored as area_id; only editable inline when one project is
@@ -422,16 +449,43 @@
     }
   }
 
+  // Re-read the counts from the server rather than adjusting them here (#1442).
+  // Decrementing a number in the client is how the rail would come to disagree
+  // with the list beside it: the status vocabulary decides what "open" means,
+  // and only one place gets to hold that rule. Cheap enough to be uninteresting
+  // — `planning_rollup` is a single statement, and it is the same read the
+  // Planning rail already makes on every visit.
+  //
+  // Best-effort on purpose: a failed count refresh must not blank a list that
+  // loaded fine, so the last known numbers stay on screen.
+  async function refreshOpenCounts() {
+    try {
+      const rows = await api.planningRollup();
+      openCounts = Object.fromEntries(rows.map((r) => [r.project, r.wi_total]));
+    } catch {
+      /* keep the previous counts — see above */
+    }
+  }
+
   async function loadItems() {
     // The rail filters archived client-side behind a toggle, so ask for both.
     // `allWorkItems`, not `workItems`: every filter, the tag row and the footer
     // count on this page read from `items`, so a read that stops at 500 makes
     // all of them wrong at once (WI #762).
-    applyWalk(
-      await api.allWorkItems(current === ALL ? undefined : current, {
+    //
+    // The rail's counts refresh here rather than in `loadProjects` (#1442), and
+    // in parallel rather than after: every path that changes what is open —
+    // create, edit-save, archive, undo — already ends in this function, so
+    // hanging the refresh off it is what stops the rail going stale without a
+    // list of mutation sites somebody has to keep complete. Quick Edit is the
+    // one exception, and refreshes for itself.
+    const [walked] = await Promise.all([
+      api.allWorkItems(current === ALL ? undefined : current, {
         archived: "all",
       }),
-    );
+      refreshOpenCounts(),
+    ]);
+    applyWalk(walked);
     currentAreas = current === ALL ? [] : await loadAreas(current);
     forceShow = new Set();
     resetFilters();
@@ -794,14 +848,23 @@
       <!-- project rail -->
       <aside class="space-y-2">
         <nav class="overflow-hidden rounded border border-[var(--color-border)] bg-[var(--color-surface)]">
-          <button
-            class="block w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-hi)]"
-            class:bg-[var(--color-surface-hi)]={current === ALL}
-            aria-current={current === ALL ? "true" : "false"}
-            onclick={() => pick(ALL)}>All projects</button>
+          <!-- The count is a sibling of the button, not a child, and that is
+               load-bearing: inside it, it joins the button's accessible name
+               ("All projects 158") and every caller that addresses this row by
+               its exact name breaks — which is precisely how the e2e suite
+               caught it. Out here the row still announces "All projects", the
+               way each project row announces its own name, and the number is
+               read as the text it is. -->
+          <div class="flex items-center pr-3" class:bg-[var(--color-surface-hi)]={current === ALL}>
+            <button
+              class="flex-1 px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-hi)]"
+              aria-current={current === ALL ? "true" : "false"}
+              onclick={() => pick(ALL)}>All projects</button>
+            {@render openCount(allOpen, "open work items across every project shown")}
+          </div>
           {#if groupByCategory}
             {#each projectGroups as g (g.key)}
-              <p class="border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1 text-[0.65rem] uppercase tracking-wide text-[var(--color-muted)]">{g.label}</p>
+              <p class="flex items-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1 text-[0.65rem] uppercase tracking-wide text-[var(--color-muted)]"><span class="flex-1">{g.label}</span>{@render openCount(groupOpen(g.projects), `open work items in ${g.label}`)}</p>
               {#each g.projects as p (p.id)}{@render projectRow(p)}{/each}
             {/each}
           {:else}
@@ -904,6 +967,24 @@
   <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5 text-xs">{text}</span>
 {/snippet}
 
+<!-- The rail's open-item count (#1442). One snippet for all three placements —
+     the "All projects" total, the category subtotal and the per-project figure
+     — because three hand-styled numbers in one column is three chances to
+     misalign. `tabular-nums` is what keeps the column straight as the digits
+     change; `shrink-0` is what keeps it from being squeezed out by a long
+     project name.
+
+     Deliberately NOT the Planning rail's `<proposals> | <in>/<total>`: Ken
+     asked for "just the open count" here (#1442), and the Work items rail is
+     answering "how much is in this project", not "how much of it is spoken
+     for". A zero renders as `0`, not as a blank — a project with nothing open
+     is a fact worth reading, and a blank cell reads as a load failure. -->
+{#snippet openCount(n: number, label: string)}
+  <span
+    class="shrink-0 font-mono text-[0.65rem] tabular-nums text-[var(--color-muted)]"
+    title={`${n} ${label}`}>{n}</span>
+{/snippet}
+
 <!-- One rail entry. A snippet so the flat and grouped renderings above cannot
      drift apart (WI #678). Projects with no colour keep the inherited text
      colour rather than being painted a catch-all. -->
@@ -915,6 +996,7 @@
       class:font-semibold={current === p.name}
       aria-current={current === p.name ? "true" : "false"}
       onclick={() => pick(p.name)}>{p.name}{#if p.status !== "active"}<span class="ml-1 text-xs text-[var(--color-muted)]">({p.status})</span>{/if}</button>
+    {@render openCount(openCounts[p.name] ?? 0, `open work items in ${p.name}`)}
     <button
       class="px-1 py-2 text-[var(--color-muted)] hover:text-[var(--color-accent)]"
       title={`Edit project ${p.name}`}

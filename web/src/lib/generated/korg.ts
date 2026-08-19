@@ -583,6 +583,27 @@ export type PlanningRollupRow = { project: string,
  */
 status: string, 
 /**
+ * The project's category (see `PROJECT_CATEGORIES`), or `None` for one the
+ * vocabulary has not claimed. Added in sprint 068 (#1414) for the same
+ * reason `status` was added in 045: this read returns *every* project, so
+ * a board-only consumer needs the datum to dim or drop a row without a
+ * second call — which `get_board`'s one-call contract is exactly the
+ * promise not to require.
+ *
+ * The case that forced it is `EVAL`. Sprint 065 (#466) made the `eval`
+ * residue bucket a permanently **active** project, because #884 makes an
+ * archived project refuse writes — so eval residue is visible to every
+ * project-spanning surface until a consumer excludes it, and `status`
+ * cannot express "real project" versus "harness residue".
+ *
+ * Deliberately the raw category and nothing more (korg+ plan GP-10,
+ * project tiers as data): the tiers read this is meant to grow into
+ * treats EVAL as the tier below every tier, so this ships as a datum that
+ * design absorbs rather than as an `is_eval` flag it would have to
+ * deprecate.
+ */
+category: string | null, 
+/**
  * Live proposals filed against this project.
  */
 proposals: number, 
