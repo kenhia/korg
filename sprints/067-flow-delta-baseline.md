@@ -98,3 +98,35 @@ structurally zero, so a summed "durable in" becomes *partially* knowable
 and must not be printed as if it were comparable to a full-window "durable
 out". korg's side of that is documentation — the tool description, the
 `FLOW_DURABLE_AFTER_DAYS` doc comment and `docs/api.md` all now say it.
+
+## Deployed
+
+**2026-08-18** (kubsdb local; 03:2x UTC on the 19th), image
+`kubsdb.encke-wahoo.ts.net:5000/korg:4c8ec330c6c9` — commit `4c8ec33`, the
+squash-merge of PR #72. Rollback target `4c7d0249627f` (sprint 066), confirmed
+present in the registry before the build.
+
+Both tags pushed (SHA first, then `latest`). The deploy script's revision
+assertion passed, so the running container is provably the commit that was
+built. `post-deploy-check.sh --compare` clean: no row count moved in either
+direction, `migrations`/`migration_max` both still 29 — this sprint carried no
+migration, and the check confirms it.
+
+Verified live against production data over the tailnet FQDN, which is the
+point: the bug was only ever visible on real numbers.
+
+| check | result |
+|---|---|
+| Default window | **10 rows**, 2026-08-09 → 08-18 (#1433) |
+| `backlog_before` | **153** — exactly the value #1432 predicted for a 10-day window while the item was being filed |
+| Invariant `backlog_before + Σ(added − closed)` | `153 + 5 = 158` = last row's `backlog` ✅ |
+| Window delta, corrected | **+5**, and `in 170 − out 165 = +5` — the header now reconciles, which is the whole sprint |
+| Window delta, old spelling (`last − days[0]`) | **−4** — still wrong on live data, so the fix is doing real work, not agreeing by luck |
+| `days=999` (clamped to horizon) | 11 rows from 2026-08-08, `backlog_before: null` — null, not 0 ✅ |
+| `/plan`, `/api/health` | HTTP 200 |
+
+`added_durable` per day came back `[5, 0, 1, 0, 0, 0, 0, 0, 0, 0]` — Aug 9 → 5
+and Aug 11 → 1, matching #1433's prediction exactly. That is the widening's
+second-order effect now live: a summed "durable in" covers only the oldest
+three days of the window. kfdc #1434 owns labelling it, and until that lands
+the board must not print it beside a full-window "durable out".
