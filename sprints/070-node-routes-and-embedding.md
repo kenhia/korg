@@ -200,3 +200,41 @@ links to `/cards`, and now asserts `/cards/<id>`. That assertion was
   `getByRole("button", {name: "Go"})` ambiguous. Pre-existing, unrelated
   to this sprint, and only visible because a fresh database is the normal
   case. Worth an `exact: true` on that locator.
+
+## Deployed 2026-08-20
+
+- **Image** `kubsdb.encke-wahoo.ts.net:5000/korg:64c3aa01bb77`
+  (digest `sha256:7b2984a79b6a…`), from merge commit `64c3aa0`.
+- **Rollback target** `korg:d5fc8a0181f7` (sprint 069), confirmed present in
+  the registry before building. Clean image-only rollback this time: **no
+  schema migration** — 30 before and after — so a re-tag is a complete revert.
+- **Backup** before deploy: `korg-20260820-031846.sql.gz`, 1,695,362 bytes —
+  from this morning and larger than the night before.
+
+Verified live:
+
+| check | result |
+|---|---|
+| running revision == commit built | `64c3aa01bb77793b…`, asserted in the deploy script |
+| `post-deploy-check.sh --compare` | OK, exit 0 |
+| migrations | 30 → 30 (none pending) |
+| every row count vs baseline | **unchanged** — cards 30, links 4, projects 50, proposals 267, reports 45, work items 976, nodes 1369 |
+| `frame-ancestors` on the shell | `frame-ancestors https://kubsdb.encke-wahoo.ts.net:8100` |
+| `X-Frame-Options` | **absent**, as required — it would override the allowlist |
+| the header on non-200s | present on the 307 **and** the 404, not only the shell |
+| `GET /n/1469` | `307` → `location: /planning/1469` |
+| `GET /n/1467` | `307` → `location: /work-items/1467` |
+| `GET /n/999999` | `404` (stale locator, no redirect into nowhere) |
+| all nine per-kind routes | `200` — `/work-items/1467`, `/cards/1`, `/reading-list/1`, `/daily-reports/1`, `/schedules/1`, `/attachments/1`, `/planning/1469`, and the three that already existed |
+| `NodePreview.url` | `/api/nodes/1469` → `/planning/1469`; `/api/nodes/1471` → `/programs/1471` |
+| `SearchHit.url` | live `frame-ancestors` search returned `WI-1468` → `/work-items/1468`, `korg:1469#comment-907` → `/planning/1469#comment-907`, and `korg:1189#comment-584` → `/work-items/1189#comment-584` |
+
+That last row is the one worth keeping: two comment hits whose owners are
+*different kinds*, both resolving to the right page with the right anchor. It is
+the case a consumer could not have computed — the response carries the owning
+node's id and never its kind — and it is now answered from production.
+
+Program korg:1471 moved `active` → `holding`: slice 1 is done, slice 2
+(kfdc:1470, #1203) is `proposed` with one open item and nothing in flight. It is
+unblocked as of this deploy — both prerequisites are live at
+`https://kubsdb.encke-wahoo.ts.net:5674`.
