@@ -263,10 +263,60 @@ describing a route that no longer exists.
 | `GET` | `/api/img/stats` | Store accounting: count, the pending/linked split, and byte totals as korg believes them. What kmon's growth milestones read. |
 | `POST` | `/api/img/sweep` | Run the pending-orphan sweep now. The same work the hourly background task does; exposed so a runbook can force it. |
 
+### Node routes and the locator resolver (WI #1467)
+
+Every node kind korg holds has a page of its own, and the mapping is korg's to
+own rather than each consumer's to reconstruct — `crates/korg-core/src/vocab.rs`
+holds the table, `every_node_kind_has_a_route` fences it against `NODE_KINDS`,
+and `just gen` exports it to the web app as `NODE_ROUTES`.
+
+| Kind | Route |
+| --- | --- |
+| `workitem` | `/work-items/{wi_number}` |
+| `card` | `/cards/{node_id}` |
+| `link` | `/reading-list/{node_id}` |
+| `sprint_proposal` | `/planning/{node_id}` |
+| `report` | `/daily-reports/{node_id}` |
+| `handoff` | `/handoffs/{node_id}` |
+| `program` | `/programs/{node_id}` |
+| `schedule` | `/schedules/{node_id}` |
+| `attachment` | `/attachments/{node_id}` |
+
+A work item's `wi_number` **is** its node id (the 0009 identity migration), so
+one number builds every row.
+
+**`GET /n/{node_id}`** resolves a node to its page and redirects (307), or 404s
+if there is no such node. It is not under `/api` because it answers with a
+redirect to a page rather than with JSON. This is the call a consumer holding a
+locator cannot make for itself: `korg:1395` and `WI-836` carry an id and no
+kind, so nothing outside korg can choose between `/planning/1395` and
+`/work-items/1395`.
+
+```
+korg:1395               -> /n/1395               -> /planning/1395
+WI-836                  -> /n/836                -> /work-items/836
+korg:1395#comment-777   -> /n/1395#comment-777   -> /planning/1395#comment-777
+```
+
+The fragment needs no server support — fragments are never sent to servers, and
+a browser re-applies the original one to a redirect target that carries none.
+Every node page mounts the same comments component, so `#comment-<id>` is one
+anchor convention across every kind.
+
+Where korg already hands over a node reference it hands over the path too, so a
+consumer need not build one: `NodePreview.url` (`GET /api/nodes/:id`) and
+`SearchHit.url` (`GET /api/search`). A search hit on a *comment* is the case
+worth knowing about — its `kind` is `comment` and its `node_id` is the node the
+thread hangs off, whose kind the response never carried, so its `url` is the
+only way to reach the comment itself. Both fields are paths, not absolute URLs:
+korg answers on several hostnames and the caller already holds the one it asked
+on. Both are nullable, and the correct response to `null` is to render nothing.
+
 Example:
 
 ```bash
 curl -s http://localhost:8090/api/work-items | jq
+curl -sI http://localhost:8090/n/1469 | grep -i location   # -> /planning/1469
 ```
 
 See [api.md](api.md) for the normative contracts: the collection-read

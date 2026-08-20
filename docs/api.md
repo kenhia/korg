@@ -433,6 +433,10 @@ search answers 12/12 at rank 1 where a title-only scan answers 9/12 at rank 3.
 `search` (MCP) and `GET /api/search` (REST) take the same knobs and return the
 same rows.
 
+Each hit carries a `url` — the path that opens it, `#comment-<id>` anchor
+included for a comment hit (#1467). Route by that field rather than rebuilding a
+path from `kind`: see [Node addresses](#node-addresses-1467).
+
 ### Query semantics
 
 **All terms are required.** When that matches nothing the query is relaxed to
@@ -491,6 +495,71 @@ There is also **no index to maintain**. The tsvectors are generated columns
 (migration 0029), so Postgres keeps them current inside the writing
 transaction: a write is searchable the moment it lands, there is no refresh, no
 rebuild, and no staleness for a hit to report.
+
+## Node addresses (#1467)
+
+Every node kind korg holds is reachable at a **stable page of its own**, and the
+kind → path table is korg's rather than each consumer's. It lives in
+`crates/korg-core/src/vocab.rs` as `NODE_ROUTES`, is fenced against `NODE_KINDS`
+by `every_node_kind_has_a_route`, and `just gen` exports it to the web app —
+adding a tenth node kind fails the build until it has a page.
+
+The route table is in [usage.md](usage.md#node-routes-and-the-locator-resolver-wi-1467).
+What matters here is the contract for a consumer.
+
+**Per-kind routes, not a generic `/nodes/:id` page** — settled in #621 / sprint
+028, because the payloads genuinely differ and `/planning/1469` says what it
+points at where `/nodes/1469` does not.
+
+**`GET /n/:node_id` is the locator resolver**, and the one call a consumer
+holding a locator cannot make for itself. `korg:1395` and `WI-836` carry an id
+and no kind, so nothing outside korg can pick between `/planning/1395` and
+`/work-items/1395`; korg has both, answers with a 307, and the consumer keeps no
+kind → path table of its own. It is a *resolver*, not a page: it redirects and
+renders nothing, so it does not reopen #621.
+
+**Where korg hands you a node, it hands you the path.** `NodePreview.url`
+(`GET /api/nodes/:id`) and `SearchHit.url` (`GET /api/search`) carry it.
+
+- They are **paths**, not absolute URLs. korg answers on several hostnames
+  (`kai`, `kubsdb`, a tailnet name) and the one in the response would be
+  whichever the process happened to be told about; the caller joins the path to
+  the base it already used.
+- They are **nullable**, and `null` means korg cannot say. Render nothing —
+  never a path derived as a substitute. (GP-13's consumer half.)
+- A **comment** hit is the case that proves the rule. Its `kind` is `comment`
+  and its `node_id` is the node the thread hangs off, whose kind the response
+  never carried — so `url` is the only way to reach the comment, and it carries
+  the `#comment-<id>` anchor that lands on it. Every node page mounts the same
+  comments component, so one anchor convention covers every kind.
+
+Four consumers hit this gap before it was filled — #981's Awaiting lane could
+not link kinds without a URL, kfdc #993's Net Log degrades to plain text rather
+than fake one, korg-vs's resolve-by-ID had nothing to resolve to, and kfdc
+#1203's pane needs something to put in `iframe.src`. Two of them were degrading
+correctly, which is why the gap was invisible on the board.
+
+## Embedding korg (#1468)
+
+korg serves `Content-Security-Policy: frame-ancestors` on every response, from
+the `KORG_FRAME_ANCESTORS` allowlist (see
+[setup.md](setup.md#environment-variables)).
+
+- **Default closed.** Unset serves `frame-ancestors 'none'` rather than omitting
+  the header, because an absent directive means *anyone* may frame korg —
+  silence and "nobody" are opposite answers.
+- **A list, not a constant.** kfdc is the first embedder; korg-dash, kdeskdash
+  and korg-vs's webview are each an entry rather than a rebuild.
+- **korg sends no `X-Frame-Options`.** The older header cannot express an
+  allowlist, and where the two disagree browsers honour the stricter — so adding
+  one would silently undo this.
+- **Embedding is not authentication.** The header decides which origins a
+  browser will let *paint* korg. It changes nothing about who may read or write
+  it: the tailnet is the perimeter, and korg's own posture is unauthenticated
+  single-user. Do not read the allowlist as an access-control list.
+
+v1 is one-way (`iframe.src` only). korg has no `postMessage` handler and grows
+none on this account.
 
 ## Two-level reads
 

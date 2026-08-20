@@ -40,13 +40,14 @@ mod projects;
 mod proposals;
 mod relationships;
 mod reports;
+mod routes;
 mod schedules;
 mod search;
 mod selectors;
 mod work_items;
 
 pub use crate::error::RepoError;
-pub use crate::vocab::{PROJECT_CATEGORIES, PROJECT_STATUSES, WI_STATUSES};
+pub use crate::vocab::{node_path, NODE_ROUTES, PROJECT_CATEGORIES, PROJECT_STATUSES, WI_STATUSES};
 
 pub use areas::*;
 pub use attachments::*;
@@ -65,6 +66,7 @@ pub use projects::*;
 pub use proposals::*;
 pub use relationships::*;
 pub use reports::*;
+pub use routes::*;
 pub use schedules::*;
 pub use search::*;
 pub use work_items::*;

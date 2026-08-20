@@ -16,7 +16,7 @@
   // rather than filing punch-list items 6-10.
   import { api, type NodePreview } from "$lib/api";
   import MarkdownView from "./MarkdownView.svelte";
-  import { chip, nodePage, stamp } from "$lib/domain";
+  import { chip, stamp } from "$lib/domain";
   import Comments from "./Comments.svelte";
   import Dialog from "./Dialog.svelte";
   import ErrorNotice from "./ErrorNotice.svelte";
@@ -78,12 +78,20 @@
              peek and becomes its entry point: a long handoff is unreadable at
              max-w-md, and commenting on one needs somewhere to put the thread.
              This was hardcoded to `handoff` because that was the only detail
-             route at the time; programs have had one since 044, so the button
-             asks `nodePage` instead of naming a kind (WI #982). -->
-        {#if nodePage(node.kind, nodeId)}
+             route at the time, then asked `nodePage` once programs had one too
+             (WI #982) — and since #1467 gave every kind a page it is never
+             absent, so the affordance is on every preview.
+
+             The href is `node.url`, korg's own answer, rather than a path this
+             component rebuilds from `kind` — the same payload field kfdc and
+             korg-vs read, exercised by korg's own UI (GP-13). The `{#if}` stays
+             because the field is nullable by design: korg keeps a way to say it
+             cannot answer, and the consumer's half of that rule is to render
+             nothing rather than a substitute. -->
+        {#if node.url}
           <a
             class="ml-auto rounded border border-[var(--color-border)] px-2 py-0.5 text-xs hover:bg-[var(--color-accent-soft)]"
-            href={nodePage(node.kind, nodeId)}
+            href={node.url}
             data-testid="open-node-page"
             title={`Open this ${node.kind} on its own page`}
             onclick={onClose}>Open full page ↗</a

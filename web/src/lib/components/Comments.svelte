@@ -40,6 +40,32 @@
   let loadError = $state<unknown>(null);
   let loading = $state(true);
 
+  // The comment the URL fragment points at (#1467). Held as state rather than
+  // read off `location.hash` at render time so the highlight survives the list
+  // re-rendering, and cleared after a few seconds: it is a "here it is" flash,
+  // not a selection the reader then has to dismiss.
+  let anchored = $state<number | null>(null);
+
+  // Scrolling has to wait for the fetch. The browser applies a fragment when
+  // the document loads, and at that moment this list is the single "Loading…"
+  // row — so the element the URL names does not exist yet and the native jump
+  // silently does nothing. This runs after the comments land instead.
+  function focusAnchor() {
+    const match = /^#comment-(\d+)$/.exec(window.location.hash);
+    if (!match) return;
+    const id = Number(match[1]);
+    if (!comments.some((c) => c.id === id)) return;
+    anchored = id;
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`comment-${id}`)
+        ?.scrollIntoView({ block: "center" });
+    });
+    setTimeout(() => {
+      if (anchored === id) anchored = null;
+    }, 4000);
+  }
+
   // Reload whenever the target node changes (component is reused across items).
   // This used to end in `.catch(() => {})`, so a failed fetch rendered the same
   // "No comments." as a node that genuinely has none (WI #547).
@@ -49,7 +75,9 @@
     api
       .nodeComments(id)
       .then((c) => {
-        if (id === node_id) comments = c;
+        if (id !== node_id) return;
+        comments = c;
+        focusAnchor();
       })
       .catch((e) => {
         if (id === node_id) loadError = e;
@@ -120,7 +148,17 @@
   {:else}
     <ul class="space-y-1" data-testid="comment-list">
       {#each comments as c (c.id)}
-        <li class="flex items-start gap-2 rounded bg-[var(--color-bg)] px-2 py-1 text-sm">
+        <!-- `korg:1469#comment-777` is a locator korg already prints — from
+             `search`, from the copy affordances, in agent prose. #1467 made it
+             a URL, and this is the anchor it lands on. One convention for every
+             kind, because every node page mounts this component. -->
+        <li
+          id={`comment-${c.id}`}
+          class="flex scroll-mt-24 items-start gap-2 rounded px-2 py-1 text-sm {anchored ===
+          c.id
+            ? 'bg-[var(--color-accent-soft)]'
+            : 'bg-[var(--color-bg)]'}"
+        >
           {#if editingId === c.id}
             <label class="sr-only" for={`comment-edit-${c.id}`}>Edit comment</label>
             <textarea id={`comment-edit-${c.id}`} class="min-h-[3rem] flex-1 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={editBuf} use:pasteImages={uploads} onkeydown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveEdit(); if (e.key === "Escape") editingId = null; }}></textarea>

@@ -65,8 +65,10 @@ test("every kind on the lane is clickable", async ({ page, request }) => {
     await (await request.post("/api/projects", { data: { name: project } })).json()
   ).id as number;
 
-  // A card has no page of its own — it used to render unlinked, leaving Ken an
-  // ask he could not follow. `nodeHref` sends it to the board it lives on.
+  // A card used to render unlinked here, leaving Ken an ask he could not
+  // follow; #981 settled for sending it to the board it lives on, because a
+  // card had no page of its own. #1467 gave every kind one, so the ask now
+  // lands on the card rather than on the column holding it.
   const card = await (
     await request.post("/api/cards", {
       data: { title: `awaiting card ${stamp}`, description: "d", project_id: pid },
@@ -81,5 +83,5 @@ test("every kind on the lane is clickable", async ({ page, request }) => {
   await expect(row).toBeVisible();
   await expect(
     row.getByRole("link", { name: `awaiting card ${stamp}` }),
-  ).toHaveAttribute("href", "/cards");
+  ).toHaveAttribute("href", `/cards/${card.node_id}`);
 });

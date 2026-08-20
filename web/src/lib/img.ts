@@ -40,6 +40,19 @@ export function normalizeImgId(raw: string | null | undefined): string | null {
   return m ? m[0].toLowerCase() : null;
 }
 
+/** The display id of the attachment with this node id (#1467).
+ *
+ *  Mirrors `korg_img::ImgId`, which is the node id itself rendered as hex —
+ *  derived rather than a second sequence, so the two can never disagree. Added
+ *  when attachments got a page of their own: the route is addressed by node id
+ *  like every other kind's, and the image behind it is addressed by display id.
+ *
+ *  Returns null for a non-positive id, matching `ImgId::from_node_id`'s refusal
+ *  rather than inventing `img-0`. */
+export function imgIdFromNodeId(node_id: number): string | null {
+  return node_id > 0 ? `img-${node_id.toString(16)}` : null;
+}
+
 /** Where to fetch an image: the original with no variant, `thumb` or `agent`. */
 export function imgUrl(id: string, variant?: ImgVariant): string {
   const base = `${IMG_ROUTE_PREFIX}/${id.toLowerCase()}`;

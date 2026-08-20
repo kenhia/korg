@@ -15,8 +15,9 @@ and a web UI reachable from Windows browsers.
 - [docs/setup.md](docs/setup.md) — install, configure, build, and run.
 - [docs/usage.md](docs/usage.md) — web UI, REST API, and MCP endpoint.
 - [docs/api.md](docs/api.md) — normative agent-facing contracts: the tool
-  catalogue, collection-read envelope, and the relationship label registry with
-  its direction semantics.
+  catalogue, collection-read envelope, the relationship label registry with its
+  direction semantics, and how a node is addressed (per-kind routes, the
+  `/n/:node_id` locator resolver, and the embed allowlist).
 - [docs/operations.md](docs/operations.md) — deploy, backup and restore, and
   querying the live database.
 - [docs/migration.md](docs/migration.md) — the historical kwi + kcard import.

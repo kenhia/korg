@@ -61,6 +61,59 @@ pub const NODE_KINDS: [&str; 9] = [
 /// vocabulary, so nothing validates against it and no schema advertises it.
 pub const ATTACHMENT_STATES: [&str; 2] = ["pending", "linked"];
 
+/// Where each node kind is rendered in the web app: the **one** authority for
+/// locator → URL (WI #1467, sprint 070).
+///
+/// Every kind in [`NODE_KINDS`] has a row, and `every_node_kind_has_a_route`
+/// fences that — a tenth kind fails the build until it is given a page, the
+/// same way [`NODE_KINDS`] made `get_node_preview`'s missing `schedule` arm
+/// impossible to add silently.
+///
+/// **Why korg owns this rather than each consumer.** Four consumers hit the
+/// gap this fills — korg #981's Awaiting lane, kfdc #993's Net Log, korg-vs's
+/// resolve-by-ID and kfdc #1203's pane — and a kind → path map copied into
+/// each of them is a claim about korg's vocabulary that korg grows between
+/// deploys (GP-14). Consumers that hold only a node id use `/n/:node_id`,
+/// which resolves the kind server-side and redirects here; consumers korg
+/// already hands a node ref get the path on the ref (`NodePreview.url`,
+/// `SearchHit.url`). Neither reconstructs this table. (GP-13.)
+///
+/// Per-kind routes rather than one generic `/nodes/:id` page: settled in
+/// #621 / sprint 028, because the payloads genuinely differ and a URL that
+/// says `/planning/1469` is legible where `/nodes/1469` is not. `/n/:id` is a
+/// *resolver*, not a page — it redirects and holds no rendering of its own,
+/// so it does not reopen that decision.
+///
+/// A work item's `{id}` is its `wi_number`, which since the 0009 identity
+/// migration **is** its node id — so one id builds every row here and no
+/// caller needs the distinction.
+pub const NODE_ROUTES: [(&str, &str); 9] = [
+    ("workitem", "/work-items/{id}"),
+    ("card", "/cards/{id}"),
+    ("link", "/reading-list/{id}"),
+    ("sprint_proposal", "/planning/{id}"),
+    ("report", "/daily-reports/{id}"),
+    ("handoff", "/handoffs/{id}"),
+    ("program", "/programs/{id}"),
+    ("schedule", "/schedules/{id}"),
+    ("attachment", "/attachments/{id}"),
+];
+
+/// The path that renders this node on its own page, or `None` for a kind korg
+/// has no route for — which, by [`NODE_ROUTES`]'s fence, is only a kind that
+/// does not exist.
+///
+/// Returning `Option` rather than a bare `String` keeps the "I cannot say"
+/// answer representable: a caller holding a `kind` string off the wire can be
+/// wrong about it, and GP-13's consumer half says such a caller renders
+/// nothing rather than a path it made up.
+pub fn node_path(kind: &str, node_id: i64) -> Option<String> {
+    NODE_ROUTES
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map(|(_, template)| template.replace("{id}", &node_id.to_string()))
+}
+
 /// Canonical work-item statuses (WI #285). Lifecycle: `open → resolved`
 /// (implemented; may still need a user test / may not be PR'd) `→ done`
 /// (agent satisfied — terminal but still visible in default lists)
@@ -497,12 +550,12 @@ pub fn validate(value: &str, allowed: &[&str], what: &str) -> Result<(), RepoErr
 #[cfg(test)]
 mod partition {
     use super::{
-        CARD_STATUSES, CARD_TERMINAL_STATUSES, PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES,
-        PROGRAM_TERMINAL_STATUSES, PROPOSAL_LIVE_STATUSES, PROPOSAL_STATUSES,
-        PROPOSAL_TERMINAL_STATUSES, REPORT_STATUSES, SCHEDULE_LIVE_STATUSES, SCHEDULE_STATUSES,
-        SCHEDULE_TERMINAL_STATUSES, SOURCE_ASSERTIONS, SOURCE_ASSERTS_UNKNOWN, SOURCE_FRESHNESS,
-        WI_FINISHED_STATUSES, WI_LIVE_STATUSES, WI_STATUSES, WI_TERMINAL_STATUSES,
-        WI_UNFINISHED_STATUSES,
+        node_path, CARD_STATUSES, CARD_TERMINAL_STATUSES, NODE_KINDS, NODE_ROUTES,
+        PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES, PROGRAM_TERMINAL_STATUSES, PROPOSAL_LIVE_STATUSES,
+        PROPOSAL_STATUSES, PROPOSAL_TERMINAL_STATUSES, REPORT_STATUSES, SCHEDULE_LIVE_STATUSES,
+        SCHEDULE_STATUSES, SCHEDULE_TERMINAL_STATUSES, SOURCE_ASSERTIONS, SOURCE_ASSERTS_UNKNOWN,
+        SOURCE_FRESHNESS, WI_FINISHED_STATUSES, WI_LIVE_STATUSES, WI_STATUSES,
+        WI_TERMINAL_STATUSES, WI_UNFINISHED_STATUSES,
     };
     use std::collections::BTreeSet;
 
@@ -620,6 +673,66 @@ mod partition {
             !WI_FINISHED_STATUSES.contains(&"parked"),
             "`parked` must never satisfy a dependency"
         );
+    }
+
+    /// Every node kind has a page to link to (WI #1467). The fence that makes
+    /// [`NODE_ROUTES`] a contract rather than a list somebody remembers to
+    /// extend: adding a tenth kind to [`NODE_KINDS`] fails here until it has a
+    /// route, which is the whole reason korg can promise consumers that a URL
+    /// exists for anything it hands them.
+    ///
+    /// `schedule` is why this is a test and not a comment. Sprint 051 added it
+    /// to the `node.kind` constraint and to nothing else; `get_node_preview`
+    /// went three sprints without an arm for it, guarded by a fence that
+    /// iterated its own hardcoded list of seven. This one iterates
+    /// [`NODE_KINDS`], so it cannot be told a smaller truth.
+    #[test]
+    fn every_node_kind_has_a_route() {
+        for kind in NODE_KINDS {
+            let path = node_path(kind, 42).unwrap_or_else(|| {
+                panic!(
+                    "node kind {kind:?} has no entry in NODE_ROUTES — every kind \
+                     korg holds must be reachable at a URL, or the consumers \
+                     that route by locator have to guess"
+                )
+            });
+            assert!(
+                path.starts_with('/') && !path.contains("{id}"),
+                "{kind}'s route {path:?} is not a resolved absolute path"
+            );
+            assert!(
+                path.ends_with("/42"),
+                "{kind}'s route {path:?} must end in the node id — `/n/:node_id` \
+                 redirects here and the id is the only thing it knows"
+            );
+        }
+        assert_eq!(
+            NODE_ROUTES.len(),
+            NODE_KINDS.len(),
+            "NODE_ROUTES has a row for a kind that is not in NODE_KINDS"
+        );
+    }
+
+    /// Two kinds sharing a path would make `/n/:node_id` ambiguous to read back
+    /// — a URL would no longer say what it points at, which is the property
+    /// per-kind routes (#621) were chosen for in the first place.
+    #[test]
+    fn node_routes_are_distinct() {
+        let paths: BTreeSet<&str> = NODE_ROUTES.iter().map(|(_, p)| *p).collect();
+        assert_eq!(
+            paths.len(),
+            NODE_ROUTES.len(),
+            "two node kinds share a route template"
+        );
+    }
+
+    /// A kind korg does not have gets `None`, not a fabricated path. GP-13's
+    /// consumer half in the one place korg is itself the consumer: `kind`
+    /// arrives as a `String` off the wire, and the honest answer to an
+    /// unrecognised one is "I cannot say".
+    #[test]
+    fn an_unknown_kind_has_no_route() {
+        assert_eq!(node_path("topic", 42), None);
     }
 
     /// Every entry in [`PARTITIONS`] must actually be a subset of some
@@ -745,7 +858,7 @@ mod partition {
 
 #[cfg(test)]
 mod generate {
-    use super::EXPORTED;
+    use super::{EXPORTED, NODE_ROUTES};
     use crate::relationships::REGISTRY;
 
     fn quoted(values: &[&str]) -> String {
@@ -779,6 +892,21 @@ mod generate {
             ));
         }
         out.push_str("] as const;\nexport type RelationshipLabel = (typeof RELATIONSHIP_LABELS)[number][\"label\"];\n");
+
+        // The route table (#1467). Generated rather than hand-kept in
+        // domain.ts so korg's own UI reads the same authority `/n/:node_id`
+        // and `NodePreview.url` are built from — a second copy in the web app
+        // is the drift this table exists to end, even though the web app is
+        // korg rather than a consumer of it.
+        out.push_str(
+            "\n/** Where each node kind is rendered. korg-core owns this table; `/n/:node_id`\n \
+             *  and the `url` on a node ref are built from the same rows, so a consumer\n \
+             *  never has to reconstruct it. */\nexport const NODE_ROUTES = {\n",
+        );
+        for (kind, template) in NODE_ROUTES {
+            out.push_str(&format!("  {kind}: \"{template}\",\n"));
+        }
+        out.push_str("} as const;\n");
         out
     }
 

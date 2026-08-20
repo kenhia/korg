@@ -9,7 +9,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { api, type SearchResults } from "$lib/api";
-  import { nodeHref, stamp } from "$lib/domain";
+  import { stamp } from "$lib/domain";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
   import NodePreview from "$lib/components/NodePreview.svelte";
 
@@ -148,11 +148,13 @@
 
   <ul class="space-y-3">
     {#each results.items as hit (hit.locator)}
-      {@const href = nodeHref(
-        hit.kind,
-        hit.node_id,
-        hit.kind === "workitem" ? hit.node_id : null,
-      )}
+      <!-- korg returns the URL (#1467). It used to be derived here from `kind`
+           and `node_id`, which could not work for a comment hit: its `kind` is
+           `comment` and its `node_id` is the node the thread hangs off, whose
+           kind the response never carried — so comment hits, the ones #1177
+           measured as where the answer usually is, got the least useful link on
+           the page. `hit.url` carries the `#comment-<id>` anchor with it. -->
+      {@const href = hit.url}
       <li
         class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
       >
@@ -175,7 +177,9 @@
         </div>
         <p class="mt-1 text-sm text-[var(--color-muted)]">{hit.snippet}</p>
         {#if href}
-          <a class="text-xs underline" {href}>open in context</a>
+          <a class="text-xs underline" {href}
+            >{hit.comment_id != null ? "open the comment" : "open in context"} ↗</a
+          >
         {/if}
       </li>
     {/each}

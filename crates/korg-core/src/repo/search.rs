@@ -42,7 +42,7 @@ const HEADLINE: &str =
 /// than inventing a fourth rule.
 const DOCS: &str = r#"
 node_state AS (
-    SELECT n.id, n.archived, pj.name AS project, n.updated,
+    SELECT n.id, n.archived, pj.name AS project, n.updated, n.kind AS owner_kind,
            CASE WHEN w.node_id IS NOT NULL THEN w.wi_status = 'closed'
                 WHEN p.node_id IS NOT NULL THEN p.status::text IN ('done', 'declined')
                 WHEN g.node_id IS NOT NULL THEN g.status = 'done'
@@ -102,9 +102,35 @@ pub struct SearchHit {
     /// from "someone said this on it" without parsing the locator.
     pub comment_id: Option<i64>,
     pub kind: String,
+    /// The **owning node's** kind, which for every document except a comment is
+    /// `kind` again. Private and unserialized: it exists so [`SearchHit::url`]
+    /// can be built for a comment hit, whose `kind` is `comment` and whose
+    /// `node_id` is the node the thread hangs off (WI #1467).
+    ///
+    /// A consumer cannot derive this — the response never carried it — which is
+    /// exactly why korg returns the URL rather than leaving four consumers to
+    /// reconstruct one (GP-13).
+    #[serde(skip)]
+    #[ts(skip)]
+    owner_kind: String,
     /// `WI-836`, `korg:1395`, `korg:1395#comment-777` — what to open next, and
     /// the same spelling Ken and agents already use for the thing.
     pub locator: String,
+    /// The canonical korg path for this hit — `/work-items/836`,
+    /// `/planning/1395`, `/planning/1395#comment-777` — filled from
+    /// [`crate::vocab::NODE_ROUTES`] after the query (WI #1467).
+    ///
+    /// A path, not an absolute URL: korg is reached over several hostnames
+    /// (`kai`, `kubsdb`, a tailnet name) and the one in the response would be
+    /// whichever the process happened to be told about. The consumer joins it
+    /// to the base it already used to make the call.
+    ///
+    /// `None` only for a kind with no route, which [`NODE_ROUTES`]'s fence makes
+    /// unreachable — it stays nullable so that "korg cannot say" remains
+    /// representable rather than becoming an empty string (GP-13's consumer
+    /// half).
+    #[sqlx(default)]
+    pub url: Option<String>,
     /// Absent for comments, which have no title of their own.
     pub title: Option<String>,
     /// The node's own status, where its kind has one.
@@ -116,6 +142,24 @@ pub struct SearchHit {
     #[serde(with = "time::serde::rfc3339")]
     #[ts(type = "string")]
     pub updated: OffsetDateTime,
+}
+
+impl SearchHit {
+    /// Where this hit is rendered: the owning node's route, plus a
+    /// `#comment-<id>` fragment when the hit is a comment.
+    ///
+    /// The fragment is the second half of what makes a locator addressable —
+    /// `korg:1395#comment-777` is a spelling korg already emits, and landing on
+    /// the proposal without landing on the comment is the answer to a different
+    /// question. Every node page mounts the same `Comments` component, so one
+    /// anchor convention covers every kind.
+    fn canonical_path(&self) -> Option<String> {
+        let page = crate::vocab::node_path(&self.owner_kind, self.node_id)?;
+        Some(match self.comment_id {
+            Some(id) => format!("{page}#comment-{id}"),
+            None => page,
+        })
+    }
 }
 
 /// What the default scope hid, as a cascade so nothing is counted twice:
@@ -219,12 +263,13 @@ pub async fn search(pool: &PgPool, q: SearchQuery) -> Result<SearchResults> {
     let (total, omitted) = counts;
     let sql = format!(
         "WITH {DOCS}, q AS (SELECT $1::tsquery AS q)
-         SELECT t.node_id, t.comment_id, t.kind, t.locator, t.title, t.status,
-                t.project,
+         SELECT t.node_id, t.comment_id, t.kind, t.owner_kind, t.locator, t.title,
+                t.status, t.project,
                 ts_headline('english', t.body, q.q, '{HEADLINE}') AS snippet,
                 t.score, t.updated
            FROM (
-                SELECT d.node_id, d.comment_id, d.kind, d.locator, d.title, d.status,
+                SELECT d.node_id, d.comment_id, d.kind, ns.owner_kind, d.locator,
+                       d.title, d.status,
                        d.body, ns.project, ns.updated, {RANK}::real AS score
                   FROM d JOIN node_state ns ON ns.id = d.node_id, q
                  WHERE d.search_tsv @@ q.q {FILTERS}
@@ -237,11 +282,14 @@ pub async fn search(pool: &PgPool, q: SearchQuery) -> Result<SearchResults> {
         FILTERS = FILTERS,
     );
 
-    let items = bind_filters(sqlx::query_as::<_, SearchHit>(&sql), &effective, &q, live)
+    let mut items = bind_filters(sqlx::query_as::<_, SearchHit>(&sql), &effective, &q, live)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
         .await?;
+    for hit in &mut items {
+        hit.url = hit.canonical_path();
+    }
 
     Ok(SearchResults {
         items,
