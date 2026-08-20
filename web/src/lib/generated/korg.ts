@@ -523,7 +523,19 @@ export type NodeField = { label: string, value: string, };
  * `body`/`details` are markdown; `badges` are short status chips; `fields`
  * are label/value metadata rows.
  */
-export type NodePreview = { node_id: number, kind: string, wi_number: number | null, title: string, project: string | null, tags: Array<string>, archived: boolean, badges: Array<string>, fields: Array<NodeField>, body: string | null, body_label: string | null, details: string | null, created: string, updated: string, };
+export type NodePreview = { node_id: number, kind: string, 
+/**
+ * The canonical korg path for this node — `/planning/1469`, `/cards/812`
+ * (WI #1467). A path rather than an absolute URL: korg answers on several
+ * hostnames and the caller already holds the one it asked on.
+ *
+ * This is the panel's "Open full page" link and, for a consumer that
+ * already reads this payload, the answer to "where does this live" without
+ * a kind → path table of its own (GP-13). `None` is unreachable for a real
+ * node — [`crate::vocab::NODE_ROUTES`]' fence gives every kind a row — and
+ * stays nullable so korg keeps a way to say it cannot answer.
+ */
+url: string | null, wi_number: number | null, title: string, project: string | null, tags: Array<string>, archived: boolean, badges: Array<string>, fields: Array<NodeField>, body: string | null, body_label: string | null, details: string | null, created: string, updated: string, };
 
 /**
  * The shape every collection read returns (WI #534, D-3). `total` is the full
@@ -1137,6 +1149,22 @@ comment_id: number | null, kind: string,
  * the same spelling Ken and agents already use for the thing.
  */
 locator: string, 
+/**
+ * The canonical korg path for this hit — `/work-items/836`,
+ * `/planning/1395`, `/planning/1395#comment-777` — filled from
+ * [`crate::vocab::NODE_ROUTES`] after the query (WI #1467).
+ *
+ * A path, not an absolute URL: korg is reached over several hostnames
+ * (`kai`, `kubsdb`, a tailnet name) and the one in the response would be
+ * whichever the process happened to be told about. The consumer joins it
+ * to the base it already used to make the call.
+ *
+ * `None` only for a kind with no route, which [`NODE_ROUTES`]'s fence makes
+ * unreachable — it stays nullable so that "korg cannot say" remains
+ * representable rather than becoming an empty string (GP-13's consumer
+ * half).
+ */
+url: string | null, 
 /**
  * Absent for comments, which have no title of their own.
  */

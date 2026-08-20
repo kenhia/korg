@@ -17,7 +17,7 @@
   import { page } from "$app/stores";
   import { api, type ProposalDetail, type RelatedRef } from "$lib/api";
   import { PROPOSAL_STATUSES, type ProposalStatus } from "$lib/generated/vocab";
-  import { ID_CLASS, chip, nodeHref, stamp } from "$lib/domain";
+  import { ID_CLASS, chip, nodePage, stamp } from "$lib/domain";
   import BackTo from "$lib/components/BackTo.svelte";
   import Comments from "$lib/components/Comments.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
@@ -184,9 +184,13 @@
                   >💬 {c.comment_count}</span
                 >
               {/if}
+              <!-- Was `/work-items?wi=<n>`, a URL the Work Items page never
+                   read: it landed on the unfiltered list and did nothing with
+                   the parameter. #1467 gave work items a page of their own, so
+                   this now opens the item. -->
               <a
                 class="ml-auto text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]"
-                href={`/work-items?wi=${c.wi_number}`}>open in Work Items ↗</a
+                href={`/work-items/${c.wi_number}`}>open work item ↗</a
               >
             </li>
           {/each}
@@ -205,8 +209,8 @@
           {#each proposal.related as r (r.rel_id)}
             <li class="flex flex-wrap items-baseline gap-2">
               <span class="text-xs text-[var(--color-muted)]">{r.label}</span>
-              {#if nodeHref(r.kind, r.node_id, r.wi_number)}
-                <a class="hover:underline" href={nodeHref(r.kind, r.node_id, r.wi_number)}
+              {#if nodePage(r.kind, r.node_id)}
+                <a class="hover:underline" href={nodePage(r.kind, r.node_id)}
                   >{refLabel(r)}</a
                 >
               {:else}

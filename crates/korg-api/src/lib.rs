@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
-use axum::http::{HeaderValue, Method};
+use axum::http::{header, HeaderValue, Method, StatusCode};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -12,6 +13,7 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
 use korg_core::config::KorgConfig;
@@ -43,6 +45,7 @@ pub(crate) type ApiResult = Result<Json<Value>, ApiError>;
 
 pub fn build_router(state: AppState) -> Router {
     let mcp = mcp_service(state.pool.clone(), state.config.timezone_name().to_owned());
+    let state_config = state.config.clone();
     let api = Router::new()
         .route("/api/health", get(health))
         .route("/api/projects", get(list_projects).post(create_project))
@@ -67,6 +70,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/cards", get(list_cards).post(create_card))
         .route("/api/cards/:node_id", patch(update_card))
         .route("/api/nodes/:id", get(get_node))
+        // The locator resolver (WI #1467). Deliberately NOT under `/api`: it
+        // answers with a redirect to a *page*, so it belongs in the same
+        // namespace as the pages, and pasting it into a browser has to work.
+        // `/n` rather than `/node` because it is typed and pasted by hand —
+        // `korg:1395` becomes `/n/1395` with one substitution.
+        .route("/n/:node_id", get(resolve_node))
         .route(
             "/api/nodes/:node_id/comments",
             get(list_comments).post(add_comment),
@@ -148,7 +157,10 @@ pub fn build_router(state: AppState) -> Router {
         Some(dir) => spa_fallback(api, &dir),
         None => api,
     };
-    router.layer(TraceLayer::new_for_http()).layer(cors_layer())
+    router
+        .layer(TraceLayer::new_for_http())
+        .layer(cors_layer())
+        .layer(frame_ancestors_layer(&state_config))
 }
 
 /// Serve the SPA bundle from `dir`: real files (assets, favicon, index) come
@@ -217,6 +229,37 @@ fn cors_layer() -> CorsLayer {
     } else {
         layer.allow_origin(origins)
     }
+}
+
+/// The `frame-ancestors` policy, on every response (WI #1468).
+///
+/// korg and kfdc now serve from the same machine (kfdc sprint 009) but on
+/// different ports, so they are different origins and a browser refuses the
+/// frame without this header. The allowlist is `KORG_FRAME_ANCESTORS` — a list,
+/// not a constant, because kfdc is the first embedder and korg-dash, kdeskdash
+/// and korg-vs's webview are each an entry rather than a rebuild.
+///
+/// **Not authentication.** See [`KorgConfig::frame_ancestors_policy`]; the
+/// header decides who may *paint* korg, never who may read or write it.
+///
+/// Set on every response rather than only on the SPA shell, because the pane
+/// loads a document and everything it pulls in, and a policy that covers only
+/// the first of those is a policy with a hole in it. korg sends **no**
+/// `X-Frame-Options`: the old header cannot express an allowlist, and where the
+/// two disagree browsers honour the stricter — so adding one would silently
+/// undo this (`no_x_frame_options_header` fences that).
+fn frame_ancestors_layer(config: &KorgConfig) -> SetResponseHeaderLayer<HeaderValue> {
+    let policy = config.frame_ancestors_policy();
+    let value = HeaderValue::from_str(&policy).unwrap_or_else(|_| {
+        // An origin with a stray control character would otherwise take the
+        // header out entirely, which fails *open*. Refuse the list instead.
+        tracing::error!(
+            %policy,
+            "KORG_FRAME_ANCESTORS is not a valid header value — refusing all embedding"
+        );
+        HeaderValue::from_static("frame-ancestors 'none'")
+    });
+    SetResponseHeaderLayer::overriding(header::CONTENT_SECURITY_POLICY, value)
 }
 
 /// `archived` is tri-state across every collection read (D-3): absent means
@@ -580,6 +623,35 @@ async fn get_node(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult {
     match repo::get_node_preview(&s.pool, id).await? {
         Some(preview) => Ok(Json(json!(preview))),
         None => Err(not_found(format!("no node with id {id}"))),
+    }
+}
+
+/// `GET /n/:node_id` → 302 to the page that renders that node (WI #1467).
+///
+/// **The one call a consumer holding only a locator cannot make for itself.**
+/// `korg:1395` and `WI-836` carry an id and no kind, so nothing outside korg
+/// can choose between `/planning/1395` and `/work-items/1395` — and a consumer
+/// that kept its own kind → path table would be maintaining a copy of a
+/// vocabulary korg grows between deploys (GP-13, GP-14). Four consumers had
+/// already hit this: #981's Awaiting lane, kfdc #993's Net Log, korg-vs's
+/// resolve-by-ID and kfdc #1203's pane.
+///
+/// A redirect rather than a rendered page, for three reasons: the address bar
+/// ends on the canonical per-kind URL (so the URL a person shares afterwards is
+/// the real one), it does not reopen #621's per-kind-routes decision by growing
+/// a second renderer, and it works with JavaScript disabled and under `curl -I`.
+///
+/// The fragment survives on its own: a browser re-applies the fragment from the
+/// original request to the redirect target when the target carries none, so
+/// `/n/1395#comment-777` lands on `/planning/1395#comment-777` without the
+/// server ever seeing `#comment-777` — fragments are not sent to servers.
+async fn resolve_node(State(s): State<AppState>, Path(id): Path<i64>) -> Response {
+    match repo::node_route(&s.pool, id).await {
+        Ok(Some(path)) => Redirect::temporary(&path).into_response(),
+        // 404 as text, not JSON: whatever asked for this was navigating, and a
+        // JSON error body rendered in a browser tab answers nobody.
+        Ok(None) => (StatusCode::NOT_FOUND, format!("no node with id {id}")).into_response(),
+        Err(e) => ApiError::from(e).into_response(),
     }
 }
 

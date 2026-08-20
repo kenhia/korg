@@ -14,6 +14,7 @@
 
 import {
   CARD_STATUSES,
+  NODE_ROUTES,
   PROJECT_CATEGORIES,
   RELATIONSHIP_LABELS,
   WI_STATUSES,
@@ -390,71 +391,36 @@ export function sliceUnfinished(s: SliceCounts & { status: string }): string | n
 export const PROGRESS_VERIFIED_CLASS = "bg-emerald-500";
 export const PROGRESS_WORK_CLASS = "bg-amber-500";
 
-// --- where a node lives (WI #981, #982) --------------------------------------
+// --- where a node lives (WI #981, #982, #1467) -------------------------------
 
 /**
  * The kinds with a page of their own, and how to build it.
  *
- * Three entries, and that is the honest size of the set: everything else is
- * rendered inside a list page or the slide-over preview. Add a route here the
- * day a kind grows one, and both the preview's "Open full page" affordance and
- * the awaiting lane pick it up without either being edited — which is exactly
- * what `sprint_proposal` did when #1162 gave it a page: the magnifier on the
- * Planning card was the only *new* affordance written, and the other two
- * followed from this line.
+ * **Nine entries, and there is no second set.** This used to be a
+ * hand-maintained `OWN_PAGE` of three kinds beside a `LIST_PAGE` of four,
+ * because most kinds had no route to send anyone to — the gap #981's awaiting
+ * lane routed around, kfdc #993 degraded to plain text rather than fake, and
+ * korg-vs's resolve-by-ID had nothing to resolve to. #1467 gave every kind a
+ * page, so the fallback tier is gone and the table is generated: korg-core owns
+ * it, `/n/:node_id` and every `url` korg returns are built from the same rows,
+ * and this file cannot drift from them.
  */
-const OWN_PAGE: Record<string, (node_id: number) => string> = {
-  handoff: (id) => `/handoffs/${id}`,
-  program: (id) => `/programs/${id}`,
-  sprint_proposal: (id) => `/planning/${id}`,
-};
-
-/** The node's own page, or null when the kind has none. */
 export function nodePage(kind: string, node_id: number): string | null {
-  return OWN_PAGE[kind]?.(node_id) ?? null;
+  const template = (NODE_ROUTES as Record<string, string | undefined>)[kind];
+  return template ? template.replace("{id}", String(node_id)) : null;
 }
 
-/**
- * The page where a list of this kind lives — the fallback for kinds with no
- * per-node route.
- *
- * A list page is a genuinely useful destination, not a consolation: it is where
- * the row is, and landing on it beats a dead title. The awaiting lane shipped
- * this reasoning first, for `sprint_proposal` → `/planning` (#969); #981 asked
- * for the rest of the kinds to be treated the same way.
- *
- * `sprint_proposal` has since graduated to `OWN_PAGE` (#1162) and is gone from
- * here rather than kept as a shadowed entry — `nodeHref` checks `OWN_PAGE`
- * first, so leaving it would be a line that reads like a routing decision and
- * has not been one since.
- */
-const LIST_PAGE: Record<string, string> = {
-  card: "/cards",
-  link: "/reading-list",
-  report: "/daily-reports",
-  schedule: "/schedules",
-};
-
-/**
- * Where to send someone who clicks this node — its own page, its work-item
- * route, or the list it lives on. Null only for a kind korg has no page for at
- * all, which today is none of the nine.
- *
- * Work items are addressed by number rather than node id in the URL even though
- * the two are equal since the 0009 identity migration, because `?wi=` is what
- * the Work Items page reads.
- */
-export function nodeHref(
-  kind: string,
-  node_id: number,
-  wi_number?: number | null,
-): string | null {
-  const own = nodePage(kind, node_id);
-  if (own) return own;
-  if (kind === "workitem")
-    return `/work-items?wi=${wi_number ?? node_id}`;
-  return LIST_PAGE[kind] ?? null;
-}
+// `nodeHref(kind, node_id, wi_number)` used to sit here as the "own page, or
+// the work-items list, or the kind's list page" cascade. #1467 removed every
+// tier below the first — each kind has its own page now — which left it as a
+// second name for `nodePage` plus a `wi_number` argument that could not matter,
+// since a work item's node id **is** its `wi_number` (0009). Callers ask
+// `nodePage` directly.
+//
+// Prefer the `url` korg already put on the payload where there is one
+// (`NodePreview.url`, `SearchHit.url`): a comment hit's URL carries a
+// `#comment-<id>` anchor this cannot reconstruct, because the response gives a
+// comment's owning node id without its kind.
 
 // --- fractional ranking -----------------------------------------------------
 

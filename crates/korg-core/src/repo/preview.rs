@@ -29,6 +29,16 @@ pub struct NodeField {
 pub struct NodePreview {
     pub node_id: i64,
     pub kind: String,
+    /// The canonical korg path for this node — `/planning/1469`, `/cards/812`
+    /// (WI #1467). A path rather than an absolute URL: korg answers on several
+    /// hostnames and the caller already holds the one it asked on.
+    ///
+    /// This is the panel's "Open full page" link and, for a consumer that
+    /// already reads this payload, the answer to "where does this live" without
+    /// a kind → path table of its own (GP-13). `None` is unreachable for a real
+    /// node — [`crate::vocab::NODE_ROUTES`]' fence gives every kind a row — and
+    /// stays nullable so korg keeps a way to say it cannot answer.
+    pub url: Option<String>,
     pub wi_number: Option<i64>,
     pub title: String,
     pub project: Option<String>,
@@ -72,6 +82,7 @@ pub async fn get_node_preview(pool: &PgPool, id: i64) -> Result<Option<NodePrevi
     let mut p = NodePreview {
         node_id: id,
         kind: kind.clone(),
+        url: crate::vocab::node_path(&kind, id),
         wi_number: None,
         title: format!("{kind} #{id}"),
         project: base.get("project"),

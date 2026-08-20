@@ -69,3 +69,18 @@ export const RELATIONSHIP_LABELS = [
   { label: "has_attachment", directed: true, reads: "node has attachment" },
 ] as const;
 export type RelationshipLabel = (typeof RELATIONSHIP_LABELS)[number]["label"];
+
+/** Where each node kind is rendered. korg-core owns this table; `/n/:node_id`
+ *  and the `url` on a node ref are built from the same rows, so a consumer
+ *  never has to reconstruct it. */
+export const NODE_ROUTES = {
+  workitem: "/work-items/{id}",
+  card: "/cards/{id}",
+  link: "/reading-list/{id}",
+  sprint_proposal: "/planning/{id}",
+  report: "/daily-reports/{id}",
+  handoff: "/handoffs/{id}",
+  program: "/programs/{id}",
+  schedule: "/schedules/{id}",
+  attachment: "/attachments/{id}",
+} as const;

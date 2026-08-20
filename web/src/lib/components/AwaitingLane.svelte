@@ -12,7 +12,7 @@
   // be read on the days it *does* have rows.
   import { api, type AwaitingRow } from "$lib/api";
   import { attempt } from "$lib/toast.svelte";
-  import { ID_CLASS, chip, nodeHref } from "$lib/domain";
+  import { ID_CLASS, chip, nodePage } from "$lib/domain";
 
   let rows = $state<AwaitingRow[]>([]);
   let clearing = $state<number | null>(null);
@@ -91,12 +91,11 @@
   // Every kind the lane renders is clickable (#981). This used to return null
   // for anything that was not a work item, a program or a proposal — leaving
   // Ken with an ask he could not follow, on the surface whose whole job is
-  // routing him to the thing that needs him. `nodeHref` knows the two kinds
-  // with a page of their own and the list page for the rest; a list page is a
-  // real destination, which is the argument the `sprint_proposal` → /planning
-  // case already made.
+  // routing him to the thing that needs him. #981 settled for the kind's *list*
+  // page where there was no better answer; since #1467 there always is one, and
+  // an ask now lands on the thing itself rather than on the list holding it.
   function href(row: AwaitingRow): string | null {
-    return nodeHref(row.kind, row.node_id, row.wi_number);
+    return nodePage(row.kind, row.node_id);
   }
 
   $effect(() => {

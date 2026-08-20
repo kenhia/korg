@@ -51,6 +51,25 @@ services:
     env_file:
       - korg.env
 
+    # The embed allowlist (WI #1468, sprint 070). Here rather than in korg.env
+    # because it is **not a secret** and it is a decision about how korg runs —
+    # which is what this file is the source of truth for. Putting it in the
+    # gitignored env file would make "who may frame korg" unreviewable, which is
+    # exactly the failure #842 fixed for the rest of the run config.
+    #
+    # First entry: kfdc, which serves from this same host on :8100. Same
+    # machine, different port, therefore a different origin, therefore this.
+    # Program korg:1471 slice 2 (kfdc #1203) is what consumes it.
+    #
+    # **Not authentication.** This decides which origins a browser will let
+    # paint korg; it changes nothing about who may read or write it. korg is
+    # unauthenticated by design and the tailnet is the perimeter — do not read
+    # this list as an access-control list. Removing the variable does not open
+    # korg up, it closes embedding entirely: korg-core defaults to
+    # `frame-ancestors 'none'`.
+    environment:
+      KORG_FRAME_ANCESTORS: "https://kubsdb.encke-wahoo.ts.net:8100"
+
     # Image attachments (sprint 056, #582/#1119). The bytes are the one part of
     # korg that is NOT in Postgres, so they are the one part a container
     # replacement would otherwise destroy — hence a bind mount rather than a

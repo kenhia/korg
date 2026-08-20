@@ -80,6 +80,31 @@ pub async fn app_with_images() -> (impl Sized, PgPool, axum::Router, std::path::
     ((pg, ImageRoot(root.clone())), pool, router, root)
 }
 
+/// A router over a fresh korg database whose config was built by `tweak` —
+/// for suites asserting on something an operator configures rather than
+/// something the corpus contains (sprint 070's embed allowlist).
+pub async fn app_configured(
+    tweak: impl FnOnce(korg_core::config::KorgConfig) -> korg_core::config::KorgConfig,
+) -> (impl Sized, PgPool, axum::Router) {
+    let (pg, pool) = fresh_korg().await;
+    test_project(&pool).await;
+    let root = std::env::temp_dir().join(format!(
+        "korg-api-cfg-{}-{}",
+        std::process::id(),
+        pool.size()
+    ));
+    let images = korg_img::Store::new(&root);
+    let config = tweak(
+        korg_core::config::KorgConfig::fixed("UTC", datetime!(2026-07-11 12:00 UTC)).unwrap(),
+    );
+    let router = build_router(AppState {
+        pool: Arc::new(pool.clone()),
+        config: Arc::new(config),
+        images: Arc::new(images),
+    });
+    ((pg, ImageRoot(root)), pool, router)
+}
+
 /// A `multipart/form-data` body with one file part — what a `curl -F` upload
 /// and a browser's `FormData` both send.
 pub fn multipart(field: &str, filename: &str, bytes: &[u8]) -> (String, Vec<u8>) {
