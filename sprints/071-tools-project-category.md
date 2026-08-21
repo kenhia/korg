@@ -117,3 +117,37 @@ GP-n is contradicted or refined — so, per the amend rule, no edit.
 `update_project`, so `Tools` picked up write-path coverage for free —
 including the assertion that an off-vocabulary value is still rejected
 and leaves the prior value alone.
+
+## Deployed 2026-08-21
+
+- **Image** `kubsdb.encke-wahoo.ts.net:5000/korg:2b44945e11bc`
+  (digest `sha256:12cecf2ddd52…`), from merge commit `2b44945`. Both tags
+  pushed, SHA first.
+- **Rollback target** `korg:64c3aa01bb77` (sprint 070), confirmed present in
+  the registry before building. Clean image-only rollback: **no schema
+  migration** — 30 before and after — so a re-tag is a complete revert.
+- **Backup** before deploy: `korg-20260821-031747.sql.gz`, 1,794,428 bytes —
+  from this morning and larger than the night before.
+- The deploy's revision assertion passed: the running container's
+  `org.opencontainers.image.revision` is the commit this run built.
+
+Verified live:
+
+| check | result |
+|---|---|
+| `post-deploy-check.sh --compare` | OK; every count flat (work_items 1002, proposals 276, projects 52, cards 30, reports 46, links 4) |
+| migrations | 30 → 30, `node_max` 1511 → 1511 |
+| `update_project` category enum, over MCP | `AI, Dashboard, EVAL, Fun, Infrastructure, Ops, Other, Tools, null` |
+| served client bundle | generated `PROJECT_CATEGORIES` carries `Tools` |
+| `/`, `/work-items`, `/planning`, `/projects`, `/plan` | 200 |
+
+**Not verified live, deliberately: the rail's hue and third position.** The
+rails are client-rendered, and no project carries `Tools` yet — which is the
+state this sprint chose to ship, since assignment is Ken's call. So there is
+nothing for the browser to paint green and nothing for a `curl` to find; the
+SSR'd markup carries no `hsl(…)` for any category. What stands behind those
+two is CI rather than production: `CATEGORY_HUE` is a
+`Record<ProjectCategory, number>` that `svelte-check` will not compile without
+the new key, and the placement is a constant `RAIL_ORDER` entry. The first
+project categorised `Tools` is what will actually show it, and that is a data
+edit, not a deploy.
