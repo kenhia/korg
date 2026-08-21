@@ -451,11 +451,26 @@ pub const PROJECT_STATUS_ACTIVE: &str = PROJECT_STATUSES[0];
 /// 20 of 31 projects within 12 degrees of another while leaving whole arcs of
 /// the wheel empty).
 ///
-/// Adding a category is one edit here plus its hue in `CATEGORY_HUE` in
-/// `web/src/lib/domain.ts`, then `just gen`. `EVAL` is the worked example:
-/// added 2026-07-26 for harness-evaluation projects that leaked into the real
-/// corpus, so that they are findable as a group.
-pub const PROJECT_CATEGORIES: [&str; 7] = [
+/// Adding a category is one edit here, then `just gen` — which turns the
+/// remaining steps into compile and test failures rather than things to
+/// remember: `CATEGORY_HUE` in `web/src/lib/domain.ts` is a
+/// `Record<ProjectCategory, number>` and stops type-checking, and `docs_drift`
+/// fails on the two `docs/usage.md` enumerations until both name the new value.
+/// `RAIL_ORDER` (same file) is the one step nothing forces, because a category
+/// missing from it is appended rather than dropped — appended *last*, below
+/// `EVAL`, which is a position that list's own logic would not choose. Place it
+/// deliberately.
+///
+/// Two worked examples, both added for a group that already existed and was not
+/// findable as one. `EVAL` (2026-07-26, WI #678) marks harness-evaluation
+/// projects that leaked into the real corpus. `Tools` (2026-08-21, WI #1505)
+/// covers the homelab's own instruments — the things Ken builds to work *with*,
+/// as distinct from `Infrastructure`, which is what they run on.
+///
+/// Order here is alphabetical and is the order the MCP schema enum, the
+/// generated TypeScript tuple and the edit panel's select all inherit; the
+/// rail's order is `RAIL_ORDER`'s, deliberately not this one.
+pub const PROJECT_CATEGORIES: [&str; 8] = [
     "AI",
     "Dashboard",
     "EVAL",
@@ -463,6 +478,7 @@ pub const PROJECT_CATEGORIES: [&str; 7] = [
     "Infrastructure",
     "Ops",
     "Other",
+    "Tools",
 ];
 
 /// Every vocabulary, as `(const name, TypeScript type name, values)`. Adding a

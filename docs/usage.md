@@ -366,7 +366,7 @@ Vocabularies are validated in korg-core, so an unknown value comes back as a
 - program `status`: `queued`, `active`, `holding`, `done`
 - report `status`: `ok`, `attention`, `problem`
 - project `status`: `active`, `archived`
-- project `category`: `AI`, `Dashboard`, `EVAL`, `Fun`, `Infrastructure`, `Ops`, `Other`
+- project `category`: `AI`, `Dashboard`, `EVAL`, `Fun`, `Infrastructure`, `Ops`, `Other`, `Tools`
 - schedule `cadence`: `once`, `weekly`, `fortnightly`, `monthly`, `quarterly`, `yearly`
 - schedule `anchor_mode`: `completed`, `created`
 - schedule `status`: `active`, `paused`, `done`
@@ -487,9 +487,11 @@ returned only by `get_project` and REST, never by the lean `list_projects` or
 the instructions roster.
 
 `category` is a **closed vocabulary** (WI #678):
-`AI | Dashboard | EVAL | Fun | Infrastructure | Ops | Other`. `EVAL` marks
-harness residue — the `eval` project is where evaluation runs file it, per
-[eval-convention.md](eval-convention.md). It was free text
+`AI | Dashboard | EVAL | Fun | Infrastructure | Ops | Other | Tools`. `EVAL`
+marks harness residue — the `eval` project is where evaluation runs file it, per
+[eval-convention.md](eval-convention.md). `Tools` (WI #1505) is the homelab's
+own instruments, as distinct from the `Infrastructure` they run on. It was free
+text
 until migration 0018 and had drifted to `ai`/`AI`/`tooling`/`infra`/`fun`/NULL;
 `update_project` now validates it the way every other vocabulary is validated,
 and the edit panel offers a select rather than a text box. `null` is still

@@ -142,8 +142,12 @@ export function activeCardStatuses(): CardStatus[] {
  *
  * The hues are "whatever project X is colored today", resolved against the old
  * hash, so several projects visibly change color (korg, kyac, kvllm,
- * hv-simulator, gh-kenhia) — expected, not a bug. `EVAL` is the one new color,
- * placed at the midpoint of the widest remaining gap (250-345).
+ * hv-simulator, gh-kenhia) — expected, not a bug. `EVAL` was the one new color,
+ * placed at the midpoint of the widest remaining gap (250-345); `Tools`
+ * (2026-08-21, WI #1505) follows the same rule at the midpoint of what was then
+ * the widest gap, 64-157. Picking that way keeps every pair of categories as
+ * far apart as the wheel still allows, which is what a rail scanned by color
+ * needs.
  *
  * Typed `Record<ProjectCategory, number>` on purpose: adding a category to
  * korg-core's `PROJECT_CATEGORIES` and running `just gen` breaks this file
@@ -170,6 +174,7 @@ export const IN_PROPOSAL_COLOR = "hsl(42 55% 62%)";
 const CATEGORY_HUE: Record<ProjectCategory, number> = {
   Ops: 42,
   Infrastructure: 64,
+  Tools: 110,
   AI: 157,
   Dashboard: 192,
   Fun: 250,
@@ -185,7 +190,13 @@ const CATEGORY_HUE: Record<ProjectCategory, number> = {
  * groups he reaches for are at the top of the rail where the eye lands — the
  * same "scan by position" argument that motivated colouring at all. `EVAL` sits
  * last because it exists to make an eval-sandbox leak findable, not to be
- * navigated to.
+ * navigated to. `Tools` sits third (Ken, 2026-08-21): the homelab's own
+ * instruments are reached for about as often as the infrastructure they run on,
+ * so they belong beside `Infrastructure` and `Ops` rather than out past `AI`.
+ *
+ * This list drives BOTH grouped lists — the Work Items rail and the Planning
+ * page's — through `CATEGORY_ORDER`, so a placement is decided once here and
+ * never per page.
  *
  * Reorder by editing this list. `satisfies` catches a typo'd name; anything in
  * the vocabulary but missing here is appended below rather than dropped, so a
@@ -194,6 +205,7 @@ const CATEGORY_HUE: Record<ProjectCategory, number> = {
 const RAIL_ORDER = [
   "Infrastructure",
   "Ops",
+  "Tools",
   "AI",
   "Dashboard",
   "Fun",
