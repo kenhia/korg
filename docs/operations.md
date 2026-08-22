@@ -152,6 +152,26 @@ archived by hand — but any database restored from a dump predating that would
 have failed the migration and crash-looped the container at startup. If you ever
 restore an old dump and roll forward, this is why it now just works.
 
+**0031 (`parked` on proposals and programs) is a schema boundary that breaks
+*writes*, not reads** — a shape none of the ones above has, and the reason it is
+worth a paragraph. It converts `sprint_proposal.status` from the
+`sprint_proposal_status` enum to `TEXT` + a CHECK. An older image keeps reading
+correctly, because every read site already casts `status::text` and a cast off
+`text` is a no-op; but its single write site casts *to* `::sprint_proposal_status`,
+and 0031 drops the type. So a plain re-tag across this boundary looks healthy
+until the first proposal status change, which then fails as `internal`.
+
+Reversing it means recreating the type before the old image runs, and — first —
+moving every `parked` row off `parked`, because the enum has no such value. Where
+each row should go is **not derivable**: a proposal parked out of `proposed` and
+one parked out of `active` are indistinguishable afterwards. The `transition`
+rows (0026) are the record; reverse from those rather than picking a default.
+0031's header carries the statement order.
+
+The program half of the same migration is an ordinary CHECK widen — 0030's
+shape, reversible by moving parked rows off the value and re-adding the old
+constraint.
+
 ## Cold start
 
 Everything above assumes a running container and a populated `/datastore/korg/`.
