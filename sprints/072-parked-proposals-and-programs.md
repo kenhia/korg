@@ -187,3 +187,43 @@ when `queued` arrived wearing the amber in-flight default. Slice 2
   same divider.
 - `tests/sprint072.rs` — 16 tests.
 - cross-project-planning: GP-19 (committed there, 7d29e68).
+
+## Deployed
+
+**2026-08-22** — `korg:cdd47472827f` (`cdd4747`, PR #77), pushed to
+`kubsdb.encke-wahoo.ts.net:5000` and running on kubsdb `:5674`.
+Rollback target: `korg:2b44945e11bc` (sprint 071), confirmed present in the
+registry before building.
+
+Migration 0031 applied at startup: `migrations 30 → 31`. Every row count
+identical across the deploy — cards 30, links 4, projects 53, proposals 283,
+reports 48, work items 1031, `node_count` 1451 — which is what a DDL-only
+migration should look like, and the point of capturing the baseline was to be
+able to say so rather than assume it. `post-deploy-check.sh --compare` exited 0.
+
+**Verified live.** The migration's own postcondition and the test suite both run
+against fresh databases, so the thing only production could answer was whether
+the *conversion* held against 283 existing enum-valued rows and whether a real
+write can set the new value through the path that lost its cast:
+
+| check | result |
+|---|---|
+| `PATCH /api/proposals/1546 {"status":"parked"}` | accepted — the converted column and the code that lost `::sprint_proposal_status` agree |
+| `PATCH /api/programs/1549 {"status":"parked"}` | accepted — widened CHECK |
+| `PATCH … {"status":"dormant"}` | **400**, not 500 — `vocab` refuses at the front door, the CHECK never has to |
+| `get_board.queue` | `[…, 1548 proposed, 1479 proposed, 1546 parked]` — parked last, and **zero** parked rows in `active` |
+| `get_board.programs` | `[1480 holding, 1533 active, 1549 parked]` — parked last |
+| `/api/proposals` default | still carries the parked row; nothing hidden |
+| `/planning`, `/programs`, `/programs/1549`, `/plan` | 200 |
+
+The write checks were a **round trip on this sprint's own records** — proposal
+korg:1546 (`done → parked → done`) and program korg:1549
+(`holding → parked → holding`) — chosen so the smoke test never touched the live
+planning queue. Both are back in their correct states; the four transitions are
+in the log, which is the honest record of what the test did.
+
+**Not done here: korg:1478 and korg:1480 are not yet parked.** That is program
+korg:1549's stated done-when and it is now possible for the first time, but it
+changes what Ken's board shows and is his call — see the follow-up on the
+program. kfdc will render a parked program undecorated until slice 2
+(korg:1548) lands, as the program anticipated.
