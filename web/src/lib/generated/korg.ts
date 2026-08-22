@@ -310,7 +310,21 @@ generated: string,
  */
 active: Array<BoardProposal>, 
 /**
- * On Deck: proposals in `proposed`, same order.
+ * On Deck: proposals in `proposed` — **and in `parked`, always last**
+ * (#1534, sprint 072). Same order otherwise.
+ *
+ * The shape decision this sprint had to make, and the one kfdc filters on.
+ * A parked proposal is neither `active` nor `proposed`, so before this it
+ * would have dropped off the board silently — hiding by accident what
+ * should only ever be hidden by choice. The alternative was a third
+ * collection, and it was rejected because it makes every consumer merge two
+ * lists to render the ordinary case correctly, to describe a row that is
+ * already fully described by the `status` field it carries.
+ *
+ * So: parked rides here, `status` says which rows they are, and the order
+ * puts them below the line the way #810's divider does. A consumer that
+ * wants them gone filters on the literal — korg does not hide them, and it
+ * does not paint the divider either. That division is GP-19.
  */
 queue: Array<BoardProposal>, 
 /**
@@ -347,7 +361,8 @@ programs: Array<BoardProgram>, programs_omitted: ProgramOmitted,
 awaiting: Array<AwaitingRow>, 
 /**
  * Queue depth per project — every project, with its `status`, so the board
- * can count the active ones and dim the rest.
+ * can count the active ones and dim the rest. Parked programs (#1535) ride
+ * here too, last, on exactly the argument above.
  */
 depth: Array<PlanningRollupRow>, 
 /**
@@ -571,8 +586,11 @@ export type Page<T> = { items: Array<T>, total: number, limit: number, offset: n
  *
  * **What each figure counts, and why it is not the obvious thing.**
  *
- * - `proposals` — *live* proposals (`proposed` + `active`), matching the
- *   queue the Planning page renders. A done proposal is off the queue.
+ * - `proposals` — *live* proposals (`proposed` + `active` + `parked`), matching
+ *   the queue the Planning page renders. A done proposal is off the queue; a
+ *   parked one is on it, below the divider (#1534) — the rail counts what the
+ *   page shows, and a rail that disagreed with the list beside it is the class
+ *   of bug D-3 exists to refuse.
  * - `wi_total` — *live, unarchived* work items. Not every item: `closed` is
  *   78% of the corpus (the #861 measurement), and a denominator that counts
  *   years of finished work makes the ratio unreadable. This is "how much

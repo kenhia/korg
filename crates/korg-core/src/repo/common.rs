@@ -8,6 +8,23 @@ use sqlx::{Executor, PgPool, Postgres};
 use crate::error::RepoError;
 use crate::vocab;
 
+/// The leading `ORDER BY` term that puts parked rows below the line (#1534 /
+/// #1535, sprint 072) — the SQL half of the divider #810 drew for work items.
+///
+/// One helper rather than three hand-written comparisons because three reads
+/// need it (the two proposal queue reads, the board, and `list_programs`) and
+/// they must agree: a consumer that sees parked rows last in `list_proposals`
+/// and interleaved on the board has to write its own sort to reconcile them,
+/// which is exactly the derivation GP-19 forbids.
+///
+/// `false` sorts before `true` in Postgres, so unparked rows come first with no
+/// `DESC` and no `CASE`. The literal comes from [`vocab::PARKED_STATUS`], so it
+/// cannot drift from the vocabularies it is filtering on; `column` is a caller-
+/// supplied SQL fragment (`p.status::text`, `g.status`), never user input.
+pub(super) fn parked_last(column: &str) -> String {
+    format!("({column} = '{}') ASC", vocab::PARKED_STATUS)
+}
+
 pub(super) fn validate_status(value: &str, allowed: &[&str], what: &str) -> Result<()> {
     Ok(vocab::validate(value, allowed, what)?)
 }

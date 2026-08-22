@@ -104,8 +104,8 @@ covers:
   most: `N / <N / N` means all the work is done and it is waiting on Ken, which
   the old single count rendered as `0/N` and read as "not started". The bar
   encodes the same three states from the same computation, so the two cannot
-  disagree. The header carries a queued/active/holding/done control, so a program is
-  finishable from the browser rather than only over REST.
+  disagree. The header carries a queued/active/holding/done/parked control, so a
+  program is finishable — or parked — from the browser rather than only over REST.
 
   Marking a program **done** is gated by a confirmation when any slice is
   unfinished (#1168), and the dialog names them: a slice is unfinished if its
@@ -362,8 +362,8 @@ Vocabularies are validated in korg-core, so an unknown value comes back as a
 - `wi_tshirt`: `XS`, `S`, `M`, `L`, `XL`, `Huge`, `Unknown`
 - card `status`: `Backlog`, `Research`, `OnDeck`, `Active`, `Done`, `Cut`
 - link `disposition`: `Unread`, `Done`, `Revisit`, `Summarized`, `VaultSaved`
-- proposal `status`: `proposed`, `active`, `done`, `declined`
-- program `status`: `queued`, `active`, `holding`, `done`
+- proposal `status`: `proposed`, `active`, `done`, `declined`, `parked`
+- program `status`: `queued`, `active`, `holding`, `done`, `parked`
 - report `status`: `ok`, `attention`, `problem`
 - project `status`: `active`, `archived`
 - project `category`: `AI`, `Dashboard`, `EVAL`, `Fun`, `Infrastructure`, `Ops`, `Other`, `Tools`
@@ -549,9 +549,10 @@ an agent could not read. They stay out of the lean tier: a timestamp answers
 
 **`list_proposals` joined this shape in WI #852**, for the same reason and with
 the same two knobs. Over MCP it defaults to the live queue (`proposed` +
-`active`, unarchived) and a lean projection without `summary`; `status:"all"`
-and `detail:"full"` are the escape hatches, and `omitted` is `{done, declined,
-archived}`. It measured ~46k tokens unfiltered, 71% of it `done` proposals no
+`active` + `parked`, unarchived) and a lean projection without `summary`;
+`status:"all"` and `detail:"full"` are the escape hatches, and `omitted` is
+`{done, declined, archived}` — `parked` gets no field there because it is live
+and nothing hid it. It measured ~46k tokens unfiltered, 71% of it `done` proposals no
 caller had ever wanted. `GET /api/proposals` is unchanged — the Planning page
 renders those summaries.
 

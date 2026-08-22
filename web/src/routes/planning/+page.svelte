@@ -12,7 +12,9 @@
   import {
     CATEGORY_ORDER,
     IN_PROPOSAL_COLOR,
+    PARKED,
     chip,
+    isParked,
     midRank,
     projectRailColor,
     stampDay,
@@ -81,6 +83,15 @@
   const declined = $derived(scoped.filter((p) => p.status === "declined"));
   let showDone = $state(false);
   let showDeclined = $state(false);
+
+  // Parked (#1534) is NOT a third collapsible beside these two, and that is the
+  // whole point of the status. `done` and `declined` are hidden because they are
+  // over; a parked proposal is live work you asked to keep in view, so it renders
+  // below a labelled rule the way #810's parked work items do — de-prioritised,
+  // never folded away. Rank-ordered within the section, mirroring the queue.
+  const parked = $derived(
+    scoped.filter((p) => isParked(p.status)).sort((a, b) => Number(a.rank) - Number(b.rank)),
+  );
 
   // WI #823 — the rail replaced the dropdown, so its source changed with it.
   //
@@ -427,12 +438,23 @@
       </div>
     {/if}
     <div class="mt-2 flex items-center gap-2">
+      <!-- Park is offered from both live statuses, because a proposal can go
+           dormant before it starts as easily as after (#1534). Un-parking is
+           two buttons rather than one, and deliberately so: the status a row
+           was parked out of is not recoverable from the row, so korg refuses to
+           guess it — the UI asks the same question the tool does instead of
+           inventing a default here. -->
       {#if p.status === "proposed"}
         <button class="rounded bg-[var(--color-accent-soft)] px-2 py-1 text-xs hover:bg-[var(--color-accent)]" onclick={() => setStatus(p, "active")}>Start</button>
+        <button class="rounded border border-[var(--color-border)] px-2 py-1 text-xs hover:bg-[var(--color-surface)]" onclick={() => setStatus(p, PARKED)}>Park</button>
         <button class="rounded border border-[var(--color-border)] px-2 py-1 text-xs hover:bg-[var(--color-surface)]" onclick={() => setStatus(p, "declined")}>Decline</button>
       {:else if p.status === "active"}
         <button class="rounded bg-[var(--color-accent-soft)] px-2 py-1 text-xs hover:bg-[var(--color-accent)]" onclick={() => setStatus(p, "done")}>Done</button>
+        <button class="rounded border border-[var(--color-border)] px-2 py-1 text-xs hover:bg-[var(--color-surface)]" onclick={() => setStatus(p, PARKED)}>Park</button>
         <button class="rounded border border-[var(--color-border)] px-2 py-1 text-xs hover:bg-[var(--color-surface)]" onclick={() => setStatus(p, "declined")}>Decline</button>
+      {:else if isParked(p.status)}
+        <button class="rounded bg-[var(--color-accent-soft)] px-2 py-1 text-xs hover:bg-[var(--color-accent)]" onclick={() => setStatus(p, "active")}>Resume</button>
+        <button class="rounded border border-[var(--color-border)] px-2 py-1 text-xs hover:bg-[var(--color-surface)]" onclick={() => setStatus(p, "proposed")}>To queue</button>
       {:else}
         <button class="rounded border border-[var(--color-border)] px-2 py-1 text-xs hover:bg-[var(--color-surface)]" onclick={() => setStatus(p, "proposed")}>Reopen</button>
       {/if}
@@ -549,6 +571,22 @@
         {#each queueBuf as item (item.id)}{@render card(item.proposal)}{:else}<p class="p-2 text-xs text-[var(--color-muted)]">No proposals waiting. Ask your agent to propose some.</p>{/each}
       </div>
     </div>
+
+    {#if parked.length > 0}
+      <div data-testid="parked-section">
+        <h2
+          class="mb-2 border-t border-[var(--color-border)] pt-3 text-xs uppercase tracking-wide text-[var(--color-muted)]"
+          data-testid="parked-divider"
+        >
+          <span class="mr-2">parked</span>
+          <span class="text-[0.65rem] normal-case tracking-normal"
+            >waiting on a condition, not on you — {parked.length}
+            {parked.length === 1 ? "proposal" : "proposals"}</span
+          >
+        </h2>
+        <div class="space-y-2">{#each parked as p (p.node_id)}{@render card(p)}{/each}</div>
+      </div>
+    {/if}
 
     <div>
       <button class="text-xs text-[var(--color-muted)] hover:text-[var(--color-text)]" onclick={() => (showDone = !showDone)}>{showDone ? "▾" : "▸"} Done ({done.length})</button>

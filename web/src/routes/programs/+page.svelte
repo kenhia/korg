@@ -20,10 +20,15 @@
   import { onMount } from "svelte";
   import { api, type ProgramRow } from "$lib/api";
   import type { ProgramStatus } from "$lib/generated/vocab";
-  import { ID_CLASS, chip } from "$lib/domain";
+  import { ID_CLASS, chip, partitionParkedByStatus } from "$lib/domain";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
 
   let programs = $state<ProgramRow[]>([]);
+  // korg already returns parked programs last (#1535); this recovers the
+  // boundary that order implies, because a divider needs two lists rather than
+  // a sequence. Same treatment #810 gave parked work items — visible, below a
+  // labelled rule, never collapsed: hiding is what `done` is for.
+  const listed = $derived(partitionParkedByStatus(programs));
   let omitted = $state({ done: 0, archived: 0 });
   let showAll = $state(false);
   let loading = $state(true);
@@ -44,14 +49,21 @@
   }
 
   // Keyed by the vocabulary, so a new status is a compile error here rather
-  // than an undefined class at runtime. `queued` (#1424) is deliberately the
-  // coolest of the four: it is the one state that means nobody is on this yet,
-  // and it must not read as louder than `active` — which is the whole bug.
+  // than an undefined class at runtime — which is how `parked` (#1535) arrived
+  // with a treatment instead of inheriting one. `queued` (#1424) is deliberately
+  // the coolest of the in-flight values: it is the one state that means nobody
+  // is on this yet, and it must not read as louder than `active` — which is the
+  // whole bug.
+  //
+  // `parked` is quieter still, and closest to `done`: both are rows you are not
+  // choosing from. It keeps a hue where `done` has none, because dormant is not
+  // finished and the two must not become the same colour at a glance.
   const statusPill: Record<ProgramStatus, string> = {
     queued: "bg-sky-900/60 text-sky-300",
     active: "bg-emerald-900/60 text-emerald-300",
     holding: "bg-amber-900/60 text-amber-300",
     done: "bg-neutral-800 text-neutral-400",
+    parked: "bg-slate-800 text-slate-400",
   };
 
   onMount(load);
@@ -89,31 +101,24 @@
     </p>
   {:else}
     <ul class="space-y-2">
-      {#each programs as p (p.node_id)}
-        <li
-          class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
-        >
-          <div class="flex flex-wrap items-baseline gap-2">
-            <span class={ID_CLASS}>#{p.node_id}</span>
-            <a
-              class="font-semibold hover:underline"
-              href={`/programs/${p.node_id}`}>{p.title}</a
-            >
-            <span
-              class={`rounded px-1.5 py-0.5 text-xs ${statusPill[p.status as ProgramStatus] ?? ""}`}
-              >{p.status}</span
-            >
-            <span class="text-xs text-[var(--color-muted)]">
-              {p.slice_count}
-              {p.slice_count === 1 ? "slice" : "slices"}
-            </span>
-            {#each p.span as project (project)}
-              <span class={chip.project}>{project}</span>
-            {/each}
-          </div>
-          <p class="mt-1 text-sm text-[var(--color-muted)]">{p.aim}</p>
-        </li>
+      {#each listed.active as p (p.node_id)}
+        {@render program(p)}
       {/each}
+      {#if listed.parked.length > 0}
+        <li
+          class="border-t border-[var(--color-border)] px-1 pb-1 pt-3 text-xs uppercase tracking-wide text-[var(--color-muted)]"
+          data-testid="parked-divider"
+        >
+          <span class="mr-2">parked</span>
+          <span class="text-[0.65rem] normal-case tracking-normal"
+            >waiting on a condition, not on you — {listed.parked.length}
+            {listed.parked.length === 1 ? "program" : "programs"}</span
+          >
+        </li>
+        {#each listed.parked as p (p.node_id)}
+          {@render program(p)}
+        {/each}
+      {/if}
     </ul>
   {/if}
 
@@ -123,3 +128,29 @@
     </p>
   {/if}
 </section>
+
+{#snippet program(p: ProgramRow)}
+  <li
+    class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
+  >
+    <div class="flex flex-wrap items-baseline gap-2">
+      <span class={ID_CLASS}>#{p.node_id}</span>
+      <a
+        class="font-semibold hover:underline"
+        href={`/programs/${p.node_id}`}>{p.title}</a
+      >
+      <span
+        class={`rounded px-1.5 py-0.5 text-xs ${statusPill[p.status as ProgramStatus] ?? ""}`}
+        >{p.status}</span
+      >
+      <span class="text-xs text-[var(--color-muted)]">
+        {p.slice_count}
+        {p.slice_count === 1 ? "slice" : "slices"}
+      </span>
+      {#each p.span as project (project)}
+        <span class={chip.project}>{project}</span>
+      {/each}
+    </div>
+    <p class="mt-1 text-sm text-[var(--color-muted)]">{p.aim}</p>
+  </li>
+{/snippet}

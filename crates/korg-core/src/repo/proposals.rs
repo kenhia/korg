@@ -16,7 +16,7 @@ use crate::vocab::{PROPOSAL_LIVE_STATUSES, PROPOSAL_STATUSES};
 use super::awaiting::settle_awaiting;
 use super::comments::Comment;
 use super::common::{
-    cross_project_covers, node_project, record_transition, require_kind, touch_node,
+    cross_project_covers, node_project, parked_last, record_transition, require_kind, touch_node,
     validate_status, wi_handle,
 };
 use super::page::ArchivedFilter;
@@ -379,10 +379,23 @@ const PROPOSAL_LEAN_SELECT: &str =
      LEFT JOIN project pj ON pj.id = n.project_id";
 
 /// The shared tail of both queue reads: status set, project, archived, ordering.
-const PROPOSAL_QUEUE_WHERE: &str = " WHERE ($1::text[] IS NULL OR p.status::text = ANY($1)) \
-        AND ($2::text IS NULL OR pj.name = $2) \
-        AND ($3::bool IS NULL OR n.archived = $3) \
-      ORDER BY p.pinned DESC, p.rank ASC, p.node_id ASC";
+///
+/// **`parked` sorts last, outside `pinned`** (#1534, sprint 072) — the SQL half
+/// of the divider #810 drew for work items. The ordering key is deliberately the
+/// outermost one: the divider is absolute, and `pinned`/`rank` order *within*
+/// each half rather than across it. A pinned parked proposal is Ken saying "this
+/// one first, when it comes back", not "this one now, though it cannot move";
+/// letting `pinned` outrank the divider would put an unstartable row at the top
+/// of the read whose entire question is what to start next.
+fn proposal_queue_where() -> String {
+    format!(
+        " WHERE ($1::text[] IS NULL OR p.status::text = ANY($1)) \
+            AND ($2::text IS NULL OR pj.name = $2) \
+            AND ($3::bool IS NULL OR n.archived = $3) \
+          ORDER BY {}, p.pinned DESC, p.rank ASC, p.node_id ASC",
+        parked_last("p.status::text")
+    )
+}
 
 /// Count what the queue read's filters hid, in one round trip.
 ///
@@ -434,7 +447,8 @@ pub async fn list_proposals_lean(
 ) -> Result<ProposalListLean> {
     let shown = proposal_status_predicate(status)?;
     let items = sqlx::query_as::<_, ProposalLeanRow>(&format!(
-        "{PROPOSAL_LEAN_SELECT}{PROPOSAL_QUEUE_WHERE}"
+        "{PROPOSAL_LEAN_SELECT}{}",
+        proposal_queue_where()
     ))
     .bind(shown.as_deref())
     .bind(project)
@@ -458,7 +472,7 @@ pub async fn list_proposals_full(
 ) -> Result<ProposalListFull> {
     let shown = proposal_status_predicate(status)?;
     let items =
-        sqlx::query_as::<_, ProposalRow>(&format!("{PROPOSAL_SELECT}{PROPOSAL_QUEUE_WHERE}"))
+        sqlx::query_as::<_, ProposalRow>(&format!("{PROPOSAL_SELECT}{}", proposal_queue_where()))
             .bind(shown.as_deref())
             .bind(project)
             .bind(archived)
@@ -634,13 +648,16 @@ pub async fn update_proposal(
                 .bind(node_id)
                 .fetch_one(&mut *tx)
                 .await?;
-        sqlx::query(
-            "UPDATE sprint_proposal SET status = $2::sprint_proposal_status WHERE node_id = $1",
-        )
-        .bind(node_id)
-        .bind(v)
-        .execute(&mut *tx)
-        .await?;
+        // 0031 converted this column from a PG enum to TEXT + a CHECK, so the
+        // `::sprint_proposal_status` cast this line used to carry is gone —
+        // korg-core's `vocab` is the authority (#526) and `validate_status`
+        // above is where a bad value is refused. The CHECK is the backstop for
+        // a writer that is not this function.
+        sqlx::query("UPDATE sprint_proposal SET status = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
         record_transition(&mut *tx, node_id, &before, v).await?;
         // #1424: starting a slice starts the program above it. A `queued`
         // program asserts that none of its slices has begun, and this is the
