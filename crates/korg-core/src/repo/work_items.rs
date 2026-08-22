@@ -188,7 +188,16 @@ pub struct WorkItemRow {
 /// this already spoken for?" — the one that cost 17 `get_proposal` calls in
 /// the 2026-07-31 backlog review. A `declined` proposal speaks for nothing,
 /// and a `done` one has already had its say; either would paint an open item
-/// in the "claimed" colour and answer that question wrong. `min` picks a
+/// in the "claimed" colour and answer that question wrong.
+///
+/// **`parked` claims** (#1534, sprint 072), and it is the one member of the live
+/// set where that is worth arguing rather than assuming. The marker answers "is
+/// anything already planning this item?", and a parked bundle is still a plan —
+/// deferred, not abandoned, which is precisely what distinguishes it from
+/// `declined`. Reading it as unclaimed would invite exactly the duplicate this
+/// column exists to prevent: a curator sweeping for uncovered work would bundle
+/// the item into a second proposal, and korg would then hold two plans for it
+/// with no way to tell which the operator meant. `min` picks a
 /// single id when more than one live proposal covers an item — rare, and a
 /// stable pick beats an arbitrary one.
 ///
@@ -221,7 +230,7 @@ macro_rules! membership_joins {
                       FROM relationship r \
                       JOIN sprint_proposal sp ON sp.node_id = r.left_id \
                      WHERE r.relationship = 'covers' \
-                       AND sp.status::text IN ('proposed', 'active') \
+                       AND sp.status::text IN ('proposed', 'active', 'parked') \
                      GROUP BY r.right_id) cov ON cov.node_id = w.node_id \
          LEFT JOIN (SELECT DISTINCT r.left_id FROM relationship r \
                      WHERE r.relationship = 'has_handoff') ho ON ho.left_id = w.node_id"

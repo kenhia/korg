@@ -27,7 +27,9 @@ use crate::vocab::{
 
 use super::awaiting::settle_awaiting;
 use super::comments::Comment;
-use super::common::{node_kind, record_transition, require_kind, touch_node, validate_status};
+use super::common::{
+    node_kind, parked_last, record_transition, require_kind, touch_node, validate_status,
+};
 use super::page::ArchivedFilter;
 use super::relationships::{related_context, RelatedRef};
 use super::work_items::WORKITEM_COMMENT_CAP;
@@ -294,6 +296,17 @@ where
 /// — and `done` is finished; neither is korg's to overturn off a slice edit.
 /// Nothing demotes *into* `queued`, either: a program that has begun and paused
 /// is `holding`.
+///
+/// **`parked` (#1535, sprint 072) inherits that sentence rather than extending
+/// it**, and the WI asked for it to be decided rather than discovered. Parking
+/// is a declaration — this whole line of work is dormant, regardless of what its
+/// slices are doing — so a slice starting under a parked program must not lift
+/// it, and a parked program may legitimately hold `active` slices. No clause was
+/// added: gating on `queued` already excludes every other status, which is why
+/// `parked_programs_are_never_auto_promoted` asserts the behaviour against the
+/// database instead of this comment asserting it in prose. That is the same
+/// distinction `PROGRAM_STATUSES` draws between the derived state and the
+/// declared one.
 pub(super) async fn promote_queued_programs_over<'e, E>(
     executor: E,
     proposal_node_id: i64,
@@ -490,10 +503,13 @@ pub async fn list_programs(
     archived: ArchivedFilter,
 ) -> Result<ProgramList> {
     let shown = program_status_predicate(status)?;
+    // Parked below the line (#1535), the same outermost key the proposal queue
+    // reads use — Operations and Planning draw one divider, not two.
+    let parked = parked_last("g.status");
     let items = sqlx::query_as::<_, ProgramRow>(&format!(
         "{PROGRAM_SELECT} WHERE ($1::text[] IS NULL OR g.status = ANY($1)) \
             AND ($2::bool IS NULL OR n.archived = $2) \
-          ORDER BY g.pinned DESC, g.rank ASC, g.node_id ASC"
+          ORDER BY {parked}, g.pinned DESC, g.rank ASC, g.node_id ASC"
     ))
     .bind(shown.as_deref())
     .bind(archived)

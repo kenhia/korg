@@ -15,7 +15,7 @@ use time::OffsetDateTime;
 use ts_rs::TS;
 
 use crate::error::RepoError;
-use crate::vocab::CARD_TERMINAL_STATUSES;
+use crate::vocab::{CARD_TERMINAL_STATUSES, PROGRAM_TERMINAL_STATUSES, PROPOSAL_TERMINAL_STATUSES};
 
 use super::common::require_node;
 
@@ -120,7 +120,7 @@ async fn awaiting_row(pool: &PgPool, node_id: i64) -> Result<Option<AwaitingRow>
 /// The Commander's Call lane: everything waiting on Ken, oldest ask first.
 ///
 /// **Ghost-free (D-7).** Archived nodes and nodes in a status only Ken sets
-/// (`closed` work items, `done`/`declined` proposals, `done` programs,
+/// (`closed` work items, terminal proposals, terminal programs,
 /// `Done`/`Cut` cards) are filtered out even if their marker somehow survived —
 /// the write rules clear it, and this is the belt to that pair of braces. A
 /// lane that accumulates answered asks is the failure the whole marker was
@@ -133,15 +133,28 @@ async fn awaiting_row(pool: &PgPool, node_id: i64) -> Result<Option<AwaitingRow>
 /// Note what is *not* filtered: `resolved` and `done` work items stay. "I
 /// implemented it, it needs your user test" is the canonical awaiting-Ken state
 /// — filtering those would empty the lane of its best rows.
+///
+/// Nor is `parked`, on any kind (#1534/#1535, sprint 072): it is not terminal
+/// and Ken parking something is not Ken answering the ask. An awaiting marker on
+/// a parked row is a question that outlived the work going dormant, which is
+/// precisely the row worth keeping in the lane.
+///
+/// The proposal and program clauses now read their vocabulary's terminal set
+/// rather than restating it, for the reason the card clause already did: a
+/// hand-written status list is how `parked` got missed one vocabulary over, and
+/// two of these were hand-written until this sprint added the value that would
+/// have had to be checked against them by eye.
 pub async fn list_awaiting(pool: &PgPool) -> Result<Vec<AwaitingRow>> {
     Ok(sqlx::query_as::<_, AwaitingRow>(&format!(
         "{AWAITING_SELECT} WHERE n.awaiting_since IS NOT NULL \
             AND NOT n.archived \
             AND COALESCE(w.wi_status, 'open') <> 'closed' \
-            AND COALESCE(sp.status::text, 'proposed') NOT IN ('done', 'declined') \
-            AND COALESCE(g.status, 'active') <> 'done' \
+            AND COALESCE(sp.status::text, 'proposed') <> ALL({proposal_terminal}) \
+            AND COALESCE(g.status, 'active') <> ALL({program_terminal}) \
             AND COALESCE(cd.status::text, 'Backlog') <> ALL({card_terminal}) \
           ORDER BY n.awaiting_since ASC, n.id ASC",
+        proposal_terminal = sql_list(&PROPOSAL_TERMINAL_STATUSES),
+        program_terminal = sql_list(&PROGRAM_TERMINAL_STATUSES),
         card_terminal = sql_list(&CARD_TERMINAL_STATUSES)
     ))
     .fetch_all(pool)
@@ -149,8 +162,8 @@ pub async fn list_awaiting(pool: &PgPool) -> Result<Vec<AwaitingRow>> {
 }
 
 /// A vocabulary array as a SQL literal list, so the clearing rule and the lane
-/// filter both read [`CARD_TERMINAL_STATUSES`] rather than restating it. The
-/// values are compile-time constants from `vocab`, never caller input.
+/// filter read `vocab`'s terminal sets rather than restating them. The values
+/// are compile-time constants from `vocab`, never caller input.
 fn sql_list(values: &[&str]) -> String {
     let inner = values
         .iter()
@@ -188,12 +201,15 @@ where
             OR EXISTS (SELECT 1 FROM workitem w \
                         WHERE w.node_id = n.id AND w.wi_status = 'closed') \
             OR EXISTS (SELECT 1 FROM sprint_proposal sp \
-                        WHERE sp.node_id = n.id AND sp.status::text IN ('done', 'declined')) \
+                        WHERE sp.node_id = n.id \
+                          AND sp.status::text = ANY({proposal_terminal})) \
             OR EXISTS (SELECT 1 FROM program g \
-                        WHERE g.node_id = n.id AND g.status = 'done') \
+                        WHERE g.node_id = n.id AND g.status = ANY({program_terminal})) \
             OR EXISTS (SELECT 1 FROM card cd \
                         WHERE cd.node_id = n.id \
                           AND cd.status::text = ANY({card_terminal})))",
+        proposal_terminal = sql_list(&PROPOSAL_TERMINAL_STATUSES),
+        program_terminal = sql_list(&PROGRAM_TERMINAL_STATUSES),
         card_terminal = sql_list(&CARD_TERMINAL_STATUSES)
     ))
     .bind(node_id)

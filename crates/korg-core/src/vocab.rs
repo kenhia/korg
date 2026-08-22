@@ -114,6 +114,21 @@ pub fn node_path(kind: &str, node_id: i64) -> Option<String> {
         .map(|(_, template)| template.replace("{id}", &node_id.to_string()))
 }
 
+/// The literal for **parked**, spelled once (#1534/#1535, sprint 072).
+///
+/// It is a member of three vocabularies now — work items (#810), sprint
+/// proposals and programs — and the sets it must and must not join differ per
+/// kind. A shared constant is what stops the fourth kind from being added with
+/// a hand-typed string, which is the failure mode `CARD_TERMINAL_STATUSES`
+/// already names: hand-written copies of a status do not move when the status
+/// does. `parked_is_one_literal_everywhere` fences the spelling.
+///
+/// **It is a visibility class, not a lifecycle stage**, and that is the part
+/// worth carrying across kinds. It says *this is deferred until a condition
+/// fires*; it asserts nothing about how far the work got before it stopped, so
+/// no set that means "has begun" or "is finished" may admit it.
+pub const PARKED_STATUS: &str = "parked";
+
 /// Canonical work-item statuses (WI #285). Lifecycle: `open → resolved`
 /// (implemented; may still need a user test / may not be PR'd) `→ done`
 /// (agent satisfied — terminal but still visible in default lists)
@@ -225,15 +240,37 @@ pub const CARD_TERMINAL_STATUSES: [&str; 2] = ["Done", "Cut"];
 /// Reading-list dispositions; mirrors the `link_disposition` enum (0004).
 pub const LINK_DISPOSITIONS: [&str; 5] = ["Unread", "Done", "Revisit", "Summarized", "VaultSaved"];
 
-/// Sprint-proposal lifecycle; mirrors `sprint_proposal_status` (0008).
-pub const PROPOSAL_STATUSES: [&str; 4] = ["proposed", "active", "done", "declined"];
+/// Sprint-proposal lifecycle; mirrors the `sprint_proposal_status_check`
+/// CHECK (0008 as an enum, converted to TEXT + CHECK by 0031).
+///
+/// `parked` (#1534, sprint 072) is [`PARKED_STATUS`] extended from work items
+/// to this kind, with #810's semantics unchanged: **live, not terminal**. The
+/// gap it closes is a proposal blocked on something with no end date — korg:1478
+/// sat `active` for a month because the 5090 was out for RMA, carrying a comment
+/// asking people not to pick it up from Planning. A comment doing a status's job
+/// is the tell that a status is missing; `declined` was the only alternative and
+/// it says the opposite thing, that somebody decided not to do the work.
+///
+/// It is deliberately **not** a fifth stage of the lifecycle. `proposed → active
+/// → done` is a progression and `declined` is its exit; `parked` is a sideways
+/// move reachable from either live status and returning to whichever the
+/// operator names. That is why the queue reads sort it last rather than
+/// ordering it after `active`.
+pub const PROPOSAL_STATUSES: [&str; 5] = ["proposed", "active", "done", "declined", PARKED_STATUS];
 
 /// The proposals a queue read means by default (WI #852): the live ones. The
 /// complement — `done` and `declined` — was 71% of `list_proposals`' payload and
 /// nothing an agent picking a sprint has ever wanted. Kept beside the full
-/// vocabulary so a fifth status cannot be added without deciding which side it
+/// vocabulary so a sixth status cannot be added without deciding which side it
 /// falls on; `proposal_statuses_partition_cleanly` fences that.
-pub const PROPOSAL_LIVE_STATUSES: [&str; 2] = ["proposed", "active"];
+///
+/// `parked` is **live** (#1534), for #810's reason verbatim: a parked row is one
+/// Ken has explicitly asked to keep in view, so hiding it by default would
+/// defeat the status. The divider does the de-prioritising that hiding would
+/// otherwise do. A consumer that wants parked rows gone filters them itself —
+/// korg never hides them, and `proposal_omitted` therefore gains no field for
+/// them, because nothing was hidden to report.
+pub const PROPOSAL_LIVE_STATUSES: [&str; 3] = ["proposed", "active", PARKED_STATUS];
 
 /// The complement of [`PROPOSAL_LIVE_STATUSES`] — excluded from a lean
 /// `list_proposals` unless asked for, and counted in its `omitted`.
@@ -253,6 +290,23 @@ pub const PROPOSAL_TERMINAL_STATUSES: [&str; 2] = ["done", "declined"];
 /// One name because three places ask the same question and must not diverge:
 /// `create_program`'s initial status, the promotion out of `queued`, and 0030's
 /// backfill.
+///
+/// **`parked` is deliberately absent** (#1535, sprint 072), and the reasoning is
+/// the interesting half of that sprint. A proposal can be parked from either
+/// live status, so the literal alone cannot say whether the work had begun —
+/// and of the two ways to be wrong, admitting it here is much the worse. A
+/// program whose only slice went `proposed → parked` would be promoted to
+/// `active`, putting an ACTIVE callout on work nobody has started: exactly the
+/// #1424 bug `queued` was added to fix. Excluding it costs nothing in the other
+/// direction, because the promotion is one-directional and never reversed — a
+/// slice that went `active → parked` promoted its program on the way through,
+/// and korg does not demote behind that.
+///
+/// Which leaves one honest residue, named rather than papered over: a program
+/// created around an already-parked slice is born `queued` whether or not that
+/// slice once ran. korg cannot tell from the status, `queued` is defined against
+/// this set rather than against history, and reading the transition log to guess
+/// would be korg overturning nothing it can see.
 pub const PROPOSAL_STARTED_STATUSES: [&str; 2] = ["active", "done"];
 
 /// Program lifecycle (#968, sprint 044; `queued` added #1424, sprint 069);
@@ -286,7 +340,27 @@ pub const PROPOSAL_STARTED_STATUSES: [&str; 2] = ["active", "done"];
 /// a status value's documentation asserted a meaning korg did not have, and a
 /// plausible-sounding comment kept the resulting bug alive; kfdc switches its
 /// Operations colour on these literals.
-pub const PROGRAM_STATUSES: [&str; 4] = ["queued", "active", "holding", "done"];
+///
+/// **`parked` (#1535, sprint 072) is the one value here that is not on the
+/// lifecycle at all**, and the contrast with `queued` is what the sprint had to
+/// get right. `queued` is *derived*: korg maintains it as a fact about the
+/// slices, promoting out of it on every write path that can start one. `parked`
+/// is *declared*: it is somebody saying this whole line of work is dormant, and
+/// korg must never set or clear it on its own. The two can disagree — a parked
+/// program may hold `active` slices, which is not a contradiction but the
+/// operator overriding what the slices imply — and where they do, the
+/// declaration stands. Concretely: nothing promotes a parked program (the
+/// promotion is gated on `queued`, so this falls out rather than being special-
+/// cased, and `parked_programs_are_never_auto_promoted` fences it), and
+/// un-parking restores the status the operator names rather than one korg
+/// guesses.
+///
+/// `holding` is the neighbour to distinguish it from, because both mean "not
+/// moving": `holding` is *between* slices with the work still on the near
+/// horizon, `parked` is waiting on a condition with no end date. korg:1480 was
+/// `holding` for the RMA — true about the motion and completely wrong about the
+/// reason, which is the gap this closes.
+pub const PROGRAM_STATUSES: [&str; 5] = ["queued", "active", "holding", "done", PARKED_STATUS];
 
 /// The state a program is born in — written explicitly by `create_program`
 /// (#526: the vocabulary is the authority, the DB default is the backstop) and
@@ -304,7 +378,11 @@ pub const PROGRAM_INITIAL_STATUS: &str = "queued";
 /// `queued` is **live**: a program nobody has started yet is the thing the
 /// Operations panel most needs to show, and filing it terminal would hide it
 /// from the read that exists to display it.
-pub const PROGRAM_LIVE_STATUSES: [&str; 3] = ["queued", "active", "holding"];
+///
+/// `parked` is live for #810's reason instead (#1535): it is kept in view on
+/// purpose, below a divider. Filing it terminal would make it invisible and
+/// count it in `omitted.done`, which would claim a dormant program had finished.
+pub const PROGRAM_LIVE_STATUSES: [&str; 4] = ["queued", "active", "holding", PARKED_STATUS];
 
 /// The complement of [`PROGRAM_LIVE_STATUSES`] — excluded from a default
 /// `list_programs` and counted in its `omitted`.
@@ -566,12 +644,12 @@ pub fn validate(value: &str, allowed: &[&str], what: &str) -> Result<(), RepoErr
 #[cfg(test)]
 mod partition {
     use super::{
-        node_path, CARD_STATUSES, CARD_TERMINAL_STATUSES, NODE_KINDS, NODE_ROUTES,
+        node_path, CARD_STATUSES, CARD_TERMINAL_STATUSES, NODE_KINDS, NODE_ROUTES, PARKED_STATUS,
         PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES, PROGRAM_TERMINAL_STATUSES, PROPOSAL_LIVE_STATUSES,
-        PROPOSAL_STATUSES, PROPOSAL_TERMINAL_STATUSES, REPORT_STATUSES, SCHEDULE_LIVE_STATUSES,
-        SCHEDULE_STATUSES, SCHEDULE_TERMINAL_STATUSES, SOURCE_ASSERTIONS, SOURCE_ASSERTS_UNKNOWN,
-        SOURCE_FRESHNESS, WI_FINISHED_STATUSES, WI_LIVE_STATUSES, WI_STATUSES,
-        WI_TERMINAL_STATUSES, WI_UNFINISHED_STATUSES,
+        PROPOSAL_STARTED_STATUSES, PROPOSAL_STATUSES, PROPOSAL_TERMINAL_STATUSES, REPORT_STATUSES,
+        SCHEDULE_LIVE_STATUSES, SCHEDULE_STATUSES, SCHEDULE_TERMINAL_STATUSES, SOURCE_ASSERTIONS,
+        SOURCE_ASSERTS_UNKNOWN, SOURCE_FRESHNESS, WI_FINISHED_STATUSES, WI_LIVE_STATUSES,
+        WI_STATUSES, WI_TERMINAL_STATUSES, WI_UNFINISHED_STATUSES,
     };
     use std::collections::BTreeSet;
 
@@ -689,6 +767,90 @@ mod partition {
             !WI_FINISHED_STATUSES.contains(&"parked"),
             "`parked` must never satisfy a dependency"
         );
+    }
+
+    /// The same corner, one kind up (#1534, sprint 072). `parked` is a
+    /// **visibility class**, so it must land live-but-not-terminal for proposals
+    /// exactly as it does for work items — and the partition fence above cannot
+    /// catch getting that wrong, because filing it terminal partitions just as
+    /// cleanly while making the row invisible and counting it as hidden-because-
+    /// finished. That is the mistake this test exists to name.
+    #[test]
+    fn parked_proposals_are_visible_and_unfinished() {
+        assert!(
+            PROPOSAL_STATUSES.contains(&PARKED_STATUS),
+            "`parked` must be a proposal status"
+        );
+        assert!(
+            PROPOSAL_LIVE_STATUSES.contains(&PARKED_STATUS),
+            "a parked proposal must stay in the default queue read — it is kept \
+             in view on purpose, and `omitted` has no field that would report it"
+        );
+        assert!(
+            !PROPOSAL_TERMINAL_STATUSES.contains(&PARKED_STATUS),
+            "`parked` must not be terminal: #978's Deconfliction derives \
+             unfinished from this set, so a terminal parked proposal would stop \
+             blocking the work that depends on it"
+        );
+    }
+
+    /// `parked` must never mean **begun** (#1535, sprint 072).
+    ///
+    /// The asymmetry is the whole point: `queued` is derived and `parked` is
+    /// declared, so admitting `parked` to the started set would let a program
+    /// with one parked-but-never-run slice promote itself to `active` — an
+    /// ACTIVE callout on work nobody has touched, which is #1424 verbatim. The
+    /// constant's own doc comment carries the reasoning; this makes it a gate.
+    #[test]
+    fn parked_never_counts_as_started() {
+        assert!(
+            !PROPOSAL_STARTED_STATUSES.contains(&PARKED_STATUS),
+            "`parked` says a proposal is deferred, never that it began — a \
+             program promoted on a parked slice claims work is underway"
+        );
+    }
+
+    /// And for programs (#1535, sprint 072). Same corner, same two plausible
+    /// mistakes, and one more: `PROGRAM_TERMINAL_STATUSES` feeds
+    /// `list_programs`' `omitted.done`, so a terminal `parked` would report a
+    /// dormant program as a finished one.
+    #[test]
+    fn parked_programs_are_visible_and_unfinished() {
+        assert!(
+            PROGRAM_STATUSES.contains(&PARKED_STATUS),
+            "`parked` must be a program status"
+        );
+        assert!(
+            PROGRAM_LIVE_STATUSES.contains(&PARKED_STATUS),
+            "a parked program must stay in the default list — Operations shows \
+             it below a divider rather than not at all"
+        );
+        assert!(
+            !PROGRAM_TERMINAL_STATUSES.contains(&PARKED_STATUS),
+            "`parked` must not be terminal: it would be counted in \
+             `omitted.done`, claiming a dormant program had finished"
+        );
+    }
+
+    /// One literal across three vocabularies (#1534/#1535, sprint 072).
+    ///
+    /// `parked` now spans work items, proposals and programs, and every set it
+    /// joins is spelled from [`PARKED_STATUS`] rather than typed again. A fourth
+    /// kind adopting it must do the same: a hand-typed `"parked"` that drifts
+    /// from this one is the `CARD_TERMINAL_STATUSES` lesson repeated, and it
+    /// would drift silently because both halves are valid strings.
+    #[test]
+    fn parked_is_one_literal_everywhere() {
+        for (kind, set) in [
+            ("work item", WI_STATUSES.as_slice()),
+            ("proposal", PROPOSAL_STATUSES.as_slice()),
+            ("program", PROGRAM_STATUSES.as_slice()),
+        ] {
+            assert!(
+                set.contains(&PARKED_STATUS),
+                "{kind} statuses must carry PARKED_STATUS itself, not a copy"
+            );
+        }
     }
 
     /// Every node kind has a page to link to (WI #1467). The fence that makes

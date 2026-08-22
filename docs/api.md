@@ -289,7 +289,7 @@ everything and sifting:
 | `list_work_items` | `project` (name), `wi_status` (+ `"all"`), `archived` | `wi_number` |
 | `list_cards` | `status`, `project`, `archived` | `status`, `rank`, `node_id` |
 | `list_links` | `disposition`, `read`, `archived` | `node_id` |
-| `list_proposals` | `status` (+ `"all"`), `project`, `archived`, `detail` | pinned, `rank`, `node_id` |
+| `list_proposals` | `status` (+ `"all"`), `project`, `archived`, `detail` | parked-last, pinned, `rank`, `node_id` |
 | `neighbors` | `label`, `kind` | `node_id`, `rel_id` |
 
 Every ordering carries an id tie-breaker, so equal ranks no longer shuffle
@@ -379,9 +379,9 @@ twice, and reports both:
 
 | `status` | rows returned |
 |---|---|
-| omitted | `proposed` + `active` — the live queue |
+| omitted | `proposed` + `active` + `parked` — the live queue |
 | `"all"` | every status |
-| one of the four | exactly that status |
+| one of the five | exactly that status |
 
 `detail` picks the projection: `"lean"` (default) is `node_id`, `title`,
 `status`, `project`, `rank`, `pinned`, `covered_count`, `comment_count` —
@@ -644,11 +644,11 @@ above: it is one composite object, not `{items, …}`.
 |---|---|
 | `generated` | when the board was assembled, from **Postgres's** clock — the same one every timestamp here came from, so `generated - awaiting_since` is a correct age |
 | `active` | proposals in `active`, pinned first then rank — each with `summary`, the work-item rollup `covered_count` plus one count per `WI_STATUSES` value (they sum to it — #1386), and `synopsis` (korg #1003): the newest comment opening with the `⟦curator⟧` marker as `{body, updated}`, or `null` |
-| `queue` | proposals in `proposed`, same row type, same order |
+| `queue` | proposals in `proposed`, same row type, same order — **plus `parked` proposals, always last** (#1534). `status` distinguishes them; see [`parked` on proposals and programs](#parked-on-proposals-and-programs-15341535-sprint-072) |
 | `proposals_omitted` | `{done, declined, archived}` — the same envelope, meaning the same thing, as `list_proposals` |
 | `proposal_edges` | korg #1003: every edge whose **both** endpoints are `active`/`queue` rows — `{left, right, label, directed, origin, created}`. `directed` comes from the registry (read undirected labels symmetrically); `origin`/`created` are the first read surface for D-17's write-side edge provenance, which is how curated edges (`origin: "kfdc-curator"`) stay distinguishable from human ones |
 | `blocked` | #978: every **unmet** `depends_on` holding up a live row — `{proposal, via, dependent, dependent_wi_number, blocker, blocker_kind, blocker_wi_number, blocker_title, blocker_project, blocker_status, sequenced_by}`. See below |
-| `programs` | live programs, each carrying `slices` exactly as `get_program` returns them |
+| `programs` | live programs, each carrying `slices` exactly as `get_program` returns them — **parked programs last** (#1535), on the same rule as `queue` |
 | `programs_omitted` | `{done, archived}` |
 | `awaiting` | `list_awaiting`'s lane, unchanged |
 | `depth` | per-project queue depth — every project, with its `status` and `category` |
@@ -1306,7 +1306,7 @@ drop leaves that belief intact.
 | project | **required** | **refused** — `span` is derived from the slices |
 | bundles | work items, via `covers` | proposals, via `includes` |
 | order | queue `rank` on the node | position `rank` on the **edge** |
-| statuses | `proposed` → `active` → `done`/`declined` | `queued` → `active` ⇄ `holding` → `done` |
+| statuses | `proposed` → `active` → `done`/`declined`, plus `parked` | `queued` → `active` ⇄ `holding` → `done`, plus `parked` |
 
 **Order lives on the edge.** Position is a property of the containment, not of
 the proposal — a proposal included by two programs has two positions, and only
@@ -1347,6 +1347,54 @@ demotes into `queued` behind you.
 board's Operations panel without a filter change. Per korg+ GP-13, a consumer
 switches on this value rather than reconstructing it from the slice statuses
 itself.
+
+### `parked` on proposals and programs (#1534/#1535, sprint 072)
+
+`parked` means **deferred until a condition fires, with no end date** — and it is
+now a value in three vocabularies (work items since #810, proposals and programs
+since this sprint) with one meaning across all of them. It closes a gap the
+corpus had been papering over: korg:1478 sat `active` for a month because kai's
+5090 was out for RMA, carrying a comment asking people not to pick it up, and
+korg:1480 sat `holding`, which is true about the motion and wrong about the
+reason. `declined` was the only alternative and it says the opposite thing — a
+decision *not* to do the work.
+
+Three properties hold on every kind, and they are the contract:
+
+- **Live, not terminal.** A parked row stays in the default read. Hiding it is
+  what `closed`/`declined` are for; the point of parking is keeping the work in
+  view. It gets no `omitted` field, because nothing was hidden to report.
+- **Below the line, never gone.** Every queue read sorts parked rows last, ahead
+  of `pinned` — the divider is absolute and `pinned`/`rank` order within each
+  half. korg orders; korg does not draw the divider or filter the rows.
+- **Unfinished.** A dependency on a parked row is still an unmet blocker in
+  `get_board`'s deconfliction (#978), and an awaiting marker on one persists —
+  parking is not Ken answering the ask.
+
+**On the board, parked proposals ride at the end of `queue`** rather than in a
+collection of their own, and parked programs at the end of `programs`. A third
+bucket was rejected: it would make every consumer merge two lists to render the
+ordinary case, in order to describe a row that `status` already describes. This
+is the shape kfdc filters on, and it is why the two work items had to answer it
+identically.
+
+**`parked` is declared; `queued` is derived.** That asymmetry is the whole of the
+program half. korg maintains `queued` as a fact about the slices and promotes out
+of it on every write path that can start one. It maintains nothing about
+`parked`: korg never sets or clears it, nothing promotes a parked program, and a
+parked program may legitimately hold `active` slices — that is the operator
+overriding what the slices imply, not a contradiction. Nor is `parked` a
+*started* status: a proposal can be parked out of either live status, so the
+literal cannot say whether the work began, and admitting it to that set would
+promote a program over a slice nobody has touched — #1424 exactly.
+
+**Un-parking is not korg's to guess.** The status a row was parked out of is not
+recoverable from the row; a proposal parked out of `proposed` and one parked out
+of `active` are indistinguishable afterwards. The caller names the status to
+return to. The `transition` log (#977) is the only record of what a row was.
+
+Per korg+ **GP-19**: parked is a visibility class korg owns, for every node kind;
+a consumer may filter it but never invent its own notion of dormant.
 
 ### Awaiting Ken (#969)
 

@@ -19,8 +19,11 @@ use ts_rs::TS;
 ///
 /// **What each figure counts, and why it is not the obvious thing.**
 ///
-/// - `proposals` — *live* proposals (`proposed` + `active`), matching the
-///   queue the Planning page renders. A done proposal is off the queue.
+/// - `proposals` — *live* proposals (`proposed` + `active` + `parked`), matching
+///   the queue the Planning page renders. A done proposal is off the queue; a
+///   parked one is on it, below the divider (#1534) — the rail counts what the
+///   page shows, and a rail that disagreed with the list beside it is the class
+///   of bug D-3 exists to refuse.
 /// - `wi_total` — *live, unarchived* work items. Not every item: `closed` is
 ///   78% of the corpus (the #861 measurement), and a denominator that counts
 ///   years of finished work makes the ratio unreadable. This is "how much
@@ -90,7 +93,7 @@ pub async fn planning_rollup(pool: &PgPool) -> Result<Vec<PlanningRollupRow>> {
                FROM relationship r \
                JOIN sprint_proposal sp ON sp.node_id = r.left_id \
               WHERE r.relationship = 'covers' \
-                AND sp.status::text IN ('proposed', 'active') \
+                AND sp.status::text IN ('proposed', 'active', 'parked') \
          ), wi AS ( \
              SELECT n.project_id, \
                     count(*) AS wi_total, \
@@ -105,7 +108,7 @@ pub async fn planning_rollup(pool: &PgPool) -> Result<Vec<PlanningRollupRow>> {
                FROM sprint_proposal sp \
                JOIN node sn ON sn.id = sp.node_id \
               WHERE NOT sn.archived \
-                AND sp.status::text IN ('proposed', 'active') \
+                AND sp.status::text IN ('proposed', 'active', 'parked') \
               GROUP BY sn.project_id \
          ) \
          SELECT pj.name AS project, pj.status, pj.category, \

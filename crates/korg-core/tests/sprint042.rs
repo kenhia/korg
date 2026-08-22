@@ -58,16 +58,22 @@ async fn row(pool: &PgPool, n: i64) -> korg_core::repo::WorkItemRow {
 }
 
 /// Both new SQL fragments spell their liveness rule as a literal
-/// `IN ('proposed', 'active')`, because it sits inside a `concat!`ed const that
-/// cannot interpolate a Rust array. This is the fence: add a fifth proposal
-/// status on the live side and this fails, rather than the rows quietly
+/// `IN ('proposed', 'active', 'parked')`, because it sits inside a `concat!`ed
+/// const that cannot interpolate a Rust array. This is the fence: add a sixth
+/// proposal status on the live side and this fails, rather than the rows quietly
 /// under-reporting what is spoken for.
+///
+/// It has now caught one (#1534, sprint 072): `parked` joined the live set, and
+/// the two fragments would otherwise have kept answering the older question.
+/// Whether a parked proposal *claims* its covered items was a decision rather
+/// than a widen — it does, because a parked bundle is a deferred plan and not an
+/// abandoned one — and `membership_joins!` carries the reasoning.
 #[test]
 fn the_membership_predicate_matches_the_proposal_vocabulary() {
     assert_eq!(
         korg_core::vocab::PROPOSAL_LIVE_STATUSES,
-        ["proposed", "active"],
-        "membership_joins! and planning_rollup hardcode this pair — update \
+        ["proposed", "active", "parked"],
+        "membership_joins! and planning_rollup hardcode this set — update \
          both SQL fragments (repo/work_items.rs, repo/planning.rs) if the \
          vocabulary moves"
     );

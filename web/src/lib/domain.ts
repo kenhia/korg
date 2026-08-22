@@ -19,7 +19,9 @@ import {
   RELATIONSHIP_LABELS,
   WI_STATUSES,
   type CardStatus,
+  type ProgramStatus,
   type ProjectCategory,
+  type ProposalStatus,
   type RelationshipLabel,
   type WiStatus,
 } from "./generated/vocab";
@@ -78,12 +80,40 @@ export function isSatisfied(status: string): boolean {
  * satisfied. They stay in the listing (hiding them is what `closed` is for) and
  * they still block their dependents (deferred is not done) — they simply must
  * not sit among the rows you are choosing your next task from.
+ *
+ * Since korg sprint 072 it is a value in **three** vocabularies — work items,
+ * sprint proposals and programs — with one meaning across all of them, so the
+ * type is the union rather than `WiStatus`. That is also why `isParked` takes a
+ * bare `string`: every caller is asking the same question of a different kind's
+ * status field, and narrowing the parameter per kind would just make three
+ * copies of one predicate.
  */
-export const PARKED: WiStatus = "parked";
+export const PARKED: WiStatus & ProposalStatus & ProgramStatus = "parked";
 
-/** True when an item is deferred until some condition fires. */
+/** True when a row is deferred until some condition fires, on any node kind. */
 export function isParked(status: string): boolean {
   return status === PARKED;
+}
+
+/**
+ * Split any status-bearing listing into what is actionable and what is parked,
+ * preserving the incoming order within each half.
+ *
+ * The proposal/program counterpart of {@link partitionParked}, which reads
+ * `wi_status`. Same contract and the same reason for partitioning rather than
+ * sorting — see that function.
+ *
+ * korg already returns parked rows last in every queue read, so this is not
+ * correcting the server's order; it is recovering the boundary the order
+ * implies, because a divider needs the two lists and not just the sequence.
+ */
+export function partitionParkedByStatus<T extends { status: string }>(
+  items: readonly T[],
+): { active: T[]; parked: T[] } {
+  const active: T[] = [];
+  const parked: T[] = [];
+  for (const it of items) (isParked(it.status) ? parked : active).push(it);
+  return { active, parked };
 }
 
 /**

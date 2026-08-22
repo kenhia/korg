@@ -9,11 +9,12 @@ use ts_rs::TS;
 
 use crate::relationships;
 use crate::vocab::{
-    PROGRAM_TERMINAL_STATUSES, PROPOSAL_LIVE_STATUSES, PROPOSAL_TERMINAL_STATUSES,
+    PARKED_STATUS, PROGRAM_TERMINAL_STATUSES, PROPOSAL_LIVE_STATUSES, PROPOSAL_TERMINAL_STATUSES,
     WI_FINISHED_STATUSES,
 };
 
 use super::awaiting::{list_awaiting, AwaitingRow};
+use super::common::parked_last;
 use super::page::archived_default;
 use super::planning::{planning_rollup, PlanningRollupRow};
 use super::programs::{
@@ -286,7 +287,21 @@ pub struct BoardRollup {
     pub generated: OffsetDateTime,
     /// Fire Missions: proposals in `active`, pinned first then rank.
     pub active: Vec<BoardProposal>,
-    /// On Deck: proposals in `proposed`, same order.
+    /// On Deck: proposals in `proposed` — **and in `parked`, always last**
+    /// (#1534, sprint 072). Same order otherwise.
+    ///
+    /// The shape decision this sprint had to make, and the one kfdc filters on.
+    /// A parked proposal is neither `active` nor `proposed`, so before this it
+    /// would have dropped off the board silently — hiding by accident what
+    /// should only ever be hidden by choice. The alternative was a third
+    /// collection, and it was rejected because it makes every consumer merge two
+    /// lists to render the ordinary case correctly, to describe a row that is
+    /// already fully described by the `status` field it carries.
+    ///
+    /// So: parked rides here, `status` says which rows they are, and the order
+    /// puts them below the line the way #810's divider does. A consumer that
+    /// wants them gone filters on the literal — korg does not hide them, and it
+    /// does not paint the divider either. That division is GP-19.
     pub queue: Vec<BoardProposal>,
     /// What the live-and-unarchived default hid across `active` + `queue` —
     /// the same envelope, meaning the same thing, as `list_proposals`.
@@ -312,7 +327,8 @@ pub struct BoardRollup {
     /// Commander's Call: everything waiting on Ken, oldest ask first.
     pub awaiting: Vec<AwaitingRow>,
     /// Queue depth per project — every project, with its `status`, so the board
-    /// can count the active ones and dim the rest.
+    /// can count the active ones and dim the rest. Parked programs (#1535) ride
+    /// here too, last, on exactly the argument above.
     pub depth: Vec<PlanningRollupRow>,
     /// Sensor Net: the newest [`BOARD_REPORT_CAP`] reports. `report_date` is the
     /// only date in korg that records when something *happened* to the fleet.
@@ -487,6 +503,9 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
         .collect();
     let buckets = covered_bucket_filters("*");
     let coalesced = covered_bucket_coalesce("cov");
+    // Parked below the line, same key `list_proposals` uses (#1534) — the two
+    // reads must not disagree about where a parked row sits.
+    let parked_last = parked_last("sp.status::text");
     let rows = sqlx::query_as::<_, BoardProposalRow>(&format!(
         "WITH cov AS ( \
              SELECT r.left_id AS proposal_id, \
@@ -508,7 +527,7 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
            LEFT JOIN cov ON cov.proposal_id = sp.node_id \
           WHERE (sp.status::text = ANY($1) AND NOT n.archived) \
              OR sp.node_id = ANY($2) \
-          ORDER BY sp.pinned DESC, sp.rank ASC, sp.node_id ASC"
+          ORDER BY {parked_last}, sp.pinned DESC, sp.rank ASC, sp.node_id ASC"
     ))
     .bind(&live_statuses)
     .bind(&slice_ids)
@@ -538,7 +557,11 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
     // neither edges nor a synopsis.
     let live_ids: Vec<i64> = rows
         .iter()
-        .filter(|r| !r.archived && matches!(r.status.as_str(), "active" | "proposed"))
+        // From the vocabulary, not two literals (#1534): `parked` is live, so a
+        // parked row's edges and synopsis belong on the board like any other
+        // queue row's. A hand-written pair here would have silently dropped
+        // them — the `CARD_TERMINAL_STATUSES` lesson, one read over.
+        .filter(|r| !r.archived && PROPOSAL_LIVE_STATUSES.contains(&r.status.as_str()))
         .map(|r| r.node_id)
         .collect();
 
@@ -590,9 +613,14 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
             continue;
         }
         let synopsis = synopses.remove(&row.node_id);
+        // A parked row joins `queue` whichever half it was parked out of. On
+        // Deck is "what could be picked up" and below its divider is where "not
+        // this one" belongs; routing it to `active` instead — because it *was*
+        // active — would leave a row that cannot move in Fire Missions, which is
+        // the board claiming work is underway on it.
         match row.status.as_str() {
             "active" => active.push(row.into_proposal(synopsis)),
-            "proposed" => queue.push(row.into_proposal(synopsis)),
+            "proposed" | PARKED_STATUS => queue.push(row.into_proposal(synopsis)),
             _ => {}
         }
     }
