@@ -20,6 +20,7 @@
   import { ID_CLASS, chip, nodePage, stamp } from "$lib/domain";
   import BackTo from "$lib/components/BackTo.svelte";
   import Comments from "$lib/components/Comments.svelte";
+  import CopyStart from "$lib/components/CopyStart.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
   import MarkdownView from "$lib/components/MarkdownView.svelte";
   import NodePreview from "$lib/components/NodePreview.svelte";
@@ -130,6 +131,16 @@
             onclick={() => setStatus(s)}>{s}</button
           >
         {/each}
+        <!-- WI #1550 — kfdc's pane opens this page directly, so the decision to
+             start a proposal is made here and the button that starts it was on
+             the other page. It sits with the status controls rather than up in
+             the title row because starting a sprint *is* the lifecycle: the row
+             now reads "what state is this in, and take it". -->
+        <CopyStart
+          nodeId={proposal.node_id}
+          label
+          class="ml-auto rounded border border-[var(--color-border)] px-2 py-0.5 text-xs hover:bg-[var(--color-surface-hi)]"
+        />
       </div>
     </header>
 

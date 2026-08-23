@@ -19,6 +19,7 @@
     projectRailColor,
     stampDay,
   } from "$lib/domain";
+  import CopyStart from "$lib/components/CopyStart.svelte";
   import NodePreview from "$lib/components/NodePreview.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
   import { attempt, reportError } from "$lib/toast.svelte";
@@ -58,7 +59,6 @@
   let relatedByProposal = $state<Record<number, RelatedRef[]>>({});
   let loading = $state(true);
   let loadError = $state<unknown>(null);
-  let copiedId = $state<number | null>(null);
   // Covered items are work items, whose node id equals their wi_number — pass
   // it straight to the shared preview panel.
   let previewNode = $state<number | null>(null);
@@ -293,35 +293,6 @@
     rebuild();
   }
 
-  async function copyStart(p: ProposalRow) {
-    const text = `/start-sprint korg:${p.node_id}`;
-    try {
-      // navigator.clipboard requires a secure context (HTTPS or localhost);
-      // korg is served over plain HTTP on the LAN, so it's often undefined.
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        legacyCopy(text);
-      }
-      copiedId = p.node_id;
-      setTimeout(() => (copiedId = null), 1500);
-    } catch (err) {
-      reportError(err, "Copy to clipboard");
-    }
-  }
-
-  function legacyCopy(text: string) {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    if (!ok) throw new Error("Copy failed — clipboard access is unavailable in this context.");
-  }
-
   function openPreview(wi_number: number) {
     previewNode = wi_number;
   }
@@ -380,11 +351,7 @@
           title={p.pinned ? "Unpin" : "Pin to top"}
           onclick={() => togglePin(p)}
         >📌</button>
-        <button
-          class="rounded px-1.5 py-0.5 text-xs hover:bg-[var(--color-surface)]"
-          title="Copy /start-sprint prompt"
-          onclick={() => copyStart(p)}
-        >{copiedId === p.node_id ? "✓" : "⧉"}</button>
+        <CopyStart nodeId={p.node_id} />
       </div>
     </div>
     <!-- WI #1106 — the row half. `tags` are on the node for every kind and were

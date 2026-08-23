@@ -558,6 +558,51 @@ export function sourceFreshnessPill(freshness: string): string {
 }
 
 /**
+ * The same meanings without the pill (#1523).
+ *
+ * Ken's ask, verbatim: "drop the pill border and just use colour for status".
+ * On the Sources summary bar there is one word per source and no competing
+ * chrome, so the border is drawing a box around the only thing in it — colour
+ * carries the whole signal, and the same colour it carries when the section is
+ * open, which is what makes the collapsed bar readable as a summary of what is
+ * underneath rather than a second vocabulary.
+ */
+const SOURCE_FRESHNESS_TEXT: Record<string, string> = {
+  fresh: "text-emerald-300",
+  stale: "text-red-300",
+  retired: "text-[var(--color-muted)]",
+  unrated: "text-[var(--color-muted)]",
+};
+
+/** Colour alone for a source's freshness — the collapsed bar's form. */
+export function sourceFreshnessText(freshness: string): string {
+  return SOURCE_FRESHNESS_TEXT[freshness] ?? "text-[var(--color-muted)]";
+}
+
+/**
+ * Freshness values that mean "this source is not on a cadence" (#1523).
+ *
+ * The collapsed bar shows `<source>: <status>` for **scheduled** sources, and
+ * this is the honest way to ask which those are: `unrated` means korg has no
+ * cadence it will believe yet and `retired` means the source stopped being a
+ * reporter, so neither is a row anyone is watching for lateness. Everything
+ * else is.
+ *
+ * Written as an exclusion rather than an allow-list of `{fresh, stale}` on
+ * purpose. korg owns this vocabulary and grows it between deploys; an
+ * allow-list drops a value it has not heard of *silently*, which on a panel
+ * whose entire premise is "a source that stopped filing is itself an alert"
+ * is the one failure mode worth designing against. An unknown value shows up
+ * in the bar, uncoloured, and gets noticed.
+ */
+const UNSCHEDULED_FRESHNESS: ReadonlySet<string> = new Set(["retired", "unrated"]);
+
+/** True when korg holds this source to a cadence, so lateness means something. */
+export function isScheduledSource(freshness: string): boolean {
+  return !UNSCHEDULED_FRESHNESS.has(freshness);
+}
+
+/**
  * How a schedule's due-ness reads.
  *
  * Three states, not two: `due` wants doing, `outstanding` means it already

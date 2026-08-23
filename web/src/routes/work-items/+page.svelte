@@ -1016,7 +1016,21 @@
   <div class="space-y-3">
     {#if current !== ALL && currentProject}
       <details class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm">
-        <summary class="cursor-pointer text-xs font-semibold text-[var(--color-muted)] hover:text-[var(--color-accent)]">Project Details</summary>
+        <!-- WI #1601 — the rail is long enough now that selecting a project low
+             in a category scrolls the selection out of view by the time you are
+             reading its work items, and nothing else on the page says which one
+             you are looking at. The name goes here, in the rail's own category
+             colour, so the answer is where the eye already lands on the way
+             down. It is also inside the `<dl>` as "Short Name" — that is the
+             project's record, this is the page's label, and only the label
+             survives the section being shut. -->
+        <summary class="cursor-pointer text-xs font-semibold text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+          >Project Details <span
+            class="ml-2 font-mono"
+            style={projectRailColor(currentProject) ? `color: ${projectRailColor(currentProject)}` : ""}
+            data-testid="project-details-name">{currentProject.name}</span
+          ></summary
+        >
         <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
           <dt class="text-[var(--color-muted)]">Short Name</dt><dd>{currentProject.name}</dd>
           <dt class="text-[var(--color-muted)]">Status</dt><dd>{currentProject.status}</dd>

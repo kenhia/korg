@@ -23,7 +23,28 @@
         class="pointer-events-auto flex w-full max-w-lg items-start gap-3 rounded border border-red-800 bg-red-950 px-3 py-2 text-sm text-red-200 shadow-lg"
         data-testid="toast-error"
       >
-        <span class="flex-1">{t.text}</span>
+        <!-- The hint is a second line, not a second toast: it is the same
+             failure said usefully (WI #1498). It stays inside the alert region
+             so a screen reader gets the fix along with the problem — announcing
+             "copy failed" and silently drawing the way out is the accessible
+             version of the message this WI replaced. -->
+        <span class="flex-1">
+          {t.text}
+          {#if t.hint}
+            <span class="mt-0.5 block text-xs text-red-300/90" data-testid="toast-hint"
+              >{t.hint}</span
+            >
+          {/if}
+        </span>
+        {#if t.action}
+          <a
+            class="shrink-0 rounded px-1 font-medium text-red-200 underline hover:bg-red-900"
+            href={t.action.href}
+            target="_blank"
+            rel="noopener"
+            data-testid="toast-action">{t.action.label}</a
+          >
+        {/if}
         <button
           class="shrink-0 rounded px-1 text-red-300 hover:bg-red-900"
           onclick={() => dismiss(t.id)}>Dismiss</button
