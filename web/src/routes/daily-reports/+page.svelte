@@ -3,13 +3,22 @@
   import Comments from "$lib/components/Comments.svelte";
   import NodePreview from "$lib/components/NodePreview.svelte";
   import MarkdownView from "$lib/components/MarkdownView.svelte";
-  import { ID_CLASS, reportStatusPill, sourceFreshnessPill } from "$lib/domain";
+  import {
+    ID_CLASS,
+    isScheduledSource,
+    reportStatusPill,
+    sourceFreshnessPill,
+    sourceFreshnessText,
+  } from "$lib/domain";
 
   let rows = $state<ReportRow[]>([]);
   // #950: the sources themselves, above the reports. A source that filed daily
   // and stopped is the alert, and it has to sit on the surface a real problem
   // would use — a channel nobody looks at is not a channel.
   let sources = $state<SourceHealth[]>([]);
+  // What the collapsed bar reports (#1523) — the sources korg holds to a
+  // cadence, in the order the list already uses.
+  const scheduledSources = $derived(sources.filter((s) => isScheduledSource(s.freshness)));
   let expanded = $state<Set<number>>(new Set());
   let full = $state<Record<number, ReportFull>>({});
   let error = $state<string | null>(null);
@@ -65,11 +74,32 @@
 {/if}
 
 {#if sources.length > 0}
-  <section class="mb-5">
-    <h2 class="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+  <!-- #1523 — the panel was pushing the newest report below the fold. It is
+       collapsed now, and the summary carries the one thing that must survive
+       being shut: the freshness of every source korg holds to a cadence.
+       `> SOURCES   kmon: FRESH`.
+       That is not a compromise on #950's rule — a stale source still shouts
+       from the closed bar, in the same red, which is what "a source that
+       stopped filing is itself an alert" actually requires. What the bar drops
+       is the retired and unrated rows (nobody is waiting on those) and the
+       per-source detail, which is a paragraph you read once. -->
+  <details class="mb-5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5">
+    <summary
+      class="flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+      data-testid="sources-summary"
+    >
       Sources
-    </h2>
-    <ul class="space-y-1">
+      {#each scheduledSources as s (s.source)}
+        <span class="font-mono normal-case" data-testid={`source-chip-${s.source}`}>
+          <span class="text-[var(--color-text)]">{s.source}:</span>
+          <span
+            class={`font-semibold uppercase ${sourceFreshnessText(s.freshness)}`}
+            data-testid="source-chip-freshness">{s.freshness}</span
+          >
+        </span>
+      {/each}
+    </summary>
+    <ul class="mt-2 space-y-1" data-testid="sources-detail">
       {#each sources as s (s.source)}
         <li
           class="flex flex-wrap items-center gap-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
@@ -116,7 +146,7 @@
         </li>
       {/each}
     </ul>
-  </section>
+  </details>
 {/if}
 
 {#if rows.length === 0 && !error}

@@ -52,6 +52,12 @@ covers:
   number of rows clicking it produces. It is the Planning rail's `wi_total`,
   read from the same one-statement rollup, so the two pages cannot disagree
   about how much work a project has.
+
+  The **Project Details bar names the selected project** (#1601), in the rail's
+  own category colour. The rail is long enough that a project low in a category
+  scrolls out of view by the time you are reading its work items, and the name
+  was previously only *inside* the collapsed block — which is where you cannot
+  see it.
 - **Review completed** (`/work-items/review`) — the close-out page, reached by
   the `Review` button beside `Only Prop` rather than from the top nav. Lists
   **only** `done` and `resolved` items (a status-filtered server read, so an
@@ -78,7 +84,9 @@ covers:
   look, and the page is where `notes` — the unbounded analysis half of the #860
   split, routinely hundreds of lines — gets a readable column instead of a
   collapsed `<details>` at `max-w-md`. The page carries the same status control,
-  the covered items as a list (each previewable, each linking into Work Items),
+  the **same copy button** (#1550 — kfdc's pane opens this page directly, so
+  the decision to start a proposal is made here), the covered items as a list
+  (each previewable, each linking into Work Items),
   the `has_handoff`/`depends_on` edges, and the comment thread. Because
   `sprint_proposal` is now a kind with a page of its own, the generic preview's
   "Open full page ↗" and the awaiting lane route to it without either being

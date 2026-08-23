@@ -15,12 +15,28 @@ import { ApiError, NetworkError } from "./api";
 
 export type ToastKind = "error" | "success";
 
+/**
+ * A way out of the failure, rendered as a link in the toast (WI #1498).
+ *
+ * A korg path, not a URL — korg answers on several hostnames and the browser
+ * already holds the one it asked on, which is the same reason korg's own reads
+ * return paths (GP-16). Build it with `nodePage()` rather than by hand.
+ */
+export interface ToastAction {
+  label: string;
+  href: string;
+}
+
 export interface Toast {
   id: number;
   kind: ToastKind;
   text: string;
   /** Rendered as an "Undo" button when present (used by archive actions). */
   undo?: () => void;
+  /** A second line naming the fix, where the failure has a known one. */
+  hint?: string;
+  /** A link out of the failure, beside Dismiss. */
+  action?: ToastAction;
 }
 
 let nextId = 1;
@@ -56,12 +72,24 @@ export function notify(text: string, undo?: () => void): void {
  * korg ended up with five phrasings of the same thing, so this composes the
  * sentence and they don't get the chance.
  *
+ * `hint` and `action` (WI #1498) are the exception that keeps that rule intact.
+ * A caller that knows *why* its failure happens and what fixes it needs to say
+ * so, and the tempting way to do that is to hand-write the whole sentence —
+ * which is the freedom this function exists to withhold. So the composed
+ * sentence stays, the browser's own message with it, and the caller's knowledge
+ * arrives as a second line beneath it. The hint names the fix; `action` makes it
+ * clickable where there is somewhere to click.
+ *
  * Errors are deliberately **not** auto-dismissed. A message that vanishes
  * before you look back at the screen is the silent failure this whole WI is
  * about, just slower; the user closes it when they have read it.
  */
-export function reportError(e: unknown, doing: string): void {
-  push({ kind: "error", text: `${doing} failed — ${describe(e)}` });
+export function reportError(
+  e: unknown,
+  doing: string,
+  extra?: { hint?: string; action?: ToastAction },
+): void {
+  push({ kind: "error", text: `${doing} failed — ${describe(e)}`, ...extra });
   // The console keeps the machine-facing detail the UI omits.
   console.error(`${doing} failed`, e);
 }
