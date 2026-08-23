@@ -155,3 +155,38 @@ own reader, not a channel to the embedder.
   `$lib/domain` beside the three sibling helpers that already have the
   `?? neutral` fallback this map lacks.
 - `cards-dnd.spec.ts` fails on `main` and is unrelated drift, unfixed here.
+
+## Deployed 2026-08-23
+
+`bd1d95c055e3` (`bd1d95c055e37a138958703445d3c64355f01b76`) — the squash-merge
+commit — built on kai, pushed to `kubsdb.encke-wahoo.ts.net:5000` under both the
+SHA tag and `latest`, and brought up with `docker compose` on kubsdb. The
+in-deploy revision assertion passed: the running container's
+`org.opencontainers.image.revision` equals the commit built.
+
+**Rollback target: `cdd47472827f`** (sprint 072), confirmed present in the
+registry before building. Image-only rollback is safe here — this sprint carried
+no migration (`migration_max` 31 before and after).
+
+`post-deploy-check.sh --compare` exited 0 with **every count unchanged** — cards
+30, links 4, projects 53, proposals 295, reports 49, work items 1064,
+`node_count` 1501. A Svelte-only sprint should move nothing, and it moved
+nothing.
+
+**Verified live** against `https://kubsdb.encke-wahoo.ts.net:5674`, driving the
+real UI rather than curling for a 200 — the four items are UI behaviour, and a
+container running last week's image answers `/api/health` happily:
+
+| item | check | result |
+|---|---|---|
+| #1523 | Sources shut on load, bar text | `SOURCES  kmon: FRESH` — one line where seven rows were; expands on click |
+| #1550 | copy button present on `/planning/1602` | `⧉ Copy /start-sprint` |
+| #1550 | clipboard contents after clicking it | `/start-sprint korg:1602`, `isSecureContext: true` |
+| #1601 | Project Details label after selecting korg | `korg`, `rgb(204, 211, 105)` — the `Tools` category hue |
+| — | `/`, `/daily-reports`, `/work-items`, `/planning/1602`, `/api/health` | 200 |
+
+The clipboard check is the one worth noting: over the tailnet HTTPS address this
+is a secure context, so `navigator.clipboard.writeText()` is the path that ran
+and it resolved. That exercises the **primary** branch — #1498's message is for
+the rejection, which production top-level korg has no way to produce, and
+deliberately so (see the sprint's decision above).
