@@ -46,6 +46,15 @@ pub struct ProjectRow {
     /// Machines this project deploys to (e.g. korg → kubsdb).
     pub deploy_to: Vec<String>,
     pub category: Option<String>,
+    /// Hot right now (WI #1629, migration 0032). Both project rails lift the
+    /// starred set into a band above the category groups, and leave each
+    /// project in its normal category position as well.
+    ///
+    /// `ProjectRow`-only, never `ProjectLeanRow`: the lean row answers *does
+    /// this work belong here?* and hotness is not evidence for that. A routing
+    /// agent that can see which projects are hot is a routing agent with a
+    /// thumb on the scale — the misroute the lean projection exists to prevent.
+    pub starred: bool,
     /// Both columns have existed since 0001 and migration 0013 has advanced
     /// `updated` on every write since #529 — this row just never selected
     /// them, which made projects the last kind whose recency was unreadable
@@ -175,6 +184,16 @@ pub struct ProjectPatch {
     #[serde(default, deserialize_with = "ops::double_option")]
     #[schemars(schema_with = "schema::project_category")]
     pub category: Option<Option<String>>,
+    /// Mark this project hot, lifting it into the band at the top of both
+    /// project rails (it also stays in its normal category position). Not a
+    /// priority and not a tier: it is a working set that turns over every week
+    /// or so, and nothing in korg reads it except the rails.
+    ///
+    /// Deliberately not spelled `pinned`, which `sprint_proposal` and `program`
+    /// use to order a queue. Two meanings behind one word on three node kinds
+    /// is ambiguity in the surface an agent reads.
+    #[serde(default)]
+    pub starred: Option<bool>,
 }
 
 /// The routing contract's only mechanically-enforceable clause (WI #828). The
@@ -277,6 +296,13 @@ pub async fn update_project(pool: &PgPool, id: i64, patch: &ProjectPatch) -> Res
             .execute(&mut *tx)
             .await?;
     }
+    if let Some(v) = &patch.starred {
+        sqlx::query("UPDATE project SET starred = $2 WHERE id = $1")
+            .bind(id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
     get_project(pool, id)
         .await?
@@ -301,7 +327,7 @@ pub async fn update_project_by_name(
 }
 
 const PROJECT_SELECT: &str = "SELECT id, name, gh_repo, src_path, description, notes, status, \
-                              machines, deploy_to, category, created, updated \
+                              machines, deploy_to, category, starred, created, updated \
                               FROM project";
 
 pub async fn list_projects(pool: &PgPool) -> Result<Vec<ProjectRow>> {
