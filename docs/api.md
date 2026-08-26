@@ -55,8 +55,20 @@ route is unaffected — it is the Review page's endpoint and never shared the
 alias's argument type.
 
 `update_project` takes `status`, `machines`, `deploy_to`, `category`,
-`description`, `gh_repo` and `src_path` — everything but the name. `src_path` is
-load-bearing: it is how an agent finds a project's working copy on disk.
+`description`, `notes`, `gh_repo`, `src_path` and `starred` — everything but the
+name. `src_path` is load-bearing: it is how an agent finds a project's working
+copy on disk.
+
+`starred` (WI #1629, migration 0032) marks a project hot for the week, which is
+what lifts it into the band at the top of korg's project rails. It orders
+nothing and gates nothing, and it is **not** the `pinned` that sprint proposals
+and programs carry — that one orders a queue, and one word meaning two things
+across three node kinds is the ambiguity this spelling avoids.
+
+It rides `ProjectRow` and deliberately not the lean `list_projects` row: the
+lean projection answers *does this work belong here?*, and a project being hot
+this week is not evidence for that. Read it with `detail:"full"` or
+`get_project`.
 
 `src_path` was called `cn_path` until sprint 031 (WI #675). The rename settles a
 question the old name left open: a bare path means nothing without a host, and
