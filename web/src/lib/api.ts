@@ -265,6 +265,7 @@ export const api = {
       machines: string[];
       deploy_to: string[];
       category: string | null;
+      starred: boolean;
     }>,
   ) =>
     http<ProjectRow>(

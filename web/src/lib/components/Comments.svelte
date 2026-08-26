@@ -4,8 +4,7 @@
   import { PasteUploads, pasteImages } from "$lib/imagePaste.svelte";
   import ErrorNotice from "./ErrorNotice.svelte";
   import ConfirmButton from "./ConfirmButton.svelte";
-  import CommentBody from "./CommentBody.svelte";
-  import Lightbox from "./Lightbox.svelte";
+  import MarkdownView from "./MarkdownView.svelte";
 
   // `comments` is bindable so a parent can read the loaded bodies (e.g. to
   // extract launch URLs) without owning the fetch/add/delete logic.
@@ -27,7 +26,6 @@
   // upload ledger serves the whole thread: every image in it lands on the same
   // owner, and the attachment list is per node.
   const uploads = new PasteUploads();
-  let lightbox = $state<string | null>(null);
 
   // Posting or editing a comment is the save step for anything pasted into it.
   async function claimUploads() {
@@ -165,7 +163,29 @@
             <button class="text-xs text-[var(--color-accent)] hover:underline" onclick={saveEdit}>Save</button>
             <button class="text-xs text-[var(--color-muted)] hover:underline" onclick={() => (editingId = null)}>Cancel</button>
           {:else}
-            <CommentBody body={c.body} onOpen={(id) => (lightbox = id)} />
+            <!-- #1625 reverses #1120/#1121's "comments render as literal text
+                 and keep doing so". That rule was written to protect two things
+                 and korg's own renderer config already protects both: `#582`
+                 stays literal because an ATX heading needs whitespace after the
+                 hashes (CommonMark, and marked's `(?=\s|$)` lookahead), and a
+                 single newline stays a line break because `markdown.ts` sets
+                 `breaks: true` — the same shape `whitespace-pre-wrap` gave.
+                 What genuinely changes is small and wanted: `*` italicises,
+                 `-`/`1.` start lists. `_` does not, so `snake_case` is safe.
+
+                 `MarkdownView` already renders korg's `![img-<hex>]` tokens as
+                 the same thumbnail buttons the old component hand-rolled, and
+                 owns its own lightbox — which is why this component no longer
+                 has one.
+
+                 `min-w-0` is load-bearing: this is a flex row, and a prose
+                 block without it refuses to shrink below its longest
+                 unbreakable token, so one pasted URL would push the edit and
+                 delete controls off the row. -->
+            <MarkdownView
+              src={c.body}
+              class="prose prose-invert min-w-0 max-w-none flex-1 text-sm"
+            />
             <button class="text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]" aria-label="Edit comment" title="Edit" onclick={() => startEdit(c)}>✎</button>
             <!-- Deleting a comment cannot be undone from the UI, so it confirms
                  rather than offering an undo (WI #549). -->
@@ -192,5 +212,3 @@
     <button class="self-start rounded bg-[var(--color-surface-hi)] px-3 py-1 text-sm hover:bg-[var(--color-accent-soft)]" onclick={addComment}>Add</button>
   </div>
 </div>
-
-<Lightbox imgId={lightbox} onClose={() => (lightbox = null)} />

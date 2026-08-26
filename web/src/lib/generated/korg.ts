@@ -791,6 +791,17 @@ machines: Array<string>,
  */
 deploy_to: Array<string>, category: string | null, 
 /**
+ * Hot right now (WI #1629, migration 0032). Both project rails lift the
+ * starred set into a band above the category groups, and leave each
+ * project in its normal category position as well.
+ *
+ * `ProjectRow`-only, never `ProjectLeanRow`: the lean row answers *does
+ * this work belong here?* and hotness is not evidence for that. A routing
+ * agent that can see which projects are hot is a routing agent with a
+ * thumb on the scale — the misroute the lean projection exists to prevent.
+ */
+starred: boolean, 
+/**
  * Both columns have existed since 0001 and migration 0013 has advanced
  * `updated` on every write since #529 — this row just never selected
  * them, which made projects the last kind whose recency was unreadable
@@ -865,6 +876,17 @@ machines: Array<string>,
  * Machines this project deploys to (e.g. korg → kubsdb).
  */
 deploy_to: Array<string>, category: string | null, 
+/**
+ * Hot right now (WI #1629, migration 0032). Both project rails lift the
+ * starred set into a band above the category groups, and leave each
+ * project in its normal category position as well.
+ *
+ * `ProjectRow`-only, never `ProjectLeanRow`: the lean row answers *does
+ * this work belong here?* and hotness is not evidence for that. A routing
+ * agent that can see which projects are hot is a routing agent with a
+ * thumb on the scale — the misroute the lean projection exists to prevent.
+ */
+starred: boolean, 
 /**
  * Both columns have existed since 0001 and migration 0013 has advanced
  * `updated` on every write since #529 — this row just never selected

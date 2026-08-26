@@ -58,6 +58,22 @@ covers:
   scrolls out of view by the time you are reading its work items, and the name
   was previously only *inside* the collapsed block — which is where you cannot
   see it.
+
+  **Starred projects band at the top of the rail** (#1629), above the first
+  category header, on Work Items *and* Planning. A handful of projects are hot
+  for a week at a time and then the set moves on; the band is the shortcut to
+  them. A starred project still appears in its normal category position — the
+  duplication is the point, so the rail does not reshuffle when you star
+  something. The band shows only while something is starred, and only with *by
+  category* on.
+
+  The ★/☆ control sits at the right of the Project Details bar, which renders
+  only here and only with a single project selected. Planning reflects the band
+  but cannot change it. `starred` is a column on the project (migration 0032),
+  not a browser preference, so the set is the same everywhere and agents can
+  read and set it through `list_projects detail:"full"` / `update_project` — it
+  orders nothing and gates nothing, and it is not the `pinned` that sprint
+  proposals and programs carry.
 - **Review completed** (`/work-items/review`) — the close-out page, reached by
   the `Review` button beside `Only Prop` rather than from the top nav. Lists
   **only** `done` and `resolved` items (a status-filtered server read, so an
@@ -191,6 +207,16 @@ three kinds that had none, despite agents writing to them. A **new node type
 gets a comment surface by existing**, which is the failure this rule exists to
 prevent: `schedule` shipped in sprint 051 and arrived with every one of these
 gaps at once.
+
+**Comments render as Markdown** (sprint 074, #1625). Agents write them in
+Markdown, so lists, emphasis and inline code display rather than showing their
+punctuation. This reverses #1120/#1121's "comments render as literal text and
+keep doing so", which existed to protect two things korg's renderer config
+already protects: an ATX heading needs whitespace after the hashes, so a `#582`
+work-item reference stays literal, and `breaks: true` keeps a single newline a
+line break rather than reflowing a comment into a wall. Intraword underscores
+are not emphasis either, so `snake_case` survives. What does change: `*` around
+a word italicises, and `-`/`1.` at the start of a line become lists.
 
 **Images are pasted, not uploaded** (sprint 057, #1120/#1121). Ctrl-V a
 screenshot into a work item's content or details, or into any comment box, and

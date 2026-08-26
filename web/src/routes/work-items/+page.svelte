@@ -18,7 +18,6 @@
     WI_TYPES,
   } from "$lib/generated/vocab";
   import {
-    CATEGORY_ORDER,
     DEFAULT_RELATIONSHIP_LABEL,
     IN_PROPOSAL_COLOR,
     KNOWN_RELATIONSHIP_LABELS,
@@ -26,6 +25,7 @@
     isHiddenByDefault,
     partitionParked,
     projectRailColor,
+    railGroups,
     relationshipReads,
   } from "$lib/domain";
   import AttachmentPanel from "$lib/components/AttachmentPanel.svelte";
@@ -157,27 +157,11 @@
   // an explicit opt-out is remembered.
   let groupByCategory = $state(readSticky(STICKY_GROUP_KEY) !== "0");
 
-  const projectGroups = $derived.by(() => {
-    const groups: { key: string; label: string; projects: ProjectRow[] }[] = [];
-    const placed = new Set<number>();
-    // CATEGORY_ORDER, not vocabulary or hue order — see domain.ts. A category
-    // needs a predictable place in the rail, and hue order would reshuffle it
-    // every time a hue is retuned.
-    for (const c of CATEGORY_ORDER) {
-      const ps = visibleProjects.filter((p) => p.category === c);
-      if (ps.length === 0) continue;
-      ps.forEach((p) => placed.add(p.id));
-      groups.push({ key: c, label: c, projects: ps });
-    }
-    // Everything the vocabulary didn't claim — no category, or a legacy value
-    // from a database that predates migration 0018 — lands here rather than
-    // vanishing from the rail.
-    const rest = visibleProjects.filter((p) => !placed.has(p.id));
-    if (rest.length > 0) {
-      groups.push({ key: "\u0000none", label: "Uncategorised", projects: rest });
-    }
-    return groups;
-  });
+  // The construction lives in `$lib/domain` (WI #1629): the Planning rail built
+  // the same groups from the same `CATEGORY_ORDER` with its own copy of the
+  // "Uncategorised" bucket, and the starred band was not going to be the third
+  // copy of a shared idea in this rail's lifetime.
+  const projectGroups = $derived(railGroups(visibleProjects));
 
   function openEditProject(p: ProjectRow) {
     editProject = p;
@@ -217,6 +201,22 @@
     if (!saved) return;
     editProject = null;
     projects = await api.projects();
+  }
+
+  // WI #1629 — star/unstar the project you are looking at.
+  //
+  // The set is korg's, not this browser's (D-1), so this is a write and can
+  // fail; `attempt` surfaces that the same way every other write on this page
+  // does. On success the row is patched in place rather than refetching every
+  // project — the response IS the updated row, and a refetch here would rebuild
+  // the rail under the click for one boolean.
+  async function toggleStar(p: ProjectRow) {
+    const saved = await attempt(
+      () => api.updateProject(p.name, { starred: !p.starred }),
+      `${p.starred ? "Unstar" : "Star"} ${p.name}`,
+    );
+    if (!saved) return;
+    projects = projects.map((x) => (x.id === saved.id ? saved : x));
   }
 
   // relationships
@@ -847,7 +847,7 @@
     <div class="grid grid-cols-1 gap-4 md:grid-cols-[14rem_1fr]">
       <!-- project rail -->
       <aside class="space-y-2">
-        <nav class="overflow-hidden rounded border border-[var(--color-border)] bg-[var(--color-surface)]">
+        <nav class="overflow-hidden rounded border border-[var(--color-border)] bg-[var(--color-surface)]" data-testid="project-rail">
           <!-- The count is a sibling of the button, not a child, and that is
                load-bearing: inside it, it joins the button's accessible name
                ("All projects 158") and every caller that addresses this row by
@@ -864,7 +864,13 @@
           </div>
           {#if groupByCategory}
             {#each projectGroups as g (g.key)}
-              <p class="flex items-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1 text-[0.65rem] uppercase tracking-wide text-[var(--color-muted)]"><span class="flex-1">{g.label}</span>{@render openCount(groupOpen(g.projects), `open work items in ${g.label}`)}</p>
+              <!-- A headerless band (WI #1629) still gets the rule: Ken's mock
+                   reads "All Projects / --- / kagviz kfdc korg / --- /
+                   INFRASTRUCTURE", and without this the starred set runs
+                   straight on from the All-projects row as though it were part
+                   of it. The category headers carry their own `border-t`, so
+                   this supplies only the one the band cannot. -->
+              {#if g.label}<p class="flex items-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1 text-[0.65rem] uppercase tracking-wide text-[var(--color-muted)]"><span class="flex-1">{g.label}</span>{@render openCount(groupOpen(g.projects), `open work items in ${g.label}`)}</p>{:else}<div class="border-t border-[var(--color-border)]" data-testid="starred-band-rule"></div>{/if}
               {#each g.projects as p (p.id)}{@render projectRow(p)}{/each}
             {/each}
           {:else}
@@ -1029,6 +1035,37 @@
             class="ml-2 font-mono"
             style={projectRailColor(currentProject) ? `color: ${projectRailColor(currentProject)}` : ""}
             data-testid="project-details-name">{currentProject.name}</span
+          >
+          <!-- WI #1629 — the one place a project is starred (D-2). This bar
+               renders only on Work Items and only with a single project
+               selected, which is exactly the moment "I am working on this one
+               a lot right now" is true. Planning reflects the band and cannot
+               change it, and a per-row control in the rail was considered and
+               rejected: Ken likes the rail's look, expects a few stars a week,
+               and one page should not carry two differently-meaning marks.
+
+               ★/☆ rather than a pushpin (D-3), because they are text glyphs
+               and take the project's own rail hue — no emoji pin can be
+               recoloured or has a true outline counterpart for the off state.
+               📌 stays Planning's pinned-*proposals* mark; the two never meet.
+
+               `float-right` rather than a flex summary: `display: flex` on a
+               <summary> drops its disclosure marker, and that triangle is the
+               affordance saying the section opens.
+
+               The click is stopped as well as prevented — a <button> inside a
+               <summary> would otherwise toggle the disclosure on its way past,
+               so starring would open the panel every time. -->
+          <button
+            type="button"
+            class="float-right text-sm leading-none hover:opacity-80"
+            style={projectRailColor(currentProject) ? `color: ${projectRailColor(currentProject)}` : ""}
+            aria-pressed={currentProject.starred}
+            data-testid="project-star"
+            title={currentProject.starred ? `Unstar ${currentProject.name}` : `Star ${currentProject.name}`}
+            aria-label={currentProject.starred ? `Unstar ${currentProject.name}` : `Star ${currentProject.name}`}
+            onclick={(e) => { e.preventDefault(); e.stopPropagation(); toggleStar(currentProject!); }}
+            >{currentProject.starred ? "★" : "☆"}</button
           ></summary
         >
         <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">

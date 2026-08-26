@@ -117,7 +117,10 @@ test("paste into a comment, and the image belongs to the node", async ({ page })
   await expect(input).toHaveValue(/!\[img-[0-9a-f]+\]/);
   await input.press("Control+Enter");
 
-  // The comment shows the picture; the surrounding text stays literal.
+  // The comment shows the picture, and since #1625 the surrounding text is
+  // rendered markdown rather than literal — `toContainText` reads either, so
+  // what this still pins is that the token became a thumbnail and the prose
+  // around it survived the swap.
   const comments = page.getByTestId("comment-list");
   await expect(comments).toContainText("see this:");
   await expect(comments.locator("button.korg-thumb img")).toBeVisible();

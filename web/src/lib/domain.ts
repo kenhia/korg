@@ -276,6 +276,76 @@ export function projectRailColor(p: {
   return hue === undefined ? undefined : `hsl(${hue} 55% 62%)`;
 }
 
+/** A project as the rails group it: identity, its category, and whether it is
+ *  hot this week. Structural, so both rails can pass their own row type. */
+export type RailProject = {
+  id: number;
+  category: string | null;
+  starred: boolean;
+};
+
+/** One band of the project rail. */
+export type RailGroup<T> = {
+  key: string;
+  /** `null` renders **no header**. Only the starred band uses it: Ken's mock is
+   *  starred projects sitting above the first category divider, and that is
+   *  all — no glyph, no label. */
+  label: string | null;
+  projects: T[];
+};
+
+/**
+ * The project rail's bands: the starred set, then the categories, then
+ * whatever the vocabulary did not claim.
+ *
+ * **Lifted here in sprint 074 because there were two of these** — the Work
+ * Items rail and the Planning rail each built the same groups over
+ * `CATEGORY_ORDER` with their own "Uncategorised" bucket, and Planning's copy
+ * carried a comment saying so. #1603 in this same sprint is what the *third*
+ * copy of a shared idea costs, one level down, so the starred band was not
+ * going to be written twice.
+ *
+ * **A starred project appears twice on purpose** (WI #1629): once in the band
+ * and again in its normal category position. That is Ken's mock, and it is the
+ * feature — the band is a shortcut, not a move, so the rail's shape does not
+ * shift under you every time something is starred.
+ *
+ * The band renders only when something is starred, so a rail with no hot
+ * projects looks exactly as it did before this existed.
+ */
+export function railGroups<T extends RailProject>(projects: T[]): RailGroup<T>[] {
+  const groups: RailGroup<T>[] = [];
+
+  // Above the first category divider, per the mock. The `\u0000` prefix is the
+  // ESCAPE, not a raw NUL — #1310 found one of those in the Planning rail and
+  // it had made the whole file binary to git and invisible to `grep -rn`.
+  const starred = projects.filter((p) => p.starred);
+  if (starred.length > 0) {
+    groups.push({ key: "\u0000starred", label: null, projects: starred });
+  }
+
+  // CATEGORY_ORDER, not vocabulary or hue order — see above. A category needs a
+  // predictable place in the rail, and hue order would reshuffle it every time
+  // a hue is retuned.
+  const placed = new Set<number>();
+  for (const c of CATEGORY_ORDER) {
+    const ps = projects.filter((p) => p.category === c);
+    if (ps.length === 0) continue;
+    ps.forEach((p) => placed.add(p.id));
+    groups.push({ key: c, label: c, projects: ps });
+  }
+
+  // Everything the vocabulary didn't claim — no category, or a legacy value
+  // from a database that predates migration 0018 — lands here rather than
+  // vanishing from the rail.
+  const rest = projects.filter((p) => !placed.has(p.id));
+  if (rest.length > 0) {
+    groups.push({ key: "\u0000none", label: "Uncategorised", projects: rest });
+  }
+
+  return groups;
+}
+
 // --- IDs, everywhere an agent might cite one (WI #980) -----------------------
 
 /**
@@ -504,6 +574,109 @@ export function relationshipReads(label: string): string | undefined {
  *  their direction. */
 export function directionIsMeaningful(label: string): boolean {
   return RELATIONSHIP_LABELS.find((s) => s.label === label)?.directed ?? true;
+}
+
+// --- proposal & program status ----------------------------------------------
+
+/**
+ * The colour half of a sprint-proposal status pill.
+ *
+ * `active` is amber because a running sprint is the one you are meant to
+ * notice, `done` emerald; `proposed` and `declined` share a neutral ground and
+ * differ only in ink, because one is waiting and the other is a decision not to
+ * do the work.
+ *
+ * `parked` takes the slate the programs pages chose in sprint 072, and the
+ * reasoning with it: dormant is not finished, so it keeps a hue where `done`
+ * has none, and the tint holds it apart from `declined`, which asserts the
+ * opposite of parking (korg #1534, GP-19).
+ *
+ * Typed `Record<ProposalStatus, …>` rather than `Record<string, …>`, and that
+ * is the whole of #1603. The map this replaces was keyed by `string`; korg grew
+ * `parked` in sprint 072; nothing failed, and the *selected* pill rendered
+ * `text-xs undefined` — no background, no ink, i.e. exactly as though no status
+ * were selected at all. The programs pages carry the same vocabulary and did
+ * not have the bug, for this one reason: their maps are keyed by the generated
+ * union, so widening it without them fails `svelte-check`.
+ */
+const PROPOSAL_STATUS_STYLE: Record<ProposalStatus, string> = {
+  proposed: "bg-neutral-800 text-neutral-300",
+  active: "bg-amber-900/60 text-amber-300",
+  done: "bg-emerald-900/60 text-emerald-300",
+  declined: "bg-neutral-800 text-neutral-500",
+  parked: "bg-slate-800 text-slate-400",
+};
+
+/**
+ * The colour half of a program status pill. Colour only — the caller owns
+ * density; `programStatusStyle` below says why.
+ *
+ * `queued` (#1424) is deliberately the coolest of the in-flight values: it is
+ * the one state that means nobody is on this yet, and it must not read as
+ * louder than `active` — which is the whole bug it was added to fix.
+ *
+ * `parked` is quieter still, and closest to `done`: both are rows you are not
+ * choosing from. It keeps a hue where `done` has none, because dormant is not
+ * finished and the two must not become the same colour at a glance.
+ *
+ * (Both paragraphs were written against the two identical copies of this map
+ * that used to live in the programs routes; #1603 is what a *third* copy of the
+ * same idea, keyed by `string`, cost one level down.)
+ */
+const PROGRAM_STATUS_STYLE: Record<ProgramStatus, string> = {
+  queued: "bg-sky-900/60 text-sky-300",
+  active: "bg-emerald-900/60 text-emerald-300",
+  holding: "bg-amber-900/60 text-amber-300",
+  done: "bg-neutral-800 text-neutral-400",
+  parked: "bg-slate-800 text-slate-400",
+};
+
+/**
+ * What an unrecognised status looks like: the surface, muted — legible, and
+ * making no claim about the state.
+ *
+ * The point is that it is *not* the empty string. An unstyled pill is not a
+ * neutral pill; on a control that marks the selected status with a background,
+ * no background reads as "nothing is selected", which is a wrong claim rather
+ * than an absent one. That is what #1603 is.
+ */
+const UNKNOWN_STATUS_STYLE = "bg-[var(--color-surface-hi)] text-[var(--color-muted)]";
+
+/**
+ * The complete class list for a sprint-proposal status pill.
+ *
+ * Two mechanisms here, deliberately not one, because they catch different
+ * failures (GP-13's consumer half is explicit that a vocabulary gate "is honest
+ * only about what it reaches"):
+ *
+ * - the exhaustive map is a **compile-time** gate — extend `PROPOSAL_STATUSES`
+ *   without a treatment here and `svelte-check` fails, which is the #1603 case;
+ * - the `??` is the **runtime** one — a korg deploy emits a literal this bundle
+ *   has never heard of, by design, and no gate compiled into this bundle can
+ *   see that. Hence `string` in, neutral out: the absence of a claim, never
+ *   another state's colour.
+ */
+export function proposalStatusPill(status: string): string {
+  const style = PROPOSAL_STATUS_STYLE[status as ProposalStatus] ?? UNKNOWN_STATUS_STYLE;
+  return `rounded px-2 py-0.5 text-xs ${style}`;
+}
+
+/**
+ * A program status's colours, without the shape.
+ *
+ * The odd one out in this section, and the reason is density, not drift: the
+ * programs list renders this in a row of cards (`px-1.5`) and the detail page
+ * renders it as a status *control* you click (`px-2`). Those are two different
+ * jobs at two honest sizes, so lifting the shape would silently restyle one
+ * page to fix a duplication that was only ever in the colours. The rule the
+ * rest of this file follows — shape included, so two call sites cannot render
+ * the same status at different sizes — exists to stop *accidental* divergence.
+ *
+ * Same two mechanisms as `proposalStatusPill`. The list page previously fell
+ * back to `""`, which is #1603's bug in its other spelling.
+ */
+export function programStatusStyle(status: string): string {
+  return PROGRAM_STATUS_STYLE[status as ProgramStatus] ?? UNKNOWN_STATUS_STYLE;
 }
 
 // --- report status ----------------------------------------------------------

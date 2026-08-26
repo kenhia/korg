@@ -2106,7 +2106,7 @@
     "name": "create_project"
   },
   {
-    "description": "Update a project's metadata by name (the name itself is immutable), returning the updated project: status (active|maintenance|inactive|archived), machines, deploy_to, category, description, notes, gh_repo, src_path. Omitted fields are unchanged. `description` is capped at 160 characters — it is a routing line, not a blurb; put anything longer in `notes`.",
+    "description": "Update a project's metadata by name (the name itself is immutable), returning the updated project: status (active|maintenance|inactive|archived), machines, deploy_to, category, description, notes, gh_repo, src_path, starred. Omitted fields are unchanged. `description` is capped at 160 characters — it is a routing line, not a blurb; put anything longer in `notes`. `starred` marks a project hot for the week, which is what lifts it into the band at the top of korg's project rails — it orders nothing and gates nothing, and is not the `pinned` that sprint proposals and programs carry.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -2173,6 +2173,13 @@
           "description": "Path to the working copy on the project's DEVELOPMENT machine (its\n`machines` entry), not the deploy target. Canonical form: `~/`-relative,\nno trailing slash, no whitespace, no parentheses — a path and nothing\nelse, e.g. `~/src/tools/korg`. Enforced by a CHECK constraint, so a\nvalue carrying prose or history is rejected rather than stored.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "starred": {
+          "description": "Mark this project hot, lifting it into the band at the top of both\nproject rails (it also stays in its normal category position). Not a\npriority and not a tier: it is a working set that turns over every week\nor so, and nothing in korg reads it except the rails.\n\nDeliberately not spelled `pinned`, which `sprint_proposal` and `program`\nuse to order a queue. Two meanings behind one word on three node kinds\nis ambiguity in the surface an agent reads.",
+          "type": [
+            "boolean",
             "null"
           ]
         },
