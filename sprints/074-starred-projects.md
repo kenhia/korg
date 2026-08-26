@@ -93,3 +93,52 @@ shape would silently restyle a page to fix a duplication that was only ever
 in the colours. The file's shape-included rule exists to stop *accidental*
 divergence, and this is not that. The hue reasoning written in 072 moved
 into `domain.ts` with the map rather than being stranded in two route files.
+
+## #1625 — comments render markdown, reversing #1120/#1121
+
+The old rule was written into `CommentBody.svelte`'s header: *"Comments render
+as literal text in korg and keep doing so: a `#582` is a work-item reference
+and a `*` is an asterisk."* That was raised during planning as grounds to cut
+this item, and it does not survive contact with korg's own renderer config,
+which already defends both halves:
+
+- **`#582` is safe.** An ATX heading requires whitespace after the hashes, in
+  CommonMark and in marked's heading rule (`(?=\s|$)`). `#582` is paragraph
+  text; `# 582` would be a heading, and nobody writes that.
+- **Line breaks are safe.** `markdown.ts` sets `breaks: true`, so a single
+  newline is a `<br>` — the same shape `whitespace-pre-wrap` gave. This is the
+  one that would otherwise have reflowed every agent comment into a wall.
+
+What genuinely changes is narrow and wanted: `*` italicises, `-`/`1.` start
+lists. `_` does not, so `snake_case` — which agents write constantly — is fine.
+
+**That is an argument, so it got a check rather than a benefit of the doubt.**
+`tests/e2e/comment-markdown.spec.ts` posts one comment carrying all four cases
+at once (they interact — the list and the emphasis have to survive every
+newline becoming a `<br>`) and asserts: no heading element anywhere in the
+thread, exactly one `<em>` and it is not `snake_case`, two `<li>`, at least one
+`<br>`. Every one of those assertions would have been a reason not to ship.
+
+The swap itself is one call site: `MarkdownView` already exists, already
+sanitizes, and already turns korg's `![img-<hex>]` tokens into the same
+thumbnail buttons `CommentBody` hand-rolled. So `CommentBody.svelte` and
+`Comments.svelte`'s own `lightbox` state are gone — `MarkdownView` owns its
+lightbox — and `splitImgTokens`/`ImgSegment` went with them, having existed
+solely to render comments as literal text with pictures in.
+
+`CommentBody.svelte` is **deleted rather than kept with a rewritten header**,
+which is a deliberate departure from the proposal's note. The reversal had to
+stay findable, but a dead component retained to carry a comment is the kind of
+file a later cleanup removes without reading it. The record now lives at the
+render site in `Comments.svelte`, where the next agent to ask "why is this
+markdown?" is actually standing.
+
+The real work was the layout, as predicted: the comment sits in a flex row, and
+a `prose` block needs `min-w-0` there. Without it a flex item will not shrink
+below its longest unbreakable token, so a single pasted URL pushes the edit and
+delete controls off the row. Verified with a fixture comment carrying a
+120-character URL — it wraps, and the controls hold their place.
+
+`images-ui.spec.ts` carried a comment asserting "the surrounding text stays
+literal", which this change makes untrue; it now says what the test actually
+still pins. The test itself passes unchanged, thumbnails and all.

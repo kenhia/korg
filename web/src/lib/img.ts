@@ -102,31 +102,6 @@ export function bodyPlacesImg(
   return false;
 }
 
-/** One piece of a body: literal text, or an image the text places. */
-export type ImgSegment =
-  | { kind: "text"; text: string }
-  | { kind: "img"; id: string };
-
-/** Split a body into text and image tokens, in order.
- *
- *  This is what lets a comment show its images without becoming a markdown
- *  document. Comment bodies render as literal text everywhere in korg — a `#`
- *  is a work-item reference, not a heading — and turning them into markdown to
- *  get pictures would change how every comment ever written displays. Splitting
- *  on the one token korg itself writes adds the pictures and nothing else. */
-export function splitImgTokens(body: string): ImgSegment[] {
-  const out: ImgSegment[] = [];
-  let at = 0;
-  for (const m of body.matchAll(IMG_TOKEN_RE)) {
-    const start = m.index ?? 0;
-    if (start > at) out.push({ kind: "text", text: body.slice(at, start) });
-    out.push({ kind: "img", id: m[1].toLowerCase() });
-    at = start + m[0].length;
-  }
-  if (at < body.length) out.push({ kind: "text", text: body.slice(at) });
-  return out;
-}
-
 /** Every attachment id a body places, first-seen order, deduplicated. */
 export function imgIdsIn(...bodies: (string | null | undefined)[]): string[] {
   const seen = new Set<string>();
