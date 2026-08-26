@@ -17,7 +17,7 @@
   import { page } from "$app/stores";
   import { api, type ProposalDetail, type RelatedRef } from "$lib/api";
   import { PROPOSAL_STATUSES, type ProposalStatus } from "$lib/generated/vocab";
-  import { ID_CLASS, chip, nodePage, stamp } from "$lib/domain";
+  import { ID_CLASS, chip, nodePage, proposalStatusPill, stamp } from "$lib/domain";
   import BackTo from "$lib/components/BackTo.svelte";
   import Comments from "$lib/components/Comments.svelte";
   import CopyStart from "$lib/components/CopyStart.svelte";
@@ -62,13 +62,6 @@
   $effect(() => {
     if (Number.isFinite(nodeId)) load(nodeId);
   });
-
-  const statusPill: Record<string, string> = {
-    proposed: "bg-neutral-800 text-neutral-300",
-    active: "bg-amber-900/60 text-amber-300",
-    done: "bg-emerald-900/60 text-emerald-300",
-    declined: "bg-neutral-800 text-neutral-500",
-  };
 
   // The same lifecycle the Planning card drives, on the page you are reading
   // the proposal in — the program detail page set this precedent (#980's third
@@ -123,7 +116,7 @@
         {#each PROPOSAL_STATUSES as s (s)}
           <button
             class={proposal.status === s
-              ? `rounded px-2 py-0.5 text-xs ${statusPill[s]}`
+              ? proposalStatusPill(s)
               : "rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-muted)] hover:bg-[var(--color-surface-hi)]"}
             aria-pressed={proposal.status === s}
             disabled={saving || proposal.status === s}

@@ -16,6 +16,7 @@
     PROGRESS_WORK_CLASS,
     chip,
     nodePage,
+    programStatusStyle,
     sliceProgress,
     sliceUnfinished,
     stamp,
@@ -58,23 +59,6 @@
     if (Number.isFinite(nodeId)) load(nodeId);
   });
 
-  // Keyed by the vocabulary, so a new status is a compile error here rather
-  // than an undefined class at runtime — which is how `parked` (#1535) arrived
-  // with a treatment instead of inheriting one. `queued` (#1424) is deliberately
-  // the coolest of the in-flight values: it is the one state that means nobody
-  // is on this yet, and it must not read as louder than `active` — which is the
-  // whole bug.
-  //
-  // `parked` is quieter still, and closest to `done`: both are rows you are not
-  // choosing from. It keeps a hue where `done` has none, because dormant is not
-  // finished and the two must not become the same colour at a glance.
-  const statusPill: Record<ProgramStatus, string> = {
-    queued: "bg-sky-900/60 text-sky-300",
-    active: "bg-emerald-900/60 text-emerald-300",
-    holding: "bg-amber-900/60 text-amber-300",
-    done: "bg-neutral-800 text-neutral-400",
-    parked: "bg-slate-800 text-slate-400",
-  };
 
   // #980's third finding (filed as a comment, not its own WI): this page
   // rendered status as a read-only pill while `PATCH /api/programs/:node_id`
@@ -170,7 +154,7 @@
         {#each PROGRAM_STATUSES as s (s)}
           <button
             class={program.status === s
-              ? `rounded px-2 py-0.5 text-xs ${statusPill[s]}`
+              ? `rounded px-2 py-0.5 text-xs ${programStatusStyle(s)}`
               : "rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-muted)] hover:bg-[var(--color-surface-hi)]"}
             aria-pressed={program.status === s}
             disabled={saving || program.status === s}
