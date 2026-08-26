@@ -231,3 +231,38 @@ checking what each assertion actually proves.
   (a rule above the first category header) only exists in grouped mode, and
   adding dividers to a deliberately flat list is a change to a mode nobody
   asked about. Left alone on purpose — worth asking Ken.
+
+## Deployed
+
+**2026-08-26 to kubsdb** (`https://kubsdb.encke-wahoo.ts.net:5674/`), image
+`kubsdb.encke-wahoo.ts.net:5000/korg:80f1c89093d9`, revision
+`80f1c89093d991b5eaeae220db982758cb439ee5`. Rollback target
+`korg:bd1d95c055e3` (sprint 073), confirmed present in the registry *before*
+building rather than assumed.
+
+Migration **0032** applied on startup: 31 → 32, the only schema change.
+
+### Verified live
+
+| Check | Result |
+|---|---|
+| Revision assertion in the deploy itself | running label == built commit |
+| `post-deploy-check.sh --compare` | OK — every row count unchanged |
+| Projects across the migration | 53 → 53, category distribution byte-identical |
+| `starred` on `GET /api/projects` | present, `false` on all 53 |
+| Star write round-trip (`PATCH /api/projects/korg`) | `true`, then restored to `false` |
+| **An unrelated patch does not clear it** | `{"status":"active"}` left `starred: true` |
+| `starred` absent from the lean `list_projects` | confirmed over MCP |
+| `/`, `/work-items`, `/planning`, `/planning/1630` | 200 |
+
+The unrelated-patch row is the one worth having run against production rather
+than only against a test container. It is the failure this feature could
+plausibly have shipped — an absent `starred` key deserialising to `Some(false)`
+would make every ordinary project edit quietly unstar the project, and nothing
+would look wrong until the band emptied a week later. The engine tests assert
+it, and so now does the deployed instance.
+
+All 53 projects came out of the migration unstarred, which is the honest
+starting value: nothing had ever been starred, so the default states a fact
+rather than guessing one. The band is therefore invisible until Ken stars
+something, and the rails look exactly as they did before this shipped.
