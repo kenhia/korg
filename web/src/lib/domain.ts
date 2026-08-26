@@ -276,6 +276,76 @@ export function projectRailColor(p: {
   return hue === undefined ? undefined : `hsl(${hue} 55% 62%)`;
 }
 
+/** A project as the rails group it: identity, its category, and whether it is
+ *  hot this week. Structural, so both rails can pass their own row type. */
+export type RailProject = {
+  id: number;
+  category: string | null;
+  starred: boolean;
+};
+
+/** One band of the project rail. */
+export type RailGroup<T> = {
+  key: string;
+  /** `null` renders **no header**. Only the starred band uses it: Ken's mock is
+   *  starred projects sitting above the first category divider, and that is
+   *  all — no glyph, no label. */
+  label: string | null;
+  projects: T[];
+};
+
+/**
+ * The project rail's bands: the starred set, then the categories, then
+ * whatever the vocabulary did not claim.
+ *
+ * **Lifted here in sprint 074 because there were two of these** — the Work
+ * Items rail and the Planning rail each built the same groups over
+ * `CATEGORY_ORDER` with their own "Uncategorised" bucket, and Planning's copy
+ * carried a comment saying so. #1603 in this same sprint is what the *third*
+ * copy of a shared idea costs, one level down, so the starred band was not
+ * going to be written twice.
+ *
+ * **A starred project appears twice on purpose** (WI #1629): once in the band
+ * and again in its normal category position. That is Ken's mock, and it is the
+ * feature — the band is a shortcut, not a move, so the rail's shape does not
+ * shift under you every time something is starred.
+ *
+ * The band renders only when something is starred, so a rail with no hot
+ * projects looks exactly as it did before this existed.
+ */
+export function railGroups<T extends RailProject>(projects: T[]): RailGroup<T>[] {
+  const groups: RailGroup<T>[] = [];
+
+  // Above the first category divider, per the mock. The `\u0000` prefix is the
+  // ESCAPE, not a raw NUL — #1310 found one of those in the Planning rail and
+  // it had made the whole file binary to git and invisible to `grep -rn`.
+  const starred = projects.filter((p) => p.starred);
+  if (starred.length > 0) {
+    groups.push({ key: "\u0000starred", label: null, projects: starred });
+  }
+
+  // CATEGORY_ORDER, not vocabulary or hue order — see above. A category needs a
+  // predictable place in the rail, and hue order would reshuffle it every time
+  // a hue is retuned.
+  const placed = new Set<number>();
+  for (const c of CATEGORY_ORDER) {
+    const ps = projects.filter((p) => p.category === c);
+    if (ps.length === 0) continue;
+    ps.forEach((p) => placed.add(p.id));
+    groups.push({ key: c, label: c, projects: ps });
+  }
+
+  // Everything the vocabulary didn't claim — no category, or a legacy value
+  // from a database that predates migration 0018 — lands here rather than
+  // vanishing from the rail.
+  const rest = projects.filter((p) => !placed.has(p.id));
+  if (rest.length > 0) {
+    groups.push({ key: "\u0000none", label: "Uncategorised", projects: rest });
+  }
+
+  return groups;
+}
+
 // --- IDs, everywhere an agent might cite one (WI #980) -----------------------
 
 /**

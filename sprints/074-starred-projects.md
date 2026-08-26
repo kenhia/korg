@@ -142,3 +142,92 @@ delete controls off the row. Verified with a fixture comment carrying a
 `images-ui.spec.ts` carried a comment asserting "the surrounding text stays
 literal", which this change makes untrue; it now says what the test actually
 still pins. The test itself passes unchanged, thumbnails and all.
+
+## #1629 — starred projects
+
+Two halves, as Ken said. The engine landed first and separately (`367609f`);
+this is the rail.
+
+### The grouping was lifted (the call left to sprint start)
+
+The proposal flagged this as a decision to make at the start rather than
+halfway through, because it is the M growing an L. Ken said lift it, and the
+tree agreed: the two rails were independent implementations of the same
+construction, down to the same escaped-NUL key for the "Uncategorised" bucket,
+and Planning's copy carried a comment reading *"Same construction as the Work
+Items rail (WI #678)"*. Two copies of a shared idea is how #1603 happened one
+level down, and the starred band would have been the third.
+
+`railGroups()` in `$lib/domain` now returns the bands: the starred set, then
+`CATEGORY_ORDER`, then Uncategorised. It is generic over the row type so both
+rails pass their own, and a band carries `label: string | null` — `null` means
+render no header, which only the starred band uses.
+
+Planning's copy also carried the #1310 lesson: that bucket key must be the
+two-character escape sequence and never a raw NUL byte, one of which had made
+the whole file binary to git (`Bin 26176 bytes` instead of a reviewable diff)
+and invisible to `grep -rn` across the repo. That note moved into `domain.ts`
+with the code, and the lifted version was checked for a raw NUL before it was
+committed.
+
+### The band
+
+A starred project renders **twice**: in the band and again in its normal
+category position. That is Ken's mock and it is the feature — the band is a
+shortcut, not a move, so the rail does not reshuffle under the click.
+
+The band is bare, no glyph and no header. It does carry the rule Ken's mock
+draws between "All Projects" and it — the category headers bring their own
+`border-t`, so a headerless band would otherwise run straight on from the
+All-projects row as though it were part of it. Verified against a screenshot of
+the rendered rail, not just the DOM.
+
+The band renders only when something is starred, so a rail with nothing hot
+looks exactly as it did before this existed.
+
+### The control (D-2, D-3)
+
+One ★/☆ button, at the right of the `Project Details <proj>` summary — the bar
+that renders only on Work Items and only with a single project selected, which
+is exactly the moment "I'm working on this one a lot right now" is true.
+Planning reflects the band and cannot set it.
+
+Two implementation notes that are not obvious and would each have been a bug:
+
+- **`float-right`, not a flex summary.** `display: flex` on a `<summary>` drops
+  its disclosure marker, and that triangle is the affordance saying the section
+  opens. The float keeps `list-item` intact.
+- **The click is stopped as well as prevented.** A `<button>` inside a
+  `<summary>` toggles the disclosure on its way past, so starring would have
+  opened the Project Details panel every single time.
+
+The glyphs take the project's own `projectRailColor(...)` hue, which is D-3's
+whole argument for text glyphs over an emoji pin: no pin can be recoloured or
+has a true outline counterpart for the off state. 📌 stays Planning's
+pinned-*proposals* mark and the two never meet. The words follow the glyph —
+"Star korg" / "Unstar korg", never "Pin" — even though the work item is titled
+"Pinned projects", which predates D-3.
+
+### Verification
+
+`tests/e2e/starred-projects.spec.ts` pins the two things a reasonable
+implementation gets wrong: the project appears **twice** after starring, and
+Planning shows the band while offering no control to set it — which is only
+possible because the star is a column rather than this browser's storage.
+
+One assertion was deliberately **removed** rather than fixed: that the band is
+gone after unstarring. These suites run against a shared database where another
+project may legitimately be starred, so the band's absence is not this test's
+to claim — only that *this* project left it. An earlier version of the ordering
+assertion had passed for the wrong reason — `indexOf` returning -1 against a
+CSS-uppercased header reads as "the band is above it" — which is what prompted
+checking what each assertion actually proves.
+
+## Follow-ups
+
+- **The band in alphabetical mode.** Ken's mock is explicitly "with category
+  view enabled", and unchecking *by category* still gives the flat rail with no
+  band. The navigation need is identical in both modes, but the band's grammar
+  (a rule above the first category header) only exists in grouped mode, and
+  adding dividers to a deliberately flat list is a change to a mode nobody
+  asked about. Left alone on purpose — worth asking Ken.

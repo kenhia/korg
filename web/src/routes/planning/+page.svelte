@@ -10,13 +10,13 @@
   } from "$lib/api";
   import type { ProposalStatus } from "$lib/generated/vocab";
   import {
-    CATEGORY_ORDER,
     IN_PROPOSAL_COLOR,
     PARKED,
     chip,
     isParked,
     midRank,
     projectRailColor,
+    railGroups,
     stampDay,
   } from "$lib/domain";
   import CopyStart from "$lib/components/CopyStart.svelte";
@@ -110,29 +110,11 @@
     projects.filter((p) => showAllProjects || p.status === "active"),
   );
 
-  // Same construction as the Work Items rail (WI #678): CATEGORY_ORDER for a
-  // predictable position, and an "Uncategorised" bucket so nothing the
-  // vocabulary didn't claim falls out of the rail.
-  const projectGroups = $derived.by(() => {
-    const groups: { key: string; label: string; projects: ProjectRow[] }[] = [];
-    const placed = new Set<number>();
-    for (const c of CATEGORY_ORDER) {
-      const ps = visibleProjects.filter((p) => p.category === c);
-      if (ps.length === 0) continue;
-      ps.forEach((p) => placed.add(p.id));
-      groups.push({ key: c, label: c, projects: ps });
-    }
-    const rest = visibleProjects.filter((p) => !placed.has(p.id));
-    if (rest.length > 0) {
-      // The key is the ESCAPE `\u0000none`, not a raw NUL byte, which is what
-      // this line held until #1310 went looking through it: one NUL makes the
-      // whole file binary to git (`Bin 26176 bytes` instead of a reviewable
-      // diff) and invisible to `grep -rn` across the repo. Same value at
-      // runtime, same spelling as the Work Items rail.
-      groups.push({ key: "\u0000none", label: "Uncategorised", projects: rest });
-    }
-    return groups;
-  });
+  // Was a copy of the Work Items rail's construction, down to a comment saying
+  // so; both now call the same `railGroups` (WI #1629). The starred band comes
+  // with it — Planning *reflects* the set but cannot change it (D-2), which is
+  // why there is no ★ control on this page.
+  const projectGroups = $derived(railGroups(visibleProjects));
 
   // The "All Projects" row's own counts: the totals across everything the rail
   // is showing, so the top entry is a summary rather than a blank.
@@ -486,7 +468,8 @@
           </button>
           {#if groupByCategory}
             {#each projectGroups as g (g.key)}
-              <p class="border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1 text-[0.65rem] uppercase tracking-wide text-[var(--color-muted)]">{g.label}</p>
+              <!-- The band's rule, as on Work Items — see the note there. -->
+              {#if g.label}<p class="border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1 text-[0.65rem] uppercase tracking-wide text-[var(--color-muted)]">{g.label}</p>{:else}<div class="border-t border-[var(--color-border)]" data-testid="starred-band-rule"></div>{/if}
               {#each g.projects as p (p.id)}{@render projectRow(p)}{/each}
             {/each}
           {:else}
