@@ -144,7 +144,24 @@
       retry={() => load(node_id)}
     />
   {:else}
-    <ul class="space-y-1" data-testid="comment-list">
+    <!-- #1651 — a thread used to read as one wall of prose. Two things caused
+         it and both are fixed here. `space-y-1` was a 4px gutter, smaller than
+         the line-height inside a comment, so the gap between two comments read
+         as a paragraph break within one. And the row's own `bg-[var(--color-bg)]`
+         was the *page* background: on the surfaces that matter most for reading
+         a thread — the proposal detail page and every `NodeDetail` route, whose
+         containers set no background — a comment was tinted exactly like the
+         page behind it, so the block had no edge at all. It only ever showed up
+         inside the two `bg-[var(--color-surface)]` hosts, and even there at a
+         0.04 lightness delta.
+
+         `--color-surface-hi` is Ken's own reference (the "tags" box on the
+         create form, which is where he pointed): one step *lighter* than
+         either host, so a comment is a card on every surface rather than a
+         card on one of them. The border is the separator half of "I'm leaning
+         toward both" — with multi-line markdown inside, the gutter alone
+         cannot say where one comment stops. -->
+    <ul class="space-y-2" data-testid="comment-list">
       {#each comments as c (c.id)}
         <!-- `korg:1469#comment-777` is a locator korg already prints — from
              `search`, from the copy affordances, in agent prose. #1467 made it
@@ -152,14 +169,17 @@
              kind, because every node page mounts this component. -->
         <li
           id={`comment-${c.id}`}
-          class="flex scroll-mt-24 items-start gap-2 rounded px-2 py-1 text-sm {anchored ===
+          class="flex scroll-mt-24 items-start gap-2 rounded border border-[var(--color-border)] px-2 py-1 text-sm {anchored ===
           c.id
             ? 'bg-[var(--color-accent-soft)]'
-            : 'bg-[var(--color-bg)]'}"
+            : 'bg-[var(--color-surface-hi)]'}"
         >
           {#if editingId === c.id}
             <label class="sr-only" for={`comment-edit-${c.id}`}>Edit comment</label>
-            <textarea id={`comment-edit-${c.id}`} class="min-h-[3rem] flex-1 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" bind:value={editBuf} use:pasteImages={uploads} onkeydown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveEdit(); if (e.key === "Escape") editingId = null; }}></textarea>
+            <!-- Inset, not raised: the row itself is now `--color-surface-hi`, so
+                 the editor takes the darker tone to keep an edge against the
+                 card it sits in. -->
+            <textarea id={`comment-edit-${c.id}`} class="min-h-[3rem] flex-1 rounded bg-[var(--color-bg)] px-2 py-1 text-sm outline-none" bind:value={editBuf} use:pasteImages={uploads} onkeydown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveEdit(); if (e.key === "Escape") editingId = null; }}></textarea>
             <button class="text-xs text-[var(--color-accent)] hover:underline" onclick={saveEdit}>Save</button>
             <button class="text-xs text-[var(--color-muted)] hover:underline" onclick={() => (editingId = null)}>Cancel</button>
           {:else}

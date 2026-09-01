@@ -1021,65 +1021,92 @@
 {#snippet listView()}
   <div class="space-y-3">
     {#if current !== ALL && currentProject}
-      <details class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm">
-        <!-- WI #1601 — the rail is long enough now that selecting a project low
-             in a category scrolls the selection out of view by the time you are
-             reading its work items, and nothing else on the page says which one
-             you are looking at. The name goes here, in the rail's own category
-             colour, so the answer is where the eye already lands on the way
-             down. It is also inside the `<dl>` as "Short Name" — that is the
-             project's record, this is the page's label, and only the label
-             survives the section being shut. -->
-        <summary class="cursor-pointer text-xs font-semibold text-[var(--color-muted)] hover:text-[var(--color-accent)]"
-          >Project Details <span
-            class="ml-2 font-mono"
-            style={projectRailColor(currentProject) ? `color: ${projectRailColor(currentProject)}` : ""}
-            data-testid="project-details-name">{currentProject.name}</span
+      <!-- #1759 — the BAR is the container, not the `<summary>`.
+
+           #1629 put the star inside the summary and floated it right. A
+           `<summary>` is itself an interactive control, so a focusable child
+           made it nested interactive content: a *serious* axe violation
+           (`nested-interactive` + `no-focusable-content`), which merged green
+           because Playwright is out of CI and only surfaced when 075 ran the
+           suite by hand.
+
+           The tell was already in the old code. The click needed BOTH
+           `preventDefault` and `stopPropagation` or starring would toggle the
+           disclosure on its way past — that workaround was the nesting
+           complaining, not a quirk to route around, and both are gone now that
+           the button is a sibling rather than a descendant.
+
+           So the border, background and padding move off `<details>` onto a
+           flex bar, and the two controls sit side by side inside it. Nothing
+           moves on screen: the star lands where `float-right` put it, and it
+           still reads while the section is shut, which is all D-2 asked for.
+           `items-start` keeps it on the first line when the panel opens, and
+           `leading-4` matches the summary's `text-xs` line box so the 14px
+           glyph centres against the 12px label instead of riding high. -->
+      <div class="flex items-start gap-2 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm">
+        <details class="min-w-0 flex-1">
+          <!-- WI #1601 — the rail is long enough now that selecting a project low
+               in a category scrolls the selection out of view by the time you are
+               reading its work items, and nothing else on the page says which one
+               you are looking at. The name goes here, in the rail's own category
+               colour, so the answer is where the eye already lands on the way
+               down. It is also inside the `<dl>` as "Short Name" — that is the
+               project's record, this is the page's label, and only the label
+               survives the section being shut. -->
+          <summary class="cursor-pointer text-xs font-semibold text-[var(--color-muted)] hover:text-[var(--color-accent)]"
+            >Project Details <span
+              class="ml-2 font-mono"
+              style={projectRailColor(currentProject) ? `color: ${projectRailColor(currentProject)}` : ""}
+              data-testid="project-details-name">{currentProject.name}</span
+            ></summary
           >
-          <!-- WI #1629 — the one place a project is starred (D-2). This bar
-               renders only on Work Items and only with a single project
-               selected, which is exactly the moment "I am working on this one
-               a lot right now" is true. Planning reflects the band and cannot
-               change it, and a per-row control in the rail was considered and
-               rejected: Ken likes the rail's look, expects a few stars a week,
-               and one page should not carry two differently-meaning marks.
+          <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+            <dt class="text-[var(--color-muted)]">Short Name</dt><dd>{currentProject.name}</dd>
+            <dt class="text-[var(--color-muted)]">Status</dt><dd>{currentProject.status}</dd>
+            {#if currentProject.machines.length > 0}<dt class="text-[var(--color-muted)]">Machines</dt><dd>{currentProject.machines.join(", ")}</dd>{/if}
+            {#if currentProject.deploy_to.length > 0}<dt class="text-[var(--color-muted)]">Deploys To</dt><dd>{currentProject.deploy_to.join(", ")}</dd>{/if}
+            {#if currentProject.category}<dt class="text-[var(--color-muted)]">Category</dt><dd>{currentProject.category}</dd>{/if}
+            {#if currentProject.src_path}<dt class="text-[var(--color-muted)]">Src Path</dt><dd>{currentProject.src_path}</dd>{/if}
+            {#if currentProject.gh_repo}<dt class="text-[var(--color-muted)]">GitHub Repo</dt><dd>{currentProject.gh_repo}</dd>{/if}
+            {#if currentProject.description}<dt class="text-[var(--color-muted)]">Description</dt><dd>{currentProject.description}</dd>{/if}
+            {#if currentProject.notes}<dt class="text-[var(--color-muted)]">Notes</dt><dd class="whitespace-pre-line">{currentProject.notes}</dd>{/if}
+          </dl>
+        </details>
+        <!-- WI #1629 — the one place a project is starred (D-2). This bar
+             renders only on Work Items and only with a single project
+             selected, which is exactly the moment "I am working on this one a
+             lot right now" is true. Planning reflects the band and cannot
+             change it, and a per-row control in the rail was considered and
+             rejected: Ken likes the rail's look, expects a few stars a week,
+             and one page should not carry two differently-meaning marks.
 
-               ★/☆ rather than a pushpin (D-3), because they are text glyphs
-               and take the project's own rail hue — no emoji pin can be
-               recoloured or has a true outline counterpart for the off state.
-               📌 stays Planning's pinned-*proposals* mark; the two never meet.
+             ★/☆ rather than a pushpin (D-3), because they are text glyphs and
+             can be recoloured — no emoji pin can be, or has a true outline
+             counterpart for the off state. 📌 stays Planning's
+             pinned-*proposals* mark; the two never meet.
 
-               `float-right` rather than a flex summary: `display: flex` on a
-               <summary> drops its disclosure marker, and that triangle is the
-               affordance saying the section opens.
-
-               The click is stopped as well as prevented — a <button> inside a
-               <summary> would otherwise toggle the disclosure on its way past,
-               so starring would open the panel every time. -->
-          <button
-            type="button"
-            class="float-right text-sm leading-none hover:opacity-80"
-            style={projectRailColor(currentProject) ? `color: ${projectRailColor(currentProject)}` : ""}
-            aria-pressed={currentProject.starred}
-            data-testid="project-star"
-            title={currentProject.starred ? `Unstar ${currentProject.name}` : `Star ${currentProject.name}`}
-            aria-label={currentProject.starred ? `Unstar ${currentProject.name}` : `Star ${currentProject.name}`}
-            onclick={(e) => { e.preventDefault(); e.stopPropagation(); toggleStar(currentProject!); }}
-            >{currentProject.starred ? "★" : "☆"}</button
-          ></summary
+             #1666 revises the *hue* half of D-3, which had both states take
+             the project's rail colour. That made the two states one colour, so
+             the only thing telling them apart was ★ vs ☆ at 14px — and for a
+             project with no category, or a non-active one, `projectRailColor`
+             returns undefined and both fell back to plain body text. The glyph
+             carries the state; the colour has to carry it too. Ken named the
+             pair: the muted grey the "Project Details" label already uses for
+             off, amber for on. The rail hue stays on the project *name* beside
+             it, which is where it says something the star does not. -->
+        <button
+          type="button"
+          class="shrink-0 text-sm leading-4 hover:opacity-80 {currentProject.starred
+            ? 'text-amber-300'
+            : 'text-[var(--color-muted)]'}"
+          aria-pressed={currentProject.starred}
+          data-testid="project-star"
+          title={currentProject.starred ? `Unstar ${currentProject.name}` : `Star ${currentProject.name}`}
+          aria-label={currentProject.starred ? `Unstar ${currentProject.name}` : `Star ${currentProject.name}`}
+          onclick={() => toggleStar(currentProject!)}
+          >{currentProject.starred ? "★" : "☆"}</button
         >
-        <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-          <dt class="text-[var(--color-muted)]">Short Name</dt><dd>{currentProject.name}</dd>
-          <dt class="text-[var(--color-muted)]">Status</dt><dd>{currentProject.status}</dd>
-          {#if currentProject.machines.length > 0}<dt class="text-[var(--color-muted)]">Machines</dt><dd>{currentProject.machines.join(", ")}</dd>{/if}
-          {#if currentProject.deploy_to.length > 0}<dt class="text-[var(--color-muted)]">Deploys To</dt><dd>{currentProject.deploy_to.join(", ")}</dd>{/if}
-          {#if currentProject.category}<dt class="text-[var(--color-muted)]">Category</dt><dd>{currentProject.category}</dd>{/if}
-          {#if currentProject.src_path}<dt class="text-[var(--color-muted)]">Src Path</dt><dd>{currentProject.src_path}</dd>{/if}
-          {#if currentProject.gh_repo}<dt class="text-[var(--color-muted)]">GitHub Repo</dt><dd>{currentProject.gh_repo}</dd>{/if}
-          {#if currentProject.description}<dt class="text-[var(--color-muted)]">Description</dt><dd>{currentProject.description}</dd>{/if}
-          {#if currentProject.notes}<dt class="text-[var(--color-muted)]">Notes</dt><dd class="whitespace-pre-line">{currentProject.notes}</dd>{/if}
-        </dl>
-      </details>
+      </div>
     {/if}
 
     <!-- Tags live above the filter row and collapsed, matching Project
