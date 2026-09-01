@@ -198,4 +198,28 @@ there until somebody ran the suite by hand. Worth considering whether
 
 ## Deployed
 
-<!-- appended after the deploy -->
+**2026-09-01**, to kubsdb `:5674`, image
+`kubsdb.encke-wahoo.ts.net:5000/korg:aa731d9cd1a3` (commit
+`aa731d9cd1a3a1e3dc7b6564facb06e29e9fe785`, PR #80). Rollback target
+`80f1c89093d9` — sprint 074 — confirmed present in the registry before
+building.
+
+No migration in this sprint, and the post-deploy check confirms it:
+migrations 32 -> 32, and every row count flat across the deploy (cards
+30, links 9, projects 55, proposals 335, reports 57, work items 1159).
+
+Verified live in a browser against production, read-only — no clicks on
+real data:
+
+| claim | measured on kubsdb |
+| --- | --- |
+| #1759 star is no longer inside the `<summary>` | `closest("summary")` from the button's parent -> `null` |
+| #1759 the disclosure triangle survived the restructure | `::marker` still displayed |
+| #1666 the star carries its own colour | amber `oklch(0.879 0.169 91.605)` on a starred project, distinct from body text |
+| #1666 off-state grey is the "Project Details" grey | bar reads `oklch(0.68 0.01 270)` = `--color-muted` |
+| #1651 a comment row is a card, not the page | row `oklch(0.27 0.014 270)` vs page `oklch(0.18 0.01 270)` |
+| #1651 border and gutter | 1px border, 8px between rows, over a real 19-comment thread |
+
+The 19-comment thread is worth naming: the two-comment mock-ups during
+the sprint could not show what a long agent thread looks like, and that
+is the case #1651 was actually filed about.
