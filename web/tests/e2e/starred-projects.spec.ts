@@ -44,10 +44,33 @@ test("starring a project bands it at the top of both rails", async ({ page }) =>
   const star = page.getByTestId("project-star");
   await expect(star).toHaveAttribute("aria-pressed", "false");
   await expect(star).toHaveAccessibleName(`Star ${project}`);
+
+  // #1666 — the two states must differ by COLOUR, not only by ★ vs ☆ at 14px.
+  // Off is pinned to the grey the "Project Details" label already carries, so
+  // this reads that element rather than hard-coding a token a palette change
+  // would silently rot.
+  //
+  // Park the pointer before every read. The star sits INSIDE the summary, the
+  // summary carries `hover:text-[var(--color-accent)]`, and before the fix the
+  // star had no colour of its own — so a hovered bar recoloured it by
+  // inheritance. The first draft of this assertion passed against the exact
+  // code it was written to fail, for precisely that reason: it read the
+  // on-state with the mouse still resting on the star it had just clicked.
+  const detailsBar = page.locator(
+    'summary:has([data-testid="project-details-name"])',
+  );
+  await page.mouse.move(0, 0);
+  const grey = await detailsBar.evaluate((el) => getComputedStyle(el).color);
+  const offColour = await star.evaluate((el) => getComputedStyle(el).color);
+  expect(offColour).toBe(grey);
+
   await star.click();
 
   await expect(star).toHaveAttribute("aria-pressed", "true");
   await expect(star).toHaveAccessibleName(`Unstar ${project}`);
+  await page.mouse.move(0, 0);
+  const onColour = await star.evaluate((el) => getComputedStyle(el).color);
+  expect(onColour).not.toBe(offColour);
 
   // Twice: once in the band, once in its normal category position. The
   // duplication is the feature — the rail must not reshuffle under the click.

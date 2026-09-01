@@ -30,6 +30,19 @@ test("add and remove comments on a work item", async ({ page }) => {
   await page.getByTestId("comment-input").press("Control+Enter");
   await expect(page.getByTestId("comment-list")).toContainText(note);
 
+  // #1651 — a comment row has to be a card on whatever surface it lands on.
+  // The original bug was not subtlety, it was identity: the row painted
+  // `--color-bg`, which IS the page tone, so on every container that sets no
+  // background of its own the block had no edge at all. Comparing the row's
+  // computed background against the page's is what catches that coming back;
+  // asserting a literal colour would only pin today's palette.
+  const row = page.getByTestId("comment-list").locator("li").first();
+  const tones = await row.evaluate((el) => ({
+    row: getComputedStyle(el).backgroundColor,
+    page: getComputedStyle(document.body).backgroundColor,
+  }));
+  expect(tones.row).not.toBe(tones.page);
+
   // Delete it.
   // Two presses: this is irreversible, so it confirms (WI #549). The button's
   // accessible name changes to "Confirm: …" once armed.
