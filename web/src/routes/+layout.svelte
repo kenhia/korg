@@ -3,6 +3,7 @@
   import { dev } from "$app/environment";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
+  import { api } from "$lib/api";
   import Toaster from "$lib/components/Toaster.svelte";
 
   let { children } = $props();
@@ -73,6 +74,48 @@
     }
     goto(`/search?${params}`);
   }
+
+  // Find by ID (#1809) sits beside Search for the reason Search sits in the
+  // header at all: it is something you do *from* a page. It lived inside Work
+  // Items, so reaching it meant navigating to Work Items first — and it is the
+  // box Ken reaches for more often than full-text search, which made that the
+  // wrong page to gate it behind.
+  //
+  // The move is also what let it become kind-agnostic. The page-local version
+  // had two branches — jump to the row for a work item, open the slide-over
+  // preview for anything else — because when #260 built it there was nowhere
+  // else to go. Sprint 070 gave every kind a page and put the path on the node
+  // itself (`NodePreview.url`, GP-13), so this resolves the id and goes where
+  // korg says it lives. One branch, every kind, and no kind -> path table here.
+  let findId = $state("");
+  let findError = $state<string | null>(null);
+
+  async function submitFind(e: SubmitEvent) {
+    e.preventDefault();
+    const id = parseInt(findId.trim(), 10);
+    if (!Number.isFinite(id)) return;
+    findError = null;
+    let node;
+    try {
+      node = await api.node(id);
+    } catch (err) {
+      findError = err instanceof Error ? err.message : String(err);
+      return;
+    }
+    // `url` is nullable so korg keeps a way to say it cannot answer, and the
+    // vocabulary fence makes that unreachable for a real node. Handling it
+    // anyway costs one branch and beats navigating to `/null`.
+    if (!node) {
+      findError = `No node with id ${id}.`;
+      return;
+    }
+    if (!node.url) {
+      findError = `korg has no page for node ${id} (${node.kind}).`;
+      return;
+    }
+    findId = "";
+    goto(node.url);
+  }
 </script>
 
 <div class="min-h-screen">
@@ -125,17 +168,54 @@
            also called "search", and this one searches the whole corpus rather
            than the table in front of you — a distinction the Work Items filter
            and this box were briefly indistinguishable on. -->
-      <form class="ml-auto flex items-center" onsubmit={submitSearch}>
-        <label class="sr-only" for="korg-search">Search korg</label>
-        <input
-          id="korg-search"
-          type="search"
-          bind:value={term}
-          placeholder="Search korg…"
-          class="w-40 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-sm focus:w-64 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] sm:w-56"
-        />
-      </form>
+      <div class="ml-auto flex items-center gap-2">
+        <form class="flex items-center" onsubmit={submitSearch}>
+          <label class="sr-only" for="korg-search">Search korg</label>
+          <input
+            id="korg-search"
+            type="search"
+            bind:value={term}
+            placeholder="Search korg…"
+            class="w-40 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-sm focus:w-64 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] sm:w-56"
+          />
+        </form>
+
+        <!-- Narrower than Search and it does not grow on focus: an id is a
+             handful of digits, so the width it needs is fixed, and taking room
+             from the search box beside it would be a cost with no use. -->
+        <form class="flex items-center gap-1" onsubmit={submitFind}>
+          <label class="sr-only" for="korg-find-by-id"
+            >Find any node by its id</label
+          >
+          <input
+            id="korg-find-by-id"
+            bind:value={findId}
+            placeholder="find by ID…"
+            inputmode="numeric"
+            title="Go to any node — work item, card, proposal, program, schedule, report, link or handoff — by its id"
+            class="w-28 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]"
+            oninput={() => (findError = null)}
+          />
+          <button
+            type="submit"
+            class="rounded bg-[var(--color-accent-soft)] px-2 py-1 text-sm hover:bg-[var(--color-accent)]"
+            >Go</button
+          >
+        </form>
+      </div>
     </nav>
+
+    <!-- The failure belongs in the header, under the box that produced it: the
+         page below is whatever you were already looking at and has no reason to
+         host an error about a nav control. Cleared on the next keystroke. -->
+    {#if findError}
+      <p
+        role="alert"
+        class="mx-auto max-w-[120rem] px-4 pb-2 text-sm text-red-400"
+      >
+        {findError}
+      </p>
+    {/if}
   </header>
 
   <main

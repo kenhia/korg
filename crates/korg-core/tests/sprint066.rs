@@ -129,6 +129,7 @@ async fn comments_are_documents_reachable_by_the_parents_identifier() {
         &pool,
         wi.node_id,
         "the audit log is append-only JSONL under ~/.local/state/kyac/",
+        None,
     )
     .await
     .unwrap();
@@ -215,9 +216,14 @@ async fn a_terminal_parent_hides_its_comments_too() {
     let wi = create_work_item(&pool, new::work_item("Parent"))
         .await
         .unwrap();
-    add_comment(&pool, wi.node_id, "quarantine the flapping heater probe")
-        .await
-        .unwrap();
+    add_comment(
+        &pool,
+        wi.node_id,
+        "quarantine the flapping heater probe",
+        None,
+    )
+    .await
+    .unwrap();
     update_work_item(
         &pool,
         wi.wi_number,

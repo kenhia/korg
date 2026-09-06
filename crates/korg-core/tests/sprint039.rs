@@ -196,7 +196,7 @@ async fn deleting_a_referenced_link_refuses_instead_of_cascading() {
     let discussed = create_link(&pool, new::link("https://example.com/discussed"))
         .await
         .expect("create link");
-    add_comment(&pool, discussed.node_id, "worth re-reading")
+    add_comment(&pool, discussed.node_id, "worth re-reading", None)
         .await
         .expect("comment");
 

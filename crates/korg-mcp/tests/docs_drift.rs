@@ -716,6 +716,7 @@ fn the_board_table_documents_every_rollup_field() {
         events: Vec::new(),
         sources: Vec::new(),
         due_schedules: Vec::new(),
+        in_flight_schedules: Vec::new(),
     })
     .expect("the rollup serializes");
     // The field table only — the `###` subsections below it have tables of

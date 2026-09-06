@@ -406,10 +406,14 @@ export const api = {
   // comments
   nodeComments: (node_id: number) =>
     http<Comment[]>("GET", `/api/nodes/${node_id}/comments`),
+  // `origin: "web"` is the D-17 convention korg #1879 extended to comments,
+  // and the same string this client already stamps on `relate` below: it says
+  // a human typed this in the UI, so an agent's comment reads differently in
+  // the thread. Self-reported and unverified by design.
   addComment: (node_id: number, body: string) =>
-    http<Comment>("POST", `/api/nodes/${node_id}/comments`, { body }),
+    http<Comment>("POST", `/api/nodes/${node_id}/comments`, { body, origin: "web" }),
   updateComment: (id: number, body: string) =>
-    http<Comment>("PATCH", `/api/comments/${id}`, { body }),
+    http<Comment>("PATCH", `/api/comments/${id}`, { body, origin: "web" }),
   deleteComment: (id: number) =>
     http<{ deleted: boolean }>("DELETE", `/api/comments/${id}`),
 

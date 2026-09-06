@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import {
     api,
     type AttachmentRow,
@@ -83,10 +83,11 @@
   let complete = $state(true);
   let loadingAll = $state(false);
   let loading = $state(true);
-  // Field-level message for the find-by-ID box — it belongs next to the input
-  // that produced it, not in the global toaster. Load failures use `loadError`
-  // and the shared ErrorNotice.
-  let error = $state<string | null>(null);
+  // Load failures use `loadError` and the shared ErrorNotice. The page also
+  // had a field-level `error` for the find-by-ID box; #1809 moved that box to
+  // the header, and its message went with it — nothing else on this page wrote
+  // to it, so the state and its banner left rather than becoming a block that
+  // can never render.
   let loadError = $state<unknown>(null);
 
   let detail = $state<WorkItemRow | null>(null);
@@ -226,14 +227,13 @@
   // registry and the API rejects anything else — no custom escape hatch.
   let relLabel = $state<string>(DEFAULT_RELATIONSHIP_LABEL);
 
-  // WI #260 — find any node by id. A work item resolves to a navigate +
-  // highlight (jump to its project, flash the row); any other kind opens the
-  // shared preview panel. forceShow keeps the jumped-to row visible even when
-  // the current filters (e.g. "hide closed") would otherwise drop it.
-  let findId = $state("");
+  // The shared slide-over preview (WI #231/#260), now opened only from the
+  // related-nodes list — #1809 moved find-by-ID to the header, and with it went
+  // the navigate-and-flash jump this page used to own (`flashWi`, `forceShow`)
+  // and the two-branch resolve that fed it. The global box goes to the node's
+  // own page instead, so nothing here has to keep a jumped-to row alive against
+  // the current filters.
   let previewNode = $state<number | null>(null);
-  let flashWi = $state<number | null>(null);
-  let forceShow = $state<Set<number>>(new Set());
 
   // WI #622 — filter to the work items a sprint proposal *covers*, which is the
   // only honest answer to "what is in this sprint". The `sprint` field looks
@@ -395,7 +395,6 @@
 
   const filtered = $derived(
     items.filter((it) => {
-      if (forceShow.has(it.wi_number)) return true; // a find-by-ID jump always shows its target
       // Layered on top of the other filters, not instead of them: "this sprint,
       // in this project, still open" is the common question, and each part
       // stays visible and adjustable.
@@ -487,7 +486,6 @@
     ]);
     applyWalk(walked);
     currentAreas = current === ALL ? [] : await loadAreas(current);
-    forceShow = new Set();
     resetFilters();
     cursor = filtered[0]?.wi_number ?? null;
   }
@@ -549,57 +547,6 @@
       ...selected,
       ...after.filter((v) => !seen.has(v) && keep(v)),
     ]);
-  }
-
-  // WI #260 — resolve the entered id and either jump to the work item or open
-  // the preview panel for any other node kind.
-  async function findById() {
-    const id = parseInt(findId.trim(), 10);
-    if (!Number.isFinite(id)) return;
-    let node;
-    try {
-      node = await api.node(id);
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-      return;
-    }
-    if (!node) {
-      error = `No node with id ${id}.`;
-      return;
-    }
-    error = null;
-    if (node.kind === "workitem" && node.wi_number != null) {
-      findId = "";
-      await gotoWorkItem(node.wi_number, node.project);
-    } else {
-      previewNode = id;
-    }
-  }
-
-  async function gotoWorkItem(wi: number, project: string | null) {
-    // From "All projects" stay there and highlight in place, so the project
-    // column (WI #313) shows where the hit lives; otherwise jump to its project.
-    const target = current === ALL ? ALL : (project ?? ALL);
-    detail = null;
-    creating = false;
-    if (target !== current) await pick(target);
-    // WI #762 D-3 — the jump must not depend on what the walk happened to load.
-    // When the page bound leaves the target out of `items`, fetch it and splice
-    // it into wi_number order rather than scrolling to a row that is not there.
-    if (!items.some((i) => i.wi_number === wi)) {
-      const full = await attempt(() => api.workItem(wi), "Load work item");
-      if (full) {
-        items = [...items, full].sort((a, b) => a.wi_number - b.wi_number);
-      }
-    }
-    forceShow = new Set([wi]);
-    cursor = wi;
-    flashWi = wi;
-    await tick();
-    document.getElementById(`wi-row-${wi}`)?.scrollIntoView({ block: "center" });
-    setTimeout(() => {
-      if (flashWi === wi) flashWi = null;
-    }, 2200);
   }
 
   async function load() {
@@ -813,30 +760,9 @@
         disabled={current === ALL}
         title={current === ALL ? "Pick a project first" : "New work item"}
         onclick={() => (creating = !creating)}>+ New Work Item</button>
-    <div class="flex items-center gap-1" title="Jump to a work item, or preview any node, by its id">
-      <label class="sr-only" for="find-by-id"
-        >Find a work item or node by id</label
-      >
-      <input
-        id="find-by-id"
-        class="w-32 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none"
-        placeholder="find by ID…"
-        inputmode="numeric"
-        bind:value={findId}
-        onkeydown={(e) => e.key === "Enter" && findById()}
-      />
-      <button
-        class="rounded bg-[var(--color-accent-soft)] px-2 py-1 text-sm hover:bg-[var(--color-accent)]"
-        onclick={findById}>Go</button>
-      </div>
     </div>
   </div>
 
-  {#if error}
-    <p role="alert" class="rounded bg-red-950 px-3 py-2 text-sm text-red-300">
-      {error}
-    </p>
-  {/if}
   {#if loadError}
     <ErrorNotice error={loadError} what="work items" retry={load} />
   {/if}
@@ -1338,9 +1264,6 @@
               id={`wi-row-${item.wi_number}`}
               class="cursor-pointer border-t border-[var(--color-border)] hover:bg-[var(--color-surface-hi)]"
               class:bg-[var(--color-surface-hi)]={item.wi_number === cursor}
-              class:ring-2={item.wi_number === flashWi}
-              class:ring-inset={item.wi_number === flashWi}
-              class:ring-[var(--color-accent)]={item.wi_number === flashWi}
               class:opacity-55={item.archived}
               class:italic={item.archived}
               onclick={() => open(item)}

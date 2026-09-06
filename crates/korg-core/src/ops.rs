@@ -432,6 +432,13 @@ pub struct ProjectName {
 pub struct CommentBody {
     #[schemars(schema_with = "schema::non_empty")]
     pub body: String,
+    /// Self-reported provenance (#1879), the same convention `relate` carries
+    /// (D-17): who is writing this comment — the web client sends `"web"`, a
+    /// skill sends its name. Optional and unverified (korg is no-auth HTTP);
+    /// absent means unknown, stored NULL. On `update_comment` an absent origin
+    /// leaves the existing stamp alone rather than clearing it.
+    #[serde(default)]
+    pub origin: Option<String>,
 }
 
 /// `relate` / `POST /api/relationships`.

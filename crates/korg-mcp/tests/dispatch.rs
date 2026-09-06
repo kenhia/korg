@@ -78,10 +78,10 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
         .expect("doomed area");
 
     // Two comments: one to patch, one to delete.
-    let comment = repo::add_comment(pool, wi.node_id, "a comment")
+    let comment = repo::add_comment(pool, wi.node_id, "a comment", None)
         .await
         .expect("comment");
-    let doomed_comment = repo::add_comment(pool, wi.node_id, "to be deleted")
+    let doomed_comment = repo::add_comment(pool, wi.node_id, "to be deleted", None)
         .await
         .expect("doomed comment");
 

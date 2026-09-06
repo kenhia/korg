@@ -510,7 +510,7 @@ async fn add_comment(
     Json(b): Json<ops::CommentBody>,
 ) -> ApiResult {
     Ok(Json(json!(
-        repo::add_comment(&s.pool, node_id, &b.body).await?
+        repo::add_comment(&s.pool, node_id, &b.body, b.origin.as_deref()).await?
     )))
 }
 
@@ -520,7 +520,7 @@ async fn update_comment(
     Json(b): Json<ops::CommentBody>,
 ) -> ApiResult {
     Ok(Json(json!(
-        repo::update_comment(&s.pool, id, &b.body).await?
+        repo::update_comment(&s.pool, id, &b.body, b.origin.as_deref()).await?
     )))
 }
 
