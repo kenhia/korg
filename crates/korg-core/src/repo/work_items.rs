@@ -365,7 +365,7 @@ pub async fn get_work_item_detail(pool: &PgPool, wi_number: i64) -> Result<Optio
         return Ok(None);
     };
     let comments = sqlx::query_as::<_, Comment>(
-        "SELECT id, node_id, body, created, updated FROM comment \
+        "SELECT id, node_id, body, origin, created, updated FROM comment \
          WHERE node_id = $1 ORDER BY created LIMIT $2",
     )
     .bind(item.node_id)

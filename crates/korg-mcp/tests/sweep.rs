@@ -96,7 +96,7 @@ async fn update_comment_edits_in_place() {
     let wi = repo::create_work_item(&pool, new::work_item("commented"))
         .await
         .expect("wi");
-    let comment = repo::add_comment(&pool, wi.node_id, "first draft")
+    let comment = repo::add_comment(&pool, wi.node_id, "first draft", None)
         .await
         .expect("comment");
     let server = server(pool);
@@ -135,7 +135,7 @@ async fn an_empty_comment_body_is_invalid_input() {
     let wi = repo::create_work_item(&pool, new::work_item("commented"))
         .await
         .expect("wi");
-    let comment = repo::add_comment(&pool, wi.node_id, "real")
+    let comment = repo::add_comment(&pool, wi.node_id, "real", None)
         .await
         .expect("comment");
     let server = server(pool);

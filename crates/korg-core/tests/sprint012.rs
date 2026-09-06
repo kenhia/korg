@@ -117,7 +117,7 @@ async fn get_work_item_detail_inlines_capped_comments() {
     // More than the cap: capped list, truncated flag, true total.
     let over = WORKITEM_COMMENT_CAP + 2;
     for i in 0..over {
-        add_comment(&pool, wi.node_id, &format!("c{i}"))
+        add_comment(&pool, wi.node_id, &format!("c{i}"), None)
             .await
             .unwrap();
     }

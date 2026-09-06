@@ -434,7 +434,7 @@ pub async fn get_schedule_detail(pool: &PgPool, node_id: i64) -> Result<Option<S
     .fetch_all(pool)
     .await?;
     let comments = sqlx::query_as::<_, Comment>(
-        "SELECT id, node_id, body, created, updated FROM comment \
+        "SELECT id, node_id, body, origin, created, updated FROM comment \
          WHERE node_id = $1 ORDER BY created LIMIT $2",
     )
     .bind(node_id)

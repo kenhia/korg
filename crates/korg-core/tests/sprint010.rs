@@ -64,10 +64,10 @@ async fn comments_are_editable() {
         .await
         .unwrap();
 
-    let c = add_comment(&pool, r.node_id, "forgot the WI #")
+    let c = add_comment(&pool, r.node_id, "forgot the WI #", None)
         .await
         .unwrap();
-    let edited = update_comment(&pool, c.id, "refers to WI #42")
+    let edited = update_comment(&pool, c.id, "refers to WI #42", None)
         .await
         .unwrap();
 
@@ -79,7 +79,7 @@ async fn comments_are_editable() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].body, "refers to WI #42");
 
-    assert!(update_comment(&pool, 999_999, "nope").await.is_err());
+    assert!(update_comment(&pool, 999_999, "nope", None).await.is_err());
 }
 
 #[tokio::test]

@@ -232,7 +232,7 @@ async fn a_comment_hit_routes_to_its_anchor() {
         .unwrap()
         .row
         .node_id;
-    let comment = add_comment(&pool, proposal, "zamboni maintenance is overdue")
+    let comment = add_comment(&pool, proposal, "zamboni maintenance is overdue", None)
         .await
         .unwrap();
 

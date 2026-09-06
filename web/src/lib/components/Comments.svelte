@@ -206,6 +206,27 @@
               src={c.body}
               class="prose prose-invert min-w-0 max-w-none flex-1 text-sm"
             />
+            <!-- #1879 — self-reported provenance, the D-17 convention `relate`
+                 already carries. Deliberately quiet: it rides beside the
+                 controls rather than above the prose, because it is a "who
+                 filed this" hint a reader consults, not part of the comment.
+                 Rendered only when there is one — a NULL origin means the
+                 comment predates provenance or the writer sent none, and a
+                 placeholder there would dress an absence up as a fact.
+
+                 `shrink-0` because the row is a flex and an origin like
+                 `overseen-sprint` is one unbreakable token; without it the tag
+                 compresses instead of the prose. The title says unverified
+                 out loud: korg is no-auth HTTP, so this can be typed by
+                 anyone, and a reader who forgets that is exactly who this
+                 tooltip is for. -->
+            {#if c.origin}
+              <span
+                class="shrink-0 self-start rounded border border-[var(--color-border)] px-1 py-px text-[10px] leading-4 text-[var(--color-muted)]"
+                title={`Self-reported origin: ${c.origin}. Unverified — korg records what the writer sent.`}
+                data-testid="comment-origin">{c.origin}</span
+              >
+            {/if}
             <button class="text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]" aria-label="Edit comment" title="Edit" onclick={() => startEdit(c)}>✎</button>
             <!-- Deleting a comment cannot be undone from the UI, so it confirms
                  rather than offering an undo (WI #549). -->

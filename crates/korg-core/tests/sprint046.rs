@@ -110,14 +110,14 @@ async fn synopsis_is_the_newest_curator_marked_comment_and_unmarked_never_surfac
     let a = proposal(&pool, "curated", "active").await;
     let b = proposal(&pool, "uncurated", "proposed").await;
 
-    add_comment(&pool, a, "human discussion, not a synopsis")
+    add_comment(&pool, a, "human discussion, not a synopsis", None)
         .await
         .unwrap();
     let stale = format!("{CURATOR_MARKER}\nstale synopsis");
-    add_comment(&pool, a, &stale).await.unwrap();
+    add_comment(&pool, a, &stale, None).await.unwrap();
     let fresh = format!("{CURATOR_MARKER}\nharness landed; mining pass in design");
-    add_comment(&pool, a, &fresh).await.unwrap();
-    add_comment(&pool, b, "unmarked comment on the other row")
+    add_comment(&pool, a, &fresh, None).await.unwrap();
+    add_comment(&pool, b, "unmarked comment on the other row", None)
         .await
         .unwrap();
 

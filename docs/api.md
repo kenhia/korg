@@ -668,6 +668,7 @@ above: it is one composite object, not `{items, …}`.
 | `events` | #977: the newest 20 status transitions, newest first — `{node_id, kind, wi_number, title, project, from_status, to_status, at}`. See below |
 | `sources` | #950: every reporting source with its `freshness` and what it `asserts`. **Uncapped** — see below |
 | `due_schedules` | #1385: what is **due right now**, soonest-due first — `list_schedules(due_only)`'s `ScheduleRow`s, uncapped. See below |
+| `in_flight_schedules` | #1644: every schedule whose newest materialized work item is still **unfinished**, newest firing first — `{node_id, title, project, wi_number, wi_title, wi_status, materialized_at}`, uncapped. See below |
 
 **It takes no arguments**, for the reason `list_awaiting` takes none: it is one
 screen's state, and every filter it could offer is already decided by what the
@@ -757,6 +758,47 @@ Three properties, and each is a decision:
   return — the same reuse `programs` makes with `ProgramRow`. `preview_title` is
   what materialising would create right now, substitutions applied, so a panel
   renders a due row without a follow-up read.
+
+### In-flight schedules (#1644)
+
+`in_flight_schedules` is the other half of the same failure: every schedule
+whose newest materialized work item is still unfinished, newest firing first.
+
+Due schedules made scheduled work visible right up to the moment somebody acted
+on it. Materialising **ends** due-ness — correctly, that is the outstanding-item
+clause stopping a schedule from competing with the item it just produced — and
+the open item it left behind then appeared in no board panel at all: in no
+proposal, not blocked, not awaiting, and `events` carries status *changes*, so
+being created was never one. Verified 2026-08-26 with WI #1635 (materialized by
+schedule 1112): its only surfaces were the Schedules page and the find-by-ID
+box. The first-ever materialization made its own work invisible.
+
+Four properties, each a decision:
+
+- **A sibling field, not a `state` discriminator on one `schedules` list**
+  (Ken, 2026-09-06). Folding due and in-flight into a single list with
+  `state: due | in_flight` is tidier on paper and breaks a shipped contract:
+  kfdc and korg-dash already render `due_schedules`, and both would have to
+  change to keep showing what they already show. Additive costs them nothing,
+  and kfdc #1645 opts in. The blocks also answer different questions — due is a
+  nag, in-flight is a tracker.
+- **Not filtered to active schedules**, which is where it parts company with
+  `due_schedules`' predicate. A `once` schedule marks itself `done` as it fires,
+  and the open item it produced is exactly what must not vanish; filtering on an
+  active schedule would re-create the bug for the case that reported it. Pausing
+  a schedule likewise stops it firing again without finishing the work already
+  in flight. Unfinished-ness is a fact about the **item**, so the item is what
+  the query filters on. Archived schedules are excluded, as everywhere else.
+- **Unfinished is the vocabulary's set**, so `parked` counts (#810) — the same
+  set the outstanding-item clause reads. Parked scheduled work is deferred, not
+  finished, and dropping it would re-hide the item somebody deliberately set
+  aside.
+- **A projection, not `ScheduleRow`.** Here the payload is mostly about the work
+  item, which `ScheduleRow` carries only as `last_wi_number` — a consumer would
+  need a read per row to render a title. `materialized_at` is the item's own
+  `node.created`, not the `materializes` edge's nullable `created` (0016 §4), so
+  it is always a real timestamp. Uncapped like `due_schedules`, and bounded by
+  construction: a schedule leaves the block when its item is finished.
 
 Every consumer of the board inherits it (GP-1 in the korg+ guiding plan: agents
 curate korg, the board renders korg — a panel that needs data korg cannot hold
@@ -1268,7 +1310,31 @@ optional self-reported `origin` — the web client sends `"web"`, `propose_sprin
 and `create_report` stamp their own operation name, a skill sends its name.
 korg is no-auth HTTP, so `origin` is recorded, not verified; the re-relate no-op
 preserves the originals. The first read surface is the board's `proposal_edges`
-(korg #1003) — elsewhere provenance is still write-side only.
+(korg #1003).
+
+**Comments carry the same `origin`** (korg #1879), and deliberately the same
+spelling and the same semantics rather than a second convention: optional on
+`add_comment` and `update_comment`, returned by `list_comments` and by every
+focused read's inlined comments, rendered in the web UI as a small tag. The web
+client sends `"web"`, a skill sends its own name.
+
+It exists because `list_comments` returned no author and no origin at all, and
+karc's `ship` reads a proposal's thread for the overseer's `overseer: cleared to
+ship` — it could prove the comment existed and when, but not who filed it.
+
+Two things it is **not**. It is not an author column: korg has no authenticated
+writer, which is the same reason migration 0026 declined an actor column for the
+transition log, and that reasoning stands. And it is not a control — an
+unverified string cannot stop a leg from stamping `overseer` on its own
+clearance. karc closes that hole structurally (PD-9: a clearance must postdate
+the leg's last turn end); this is the audit aid beside it, so a human reading a
+thread sees `overseer` and `overseen-sprint` at a glance.
+
+NULL means the comment predates provenance or its writer sent none — never
+"anonymous" in any enforced sense, and there is no backfill. On
+`update_comment` an absent `origin` **preserves** the existing stamp rather than
+clearing it (the same shape as the re-relate no-op); an editor that does
+identify itself takes the stamp, because it wrote the body that is now there.
 
 Every `covers` edge is `sprint_proposal → workitem` — there is no exception.
 (One used to exist: pre-0008 bundles were work items titled `Sprint: …`,

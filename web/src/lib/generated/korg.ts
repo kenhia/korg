@@ -426,7 +426,37 @@ sources: Array<SourceHealth>,
  * it already has. `preview_title` is what materialising would create right
  * now, substitutions applied, so a panel needs no follow-up read.
  */
-due_schedules: Array<ScheduleRow>, };
+due_schedules: Array<ScheduleRow>, 
+/**
+ * Scheduled work that is **in flight** (#1644): every schedule whose newest
+ * materialized work item is still unfinished, newest firing first.
+ *
+ * This block exists because `due_schedules` and the work item were between
+ * them hiding the work. The instant a schedule materializes it stops being
+ * due — correctly, that is the outstanding-item clause stopping it
+ * competing with the item it just produced — and the open item it left
+ * behind landed in **no** board panel: not in a proposal, not blocked, not
+ * awaiting, and `events` carries status *changes*, so being created was not
+ * one. Verified 2026-08-26 with WI #1635 (schedule 1112), whose only
+ * surfaces were the Schedules page and the find-by-ID box.
+ *
+ * **A sibling field, not a `state` discriminator folded into
+ * `due_schedules`** (Ken, 2026-09-06). Both shapes were on the table in
+ * #1644. One list with `state: due | in_flight` is tidier on paper and is a
+ * breaking change to a shipped contract: kfdc and korg-dash already render
+ * `due_schedules`, and every one of them would have to change to keep
+ * showing what it already shows. Additive costs them nothing and lets
+ * kfdc #1645 opt in. The two blocks also answer different questions — due
+ * is a nag, in-flight is a tracker — which is why `due_schedules`'
+ * uncapped-because-the-row-a-cap-drops-waited-longest reasoning does not
+ * transfer, though this is uncapped too, bounded by construction: a
+ * schedule leaves the block the moment its item is finished.
+ *
+ * Rows are a projection rather than `ScheduleRow` because the payload is
+ * mostly about the *work item*, which `ScheduleRow` carries only as a
+ * `last_wi_number` — a consumer would need a read per row to render a title.
+ */
+in_flight_schedules: Array<InFlightSchedule>, };
 
 /**
  * A curated synopsis — the newest [`CURATOR_MARKER`]-opened comment on a live
@@ -442,7 +472,15 @@ export type CardRow = { node_id: number, status: string, title: string, descript
  */
 comment_count: number, created: string, updated: string, };
 
-export type Comment = { id: number, node_id: number, body: string, created: string, updated: string, };
+export type Comment = { id: number, node_id: number, body: string, 
+/**
+ * Self-reported, unverified provenance of the writer (#1879), exactly the
+ * `relationship.origin` convention (D-17): the web client sends `"web"`, a
+ * skill sends its own name. `None` means the comment predates provenance
+ * or the writer declined to identify itself — korg is no-auth HTTP on the
+ * fleet, so this is an audit aid and never a control.
+ */
+origin: string | null, created: string, updated: string, };
 
 /**
  * A covered work item as a proposal's detail read reports it — enough to
@@ -482,6 +520,40 @@ export type HandoffRow = { node_id: number, title: string, summary: string, proj
  * Comments on this handoff (nodes are comment-generic, 0007).
  */
 comment_count: number, created: string, updated: string, };
+
+/**
+ * One in-flight schedule: what fired, and the unfinished work it produced.
+ */
+export type InFlightSchedule = { 
+/**
+ * The schedule's node id — `korg:<node_id>` resolves it, so a consumer can
+ * link the schedule as well as the item.
+ */
+node_id: number, 
+/**
+ * The schedule's template title, verbatim and unsubstituted, exactly as
+ * `ScheduleRow::title` carries it. What the firing actually produced is
+ * `wi_title`, already substituted, so no `preview_title` is needed here.
+ */
+title: string, project: string | null, wi_number: number, wi_title: string, 
+/**
+ * One of [`WI_UNFINISHED_STATUSES`] by construction — `parked` included
+ * (#810), which is the whole reason this reads the vocabulary rather than
+ * spelling out `('open','resolved')`: parked scheduled work is deferred,
+ * not finished, and dropping it here would re-hide exactly the item a
+ * person deliberately set aside.
+ */
+wi_status: string, 
+/**
+ * When the schedule fired, read from the work item's own `node.created`.
+ *
+ * Not the `materializes` edge's `created`: that column is nullable by
+ * design (0016 §4 — NULL honestly means "predates provenance"), so a
+ * consumer would have to render an optional timestamp for a row that
+ * always has a real one. The item is created inside the materialize
+ * transaction, so the two are the same instant anyway.
+ */
+materialized_at: string, };
 
 export type LinkRow = { node_id: number, url: string, title: string | null, read: boolean, disposition: string, category: string | null, tags: Array<string>, archived: boolean, 
 /**

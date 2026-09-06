@@ -10,7 +10,7 @@ use ts_rs::TS;
 use crate::relationships;
 use crate::vocab::{
     PARKED_STATUS, PROGRAM_TERMINAL_STATUSES, PROPOSAL_LIVE_STATUSES, PROPOSAL_TERMINAL_STATUSES,
-    WI_FINISHED_STATUSES,
+    WI_FINISHED_STATUSES, WI_UNFINISHED_STATUSES,
 };
 
 use super::awaiting::{list_awaiting, AwaitingRow};
@@ -384,6 +384,67 @@ pub struct BoardRollup {
     /// it already has. `preview_title` is what materialising would create right
     /// now, substitutions applied, so a panel needs no follow-up read.
     pub due_schedules: Vec<ScheduleRow>,
+
+    /// Scheduled work that is **in flight** (#1644): every schedule whose newest
+    /// materialized work item is still unfinished, newest firing first.
+    ///
+    /// This block exists because `due_schedules` and the work item were between
+    /// them hiding the work. The instant a schedule materializes it stops being
+    /// due — correctly, that is the outstanding-item clause stopping it
+    /// competing with the item it just produced — and the open item it left
+    /// behind landed in **no** board panel: not in a proposal, not blocked, not
+    /// awaiting, and `events` carries status *changes*, so being created was not
+    /// one. Verified 2026-08-26 with WI #1635 (schedule 1112), whose only
+    /// surfaces were the Schedules page and the find-by-ID box.
+    ///
+    /// **A sibling field, not a `state` discriminator folded into
+    /// `due_schedules`** (Ken, 2026-09-06). Both shapes were on the table in
+    /// #1644. One list with `state: due | in_flight` is tidier on paper and is a
+    /// breaking change to a shipped contract: kfdc and korg-dash already render
+    /// `due_schedules`, and every one of them would have to change to keep
+    /// showing what it already shows. Additive costs them nothing and lets
+    /// kfdc #1645 opt in. The two blocks also answer different questions — due
+    /// is a nag, in-flight is a tracker — which is why `due_schedules`'
+    /// uncapped-because-the-row-a-cap-drops-waited-longest reasoning does not
+    /// transfer, though this is uncapped too, bounded by construction: a
+    /// schedule leaves the block the moment its item is finished.
+    ///
+    /// Rows are a projection rather than `ScheduleRow` because the payload is
+    /// mostly about the *work item*, which `ScheduleRow` carries only as a
+    /// `last_wi_number` — a consumer would need a read per row to render a title.
+    pub in_flight_schedules: Vec<InFlightSchedule>,
+}
+
+/// One in-flight schedule: what fired, and the unfinished work it produced.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct InFlightSchedule {
+    /// The schedule's node id — `korg:<node_id>` resolves it, so a consumer can
+    /// link the schedule as well as the item.
+    pub node_id: i64,
+    /// The schedule's template title, verbatim and unsubstituted, exactly as
+    /// `ScheduleRow::title` carries it. What the firing actually produced is
+    /// `wi_title`, already substituted, so no `preview_title` is needed here.
+    pub title: String,
+    pub project: Option<String>,
+    pub wi_number: i64,
+    pub wi_title: String,
+    /// One of [`WI_UNFINISHED_STATUSES`] by construction — `parked` included
+    /// (#810), which is the whole reason this reads the vocabulary rather than
+    /// spelling out `('open','resolved')`: parked scheduled work is deferred,
+    /// not finished, and dropping it here would re-hide exactly the item a
+    /// person deliberately set aside.
+    pub wi_status: String,
+    /// When the schedule fired, read from the work item's own `node.created`.
+    ///
+    /// Not the `materializes` edge's `created`: that column is nullable by
+    /// design (0016 §4 — NULL honestly means "predates provenance"), so a
+    /// consumer would have to render an optional timestamp for a row that
+    /// always has a real one. The item is created inside the materialize
+    /// transaction, so the two are the same instant anyway.
+    #[serde(with = "time::serde::rfc3339")]
+    #[ts(type = "string")]
+    pub materialized_at: OffsetDateTime,
 }
 
 /// One row of the board's proposal pass, before it is split by panel.
@@ -646,7 +707,48 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
         due_schedules: list_schedules(pool, None, None, true, archived_default())
             .await?
             .items,
+        in_flight_schedules: in_flight_schedules(pool).await?,
     })
+}
+
+/// Every schedule whose newest materialized item is still unfinished (#1644).
+///
+/// **Deliberately not filtered on `s.status = 'active'`**, which is where this
+/// parts company with `due_schedules`' predicate. A `once` schedule sets itself
+/// `done` the moment it fires, and the open work item it produced is precisely
+/// the thing that must not vanish — filtering on an active schedule would
+/// re-create the bug for the case that reported it. The same holds for a paused
+/// schedule: pausing stops it firing again, it does not finish the work already
+/// in flight. Unfinished-ness is a fact about the *item*, so the item is what
+/// this filters on.
+///
+/// Archived schedules are excluded, matching every other board block: archiving
+/// is korg's disposal, and a disposed row does not get to hold the board's
+/// attention.
+async fn in_flight_schedules(pool: &PgPool) -> Result<Vec<InFlightSchedule>> {
+    // Values come from the vocabulary and contain no user input, so inlining
+    // them is not an injection surface — the same call `outstanding_sql` makes.
+    let unfinished = WI_UNFINISHED_STATUSES
+        .iter()
+        .map(|s| format!("'{s}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT s.node_id, s.title, pj.name AS project, \
+                lw.wi_number, lw.title AS wi_title, lw.wi_status, \
+                ln.created AS materialized_at \
+         FROM schedule s \
+         JOIN node n ON n.id = s.node_id \
+         JOIN workitem lw ON lw.node_id = s.last_wi_id \
+         JOIN node ln ON ln.id = lw.node_id \
+         LEFT JOIN project pj ON pj.id = n.project_id \
+         WHERE NOT n.archived AND NOT ln.archived \
+           AND lw.wi_status IN ({unfinished}) \
+         ORDER BY ln.created DESC, s.node_id"
+    );
+    Ok(sqlx::query_as::<_, InFlightSchedule>(&sql)
+        .fetch_all(pool)
+        .await?)
 }
 
 /// The blocker pass (#978): which live board rows cannot start, and on what.
