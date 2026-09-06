@@ -121,3 +121,35 @@ no reason to host an error about a nav control.
 - regenerated bindings and the MCP schema snapshot
 
 `just check` green.
+
+## Deployed
+
+**2026-09-06 to kubsdb**, revision `586e113648b4` (squash-merge `586e113`),
+pushed to the registry as both `korg:586e113648b4` and `korg:latest`. Rollback
+target `aa731d9cd1a3` confirmed present in the registry before building.
+
+Migration `0033_comment_origin.sql` applied on startup: **32 → 33**. Zero
+row-count movement against the pre-deploy baseline — cards 30, links 15,
+projects 56, proposals 353, reports 62, work items 1260, all unchanged, node
+count 1842 and `seq_last` 1944 on both sides.
+
+Verified live, per slice:
+
+- **#1879** — `GET /api/nodes/1644/comments` carries `origin` (NULL on
+  pre-migration rows, which is the honest value). The write path was tested end
+  to end by posting this sprint's own deploy-record comment to proposal 1944
+  with `origin: "sprint-ship"` (comment 1386); it stamped and returned it.
+- **#1644** — `GET /api/board` carries `in_flight_schedules` alongside an
+  unchanged `due_schedules`. It returns `[]`, and that is **correct rather than
+  broken**: all four live schedules report `outstanding: false` — 1112's item
+  #1635 (the case that filed the WI) is finished, and the other three have never
+  materialized. The populated case is covered by `sprint076.rs`.
+- **#1809** — `/`, `/work-items`, `/planning/1944`, `/work-items/1809` and
+  `/schedules` all 200. `GET /api/nodes/1944` resolves to `/planning/1944` and
+  `/api/nodes/1809` to `/work-items/1809` — the `url` field the global box
+  navigates by. The box itself is in the served layout chunk
+  (`/_app/immutable/nodes/0.DDCJggeg.js`), so the new layout shipped rather than
+  a cached one.
+
+`post-deploy-check.sh --compare` exited 0: reads on both transports, the error
+contract, the idempotent write, and the MCP handshake all healthy.
