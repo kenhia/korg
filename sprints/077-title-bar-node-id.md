@@ -113,3 +113,35 @@ the reply.
 
 Suite is 95/95 against a fresh database on kai. Fresh, not production-sized —
 `docs/setup.md` prefers a restored dump, and this is the weaker of the two.
+
+## Deployed
+
+**2026-09-07 to kubsdb** (`:5674`), image
+`kubsdb.encke-wahoo.ts.net:5000/korg:560337877e68`, built from merge commit
+`5603378` — the revision assertion in the deploy step confirmed the running
+container carries that commit, so the pull is not being taken on trust.
+
+Rollback target is `586e113648b4` (sprint 076), confirmed present in the
+registry during preflight. No schema change: 33 migrations before and after.
+
+`post-deploy-check.sh --compare` clean — every row count identical across the
+deploy (work items 1275, proposals 356, cards 30, links 15, reports 64,
+projects 57; `node_count` 1866).
+
+Verified live in a browser against `https://kubsdb.encke-wahoo.ts.net:5674`,
+which is the check this sprint actually needed — the title is set client-side,
+so a 200 from `curl` proves nothing about it:
+
+| Page | Tab title |
+| --- | --- |
+| `/work-items/1966` | `korg — WI 1966` |
+| `/planning/1967` | `korg — proposal 1967` |
+| `/programs/1063` | `korg — program 1063` |
+| `/cards/812` | `korg — card 812` |
+| `/handoffs/1846` | `korg — handoff 1846` |
+| `/search` | `korg — search` |
+| `/work-items` | `korg` |
+
+The last row is the half of Ken's ask that came for free: off a detail page the
+tab goes back to plain `korg`.
+
