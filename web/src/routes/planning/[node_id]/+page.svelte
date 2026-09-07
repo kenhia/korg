@@ -17,7 +17,14 @@
   import { page } from "$app/stores";
   import { api, type ProposalDetail, type RelatedRef } from "$lib/api";
   import { PROPOSAL_STATUSES, type ProposalStatus } from "$lib/generated/vocab";
-  import { ID_CLASS, chip, nodePage, proposalStatusPill, stamp } from "$lib/domain";
+  import {
+    ID_CLASS,
+    chip,
+    docTitle,
+    nodePage,
+    proposalStatusPill,
+    stamp,
+  } from "$lib/domain";
   import BackTo from "$lib/components/BackTo.svelte";
   import Comments from "$lib/components/Comments.svelte";
   import CopyStart from "$lib/components/CopyStart.svelte";
@@ -84,7 +91,7 @@
 </script>
 
 <svelte:head>
-  <title>{proposal ? `${proposal.title} — korg` : "Proposal — korg"}</title>
+  <title>{docTitle("sprint_proposal", nodeId)}</title>
 </svelte:head>
 
 <section class="space-y-5">

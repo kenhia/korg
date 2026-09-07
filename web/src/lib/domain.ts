@@ -12,9 +12,11 @@
 // The vocabularies themselves are generated from korg-core (`just gen`); this
 // file is the thin layer of *judgement* on top of them.
 
+import { imgIdFromNodeId } from "./img";
 import {
   CARD_STATUSES,
   NODE_ROUTES,
+  NODE_TITLE_WORDS,
   PROJECT_CATEGORIES,
   RELATIONSHIP_LABELS,
   WI_STATUSES,
@@ -520,6 +522,39 @@ export const PROGRESS_WORK_CLASS = "bg-amber-500";
 export function nodePage(kind: string, node_id: number): string | null {
   const template = (NODE_ROUTES as Record<string, string | undefined>)[kind];
   return template ? template.replace("{id}", String(node_id)) : null;
+}
+
+// --- what the browser tab says (WI #1966) ------------------------------------
+
+/** The plain title, and the fallback: `app.html` ships it, and every list page
+ *  that sets no title of its own already shows it. */
+export const DOC_TITLE_BASE = "korg";
+
+/** The tab title for a detail page: `korg — WI 1961`, `korg — proposal 1480`.
+ *
+ *  **The id, not the node's title.** A detail page used to put the title in the
+ *  tab, which reads as noise (`korg - Comments carry no prov…`) and answers the
+ *  wrong question: the id is the thing you reach for when a long body has
+ *  scrolled the header off screen and you want to cite what you are reading.
+ *  The cost is real and was accepted knowingly — two work items open in two
+ *  tabs are now told apart by id alone.
+ *
+ *  **Call it with route params, never with the loaded node.** Every detail
+ *  route has the id in its URL, so the title is derivable synchronously: no
+ *  `korg` → `korg — WI 1961` flicker on load, and the tab still names the right
+ *  id when the node 404s or turns out to be a different kind.
+ *
+ *  A kind korg does not know gets the bare base rather than a title built round
+ *  a word nobody chose — `nodePage`'s `null` in the title register.
+ *
+ *  Attachments are spelled `korg — attachment img-7ac`: the display id is the
+ *  form the markdown token and `get_attachment` use, and it is the same node id
+ *  in hex, so this names one node either way. */
+export function docTitle(kind: string, node_id: number): string {
+  const word = (NODE_TITLE_WORDS as Record<string, string | undefined>)[kind];
+  if (!word) return DOC_TITLE_BASE;
+  const id = kind === "attachment" ? imgIdFromNodeId(node_id) : node_id;
+  return id == null ? DOC_TITLE_BASE : `${DOC_TITLE_BASE} — ${word} ${id}`;
 }
 
 // `nodeHref(kind, node_id, wi_number)` used to sit here as the "own page, or

@@ -19,7 +19,7 @@
   // same address. A kind that outgrows the uniform view graduates; it does not
   // get a new URL.
   import { api, type NodePreview, type Neighbor } from "$lib/api";
-  import { chip, nodePage, stamp } from "$lib/domain";
+  import { chip, docTitle, nodePage, stamp } from "$lib/domain";
   import { imgIdFromNodeId, imgUrl } from "$lib/img";
   import Comments from "./Comments.svelte";
   import ErrorNotice from "./ErrorNotice.svelte";
@@ -92,7 +92,9 @@
 </script>
 
 <svelte:head>
-  <title>{node ? `${node.title} — korg` : "korg"}</title>
+  <!-- From the props, not from `node`: both are known before the fetch, so the
+       tab is right on the first paint and stays right when the id 404s. -->
+  <title>{docTitle(expect, nodeId)}</title>
 </svelte:head>
 
 {#if error}

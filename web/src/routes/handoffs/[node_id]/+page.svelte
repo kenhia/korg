@@ -21,7 +21,7 @@
   import { api, type HandoffFull, type RelatedRef } from "$lib/api";
   import MarkdownView from "$lib/components/MarkdownView.svelte";
   import { modalOpen } from "$lib/components/Dialog.svelte";
-  import { chip, stamp } from "$lib/domain";
+  import { chip, docTitle, stamp } from "$lib/domain";
   import Comments from "$lib/components/Comments.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
   import NodePreview from "$lib/components/NodePreview.svelte";
@@ -100,7 +100,7 @@
 <svelte:window onkeydown={onKeyDown} />
 
 <svelte:head>
-  <title>{handoff ? `${handoff.title} — korg` : "Handoff — korg"}</title>
+  <title>{docTitle("handoff", nodeId)}</title>
 </svelte:head>
 
 <section class="space-y-4">

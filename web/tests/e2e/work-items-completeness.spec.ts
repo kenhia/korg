@@ -116,6 +116,13 @@ test("find-by-ID reaches an item the list never loaded", async ({ page }) => {
   // #817's acceptance: "jump to #123 must still work when #123 is not on the
   // current page". Loading everything makes that true by accident today, so it
   // is asserted here against a list that genuinely does not hold the target.
+  //
+  // Sprint 076 moved find-by-ID into the nav and made it navigate rather than
+  // filter: `submitFind` resolves the id through `/api/nodes/:id` and `goto`s
+  // the `url` on the reply. So the acceptance is now "you land on its page",
+  // and the mocked node has to carry the `url` the real one does — without it
+  // the control correctly refuses (`korg has no page for node …`) and the test
+  // would be asserting against its own incomplete fixture.
   await mockWorkItems(page, 10, 9999);
   const title = "far past the bound";
   await page.route("**/api/nodes/*", async (route) =>
@@ -125,6 +132,7 @@ test("find-by-ID reaches an item the list never loaded", async ({ page }) => {
         kind: "workitem",
         wi_number: 5000,
         title,
+        url: "/work-items/5000",
         project: "mockproj",
         tags: [],
         archived: false,
@@ -158,5 +166,6 @@ test("find-by-ID reaches an item the list never loaded", async ({ page }) => {
   await page.getByPlaceholder("find by ID…").fill("5000");
   await page.getByRole("button", { name: "Go", exact: true }).click();
 
-  await expect(page.getByRole("row", { name: new RegExp(title) })).toBeVisible();
+  await expect(page).toHaveURL(/\/work-items\/5000$/);
+  await expect(page.getByTestId("node-detail")).toContainText(title);
 });

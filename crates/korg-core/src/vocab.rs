@@ -114,6 +114,53 @@ pub fn node_path(kind: &str, node_id: i64) -> Option<String> {
         .map(|(_, template)| template.replace("{id}", &node_id.to_string()))
 }
 
+/// What each node kind is *called* in a browser tab title (#1966, sprint 077).
+///
+/// The sibling of [`NODE_ROUTES`], and here for the same reason. A detail page
+/// used to put the node's title in the tab, which is the wrong field: when a
+/// long body scrolls the header off screen the thing you need is the id, so the
+/// tab reads `korg — WI 1961` and `korg — proposal 1480` instead.
+///
+/// **Why korg owns a word the web app renders.** A kind → word map hand-kept in
+/// `domain.ts` is a claim about korg's vocabulary held where nothing fences it,
+/// which is the third answer GP-16 rules out — and the argument does not soften
+/// because the web app *is* korg: `NODE_ROUTES` is generated for exactly that
+/// reason. `every_node_kind_has_a_title_word` fences this the same way, so a
+/// tenth kind cannot reach a browser tab as `korg — undefined 1234`.
+///
+/// `workitem` is `WI` in capitals because that is how the handle is spelled
+/// everywhere else it appears — `WI-1961` in prose, `#1961` on the page — and
+/// every other kind is lowercase because it is a common noun, not a locator.
+///
+/// The words must be distinct ([`node_title_words_are_distinct`]): the tab is
+/// how one open korg is told from another, so two kinds rendering the same word
+/// would put `korg — report 1420` on a page that is not a report.
+pub const NODE_TITLE_WORDS: [(&str, &str); 9] = [
+    ("workitem", "WI"),
+    ("card", "card"),
+    ("link", "link"),
+    ("sprint_proposal", "proposal"),
+    ("report", "report"),
+    ("handoff", "handoff"),
+    ("program", "program"),
+    ("schedule", "schedule"),
+    ("attachment", "attachment"),
+];
+
+/// The word this kind goes by in a tab title, or `None` for a kind korg does
+/// not have — which, by [`NODE_TITLE_WORDS`]'s fence, is only a kind that does
+/// not exist.
+///
+/// `Option` for [`node_path`]'s reason: `kind` reaches a caller as a string off
+/// the wire, and the honest answer to one korg does not recognise is the plain
+/// `korg` fallback rather than a title built around a word nobody chose.
+pub fn node_title_word(kind: &str) -> Option<&'static str> {
+    NODE_TITLE_WORDS
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map(|(_, word)| *word)
+}
+
 /// The literal for **parked**, spelled once (#1534/#1535, sprint 072).
 ///
 /// It is a member of three vocabularies now — work items (#810), sprint
@@ -644,12 +691,13 @@ pub fn validate(value: &str, allowed: &[&str], what: &str) -> Result<(), RepoErr
 #[cfg(test)]
 mod partition {
     use super::{
-        node_path, CARD_STATUSES, CARD_TERMINAL_STATUSES, NODE_KINDS, NODE_ROUTES, PARKED_STATUS,
-        PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES, PROGRAM_TERMINAL_STATUSES, PROPOSAL_LIVE_STATUSES,
-        PROPOSAL_STARTED_STATUSES, PROPOSAL_STATUSES, PROPOSAL_TERMINAL_STATUSES, REPORT_STATUSES,
-        SCHEDULE_LIVE_STATUSES, SCHEDULE_STATUSES, SCHEDULE_TERMINAL_STATUSES, SOURCE_ASSERTIONS,
-        SOURCE_ASSERTS_UNKNOWN, SOURCE_FRESHNESS, WI_FINISHED_STATUSES, WI_LIVE_STATUSES,
-        WI_STATUSES, WI_TERMINAL_STATUSES, WI_UNFINISHED_STATUSES,
+        node_path, node_title_word, CARD_STATUSES, CARD_TERMINAL_STATUSES, NODE_KINDS, NODE_ROUTES,
+        NODE_TITLE_WORDS, PARKED_STATUS, PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES,
+        PROGRAM_TERMINAL_STATUSES, PROPOSAL_LIVE_STATUSES, PROPOSAL_STARTED_STATUSES,
+        PROPOSAL_STATUSES, PROPOSAL_TERMINAL_STATUSES, REPORT_STATUSES, SCHEDULE_LIVE_STATUSES,
+        SCHEDULE_STATUSES, SCHEDULE_TERMINAL_STATUSES, SOURCE_ASSERTIONS, SOURCE_ASSERTS_UNKNOWN,
+        SOURCE_FRESHNESS, WI_FINISHED_STATUSES, WI_LIVE_STATUSES, WI_STATUSES,
+        WI_TERMINAL_STATUSES, WI_UNFINISHED_STATUSES,
     };
     use std::collections::BTreeSet;
 
@@ -904,6 +952,54 @@ mod partition {
         );
     }
 
+    /// Every node kind has a word for its tab title (#1966). The same fence as
+    /// [`every_node_kind_has_a_route`], one register over: a kind that reaches
+    /// production with a page but no title word renders `korg — undefined 1234`,
+    /// and nothing but this would catch it — a browser tab is not something any
+    /// other test looks at.
+    #[test]
+    fn every_node_kind_has_a_title_word() {
+        for kind in NODE_KINDS {
+            let word = node_title_word(kind).unwrap_or_else(|| {
+                panic!(
+                    "node kind {kind:?} has no entry in NODE_TITLE_WORDS — every \
+                     kind korg holds is reachable at a URL, so every kind can be \
+                     the page whose tab has to name it"
+                )
+            });
+            assert!(
+                !word.is_empty() && !word.contains(char::is_whitespace),
+                "{kind}'s title word {word:?} must be a single bare word"
+            );
+        }
+        assert_eq!(
+            NODE_TITLE_WORDS.len(),
+            NODE_KINDS.len(),
+            "NODE_TITLE_WORDS has a row for a kind that is not in NODE_KINDS"
+        );
+    }
+
+    /// Two kinds sharing a word would make a tab lie: `korg — report 1420` on a
+    /// page that is not a report. The title exists to identify the node, which
+    /// it cannot do with an ambiguous noun.
+    #[test]
+    fn node_title_words_are_distinct() {
+        let words: BTreeSet<&str> = NODE_TITLE_WORDS.iter().map(|(_, w)| *w).collect();
+        assert_eq!(
+            words.len(),
+            NODE_TITLE_WORDS.len(),
+            "two node kinds share a title word"
+        );
+    }
+
+    /// A kind korg does not have gets `None`, not a fabricated word — the plain
+    /// `korg` fallback is the honest tab title. [`an_unknown_kind_has_no_route`]
+    /// in the title register.
+    #[test]
+    fn an_unknown_kind_has_no_title_word() {
+        assert_eq!(node_title_word("topic"), None);
+    }
+
     /// A kind korg does not have gets `None`, not a fabricated path. GP-13's
     /// consumer half in the one place korg is itself the consumer: `kind`
     /// arrives as a `String` off the wire, and the honest answer to an
@@ -1036,7 +1132,7 @@ mod partition {
 
 #[cfg(test)]
 mod generate {
-    use super::{EXPORTED, NODE_ROUTES};
+    use super::{EXPORTED, NODE_ROUTES, NODE_TITLE_WORDS};
     use crate::relationships::REGISTRY;
 
     fn quoted(values: &[&str]) -> String {
@@ -1083,6 +1179,19 @@ mod generate {
         );
         for (kind, template) in NODE_ROUTES {
             out.push_str(&format!("  {kind}: \"{template}\",\n"));
+        }
+        out.push_str("} as const;\n");
+
+        // The title words (#1966), generated for NODE_ROUTES' reason: the web
+        // app is the only renderer of these, but a hand-kept copy of a korg
+        // vocabulary in the web app is what the route table stopped doing.
+        out.push_str(
+            "\n/** What each node kind is called in a browser tab title. korg-core owns this\n \
+             *  table beside NODE_ROUTES, so a kind cannot get a page without getting a word\n \
+             *  for it. */\nexport const NODE_TITLE_WORDS = {\n",
+        );
+        for (kind, word) in NODE_TITLE_WORDS {
+            out.push_str(&format!("  {kind}: \"{word}\",\n"));
         }
         out.push_str("} as const;\n");
         out

@@ -21,23 +21,21 @@ async function seedWorkItem(request: APIRequestContext) {
   return { title, wi_number: wi.wi_number as number };
 }
 
-/** Open a work item's detail pane by its number.
+/** Open a work item's detail page by its number.
  *
- *  Find-by-ID rather than clicking a row: the seeded item has no project, and
- *  the page remembers a sticky project selection, so the row may legitimately
- *  be filtered out of view. Find-by-ID is the feature that exists to reach any
- *  item regardless of the current filters (WI #260). */
+ *  The item's own URL rather than a row click: the seeded item has no project,
+ *  and the list remembers a sticky project selection, so the row may
+ *  legitimately be filtered out of view (WI #260).
+ *
+ *  This used to drive the Work Items page's own find-by-ID box. Sprint 076
+ *  moved find-by-ID into the nav and made it *navigate* — `submitFind` resolves
+ *  the id and `goto`s `node.url` — so the box this helper typed into no longer
+ *  exists, and the page it used to filter is no longer where the item is shown.
+ *  Going straight to the URL find-by-ID now resolves to is the same
+ *  destination, minus a control this suite is not about. */
 async function openWorkItem(page: Page, wi: number) {
-  await page.goto("/work-items");
-  await page.waitForLoadState("networkidle");
-  await page.getByLabel("Find a work item or node by id").fill(String(wi));
-  // `exact` because getByRole's name match is a case-insensitive SUBSTRING by
-  // default, and the Work Items page renders one button per project — so any
-  // project whose name contains "go" (`e2e-due-pill-gone-…`, filed by the
-  // schedules suite running in parallel) turns this into a strict-mode
-  // violation. It passed only while that project happened not to exist yet.
-  await page.getByRole("button", { name: "Go", exact: true }).click();
-  await page.getByRole("row", { name: new RegExp(`\\b${wi}\\b`) }).first().click();
+  await page.goto(`/work-items/${wi}`);
+  await expect(page.getByTestId("node-detail")).toBeVisible();
 }
 
 test("deleting a comment takes two presses", async ({ page, request }) => {

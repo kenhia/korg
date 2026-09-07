@@ -154,16 +154,19 @@ test("find-by-ID resolves a program to its real title and page", async ({
 
   // #982: entering a program's id used to render the generic fallback — chip
   // PROGRAM, title literally "program #979".
+  //
+  // Sprint 076 moved find-by-ID into the nav and made it navigate straight to
+  // the node's page instead of opening a preview panel with an "open its page"
+  // button in it. Both halves of what this asserted survive that, on the page
+  // rather than in the panel: the id resolves to a *program* page, and what it
+  // shows is the program's real title rather than the generic `program #979`.
   await page.goto("/work-items");
-  await page.getByLabel("Find a work item or node by id").fill(String(program.node_id));
-  await page.getByRole("button", { name: "Go" }).click();
+  await page.getByPlaceholder("find by ID…").fill(String(program.node_id));
+  await page.getByRole("button", { name: "Go", exact: true }).click();
 
-  const panel = page.getByTestId("node-preview-panel");
-  await expect(panel).toBeVisible();
-  await expect(panel).toContainText(`program ${stamp}`);
-  await expect(panel).not.toContainText(`program #${program.node_id}`);
-
-  // And it offers the node's own page, which used to be handoff-only.
-  await panel.getByTestId("open-node-page").click();
   await expect(page).toHaveURL(new RegExp(`/programs/${program.node_id}$`));
+  await expect(page.getByRole("heading", { name: `program ${stamp}` })).toBeVisible();
+  await expect(page.locator("body")).not.toContainText(
+    `program #${program.node_id}`,
+  );
 });
