@@ -20,6 +20,7 @@
   import Comments from "./Comments.svelte";
   import Dialog from "./Dialog.svelte";
   import ErrorNotice from "./ErrorNotice.svelte";
+  import { docTitle } from "$lib/domain";
 
   let { nodeId, onClose }: { nodeId: number; onClose: () => void } = $props();
 
@@ -52,6 +53,34 @@
   const idLabel = $derived(
     node?.wi_number != null ? `#${node.wi_number}` : `node #${nodeId}`,
   );
+
+  // The tab names the node you are *looking at* (#1969), which while this is
+  // open is the previewed one — not whatever route is underneath.
+  //
+  // **Imperative, and not a `<svelte:head>`, on purpose.** Sprint 077 set every
+  // routed page's title declaratively, and a second `<title>` element does not
+  // override the first: `document.title` reads the *first* one in the document,
+  // so a `<svelte:head>` here would lose to the page beneath — and lose
+  // silently, which is the worst version. Assigning `document.title` writes
+  // through whatever element is first, so the slide-over wins for exactly as
+  // long as it is open regardless of how many titles are mounted below it.
+  //
+  // That is the precedence rule this sprint owes: **the topmost open surface
+  // owns the title.** The slide-over is always topmost — it is a modal
+  // `<dialog>` — so "topmost" needs no bookkeeping, just this effect.
+  //
+  // The cleanup restores what it found rather than recomputing it, so the page
+  // underneath does not have to be re-derivable from here. Changing `nodeId`
+  // while open re-runs the effect, and cleanup restores before the re-run, so
+  // `previous` never accumulates a preview's own title.
+  $effect(() => {
+    if (!node) return;
+    const previous = document.title;
+    document.title = docTitle(node.kind, node.node_id);
+    return () => {
+      document.title = previous;
+    };
+  });
 </script>
 
 <!-- Was a hand-built overlay whose scrim was a full-screen

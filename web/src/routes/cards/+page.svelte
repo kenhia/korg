@@ -3,7 +3,16 @@
   import { dndzone, type DndEvent } from "svelte-dnd-action";
   import { api, type CardRow, type Comment } from "$lib/api";
   import { CARD_STATUSES, type CardStatus } from "$lib/generated/vocab";
-  import { activeCardStatuses, chip, CUT, ID_CLASS, isCut, midRank } from "$lib/domain";
+  import {
+    activeCardStatuses,
+    chip,
+    CUT,
+    DOC_TITLE_BASE,
+    docTitle,
+    ID_CLASS,
+    isCut,
+    midRank,
+  } from "$lib/domain";
   import { attempt, notify, reportError } from "$lib/toast.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
   import Dialog from "$lib/components/Dialog.svelte";
@@ -162,6 +171,13 @@
 
   // --- edit modal (+ comments) ---
   let editing = $state<CardRow | null>(null);
+
+  // A card's detail surface is its editor: clicking a card on the board is how
+  // you open one, and the modal takes the screen over while it is up. So it
+  // names the card in the tab (#1969), on the same rule as the Work Items
+  // panel — the line being that a surface which takes over to show you ONE node
+  // publishes a title, while an inline row expander (reading-list) does not,
+  // because the list is still right there.
   let form = $state({
     title: "",
     status: "Backlog" as CardStatus,
@@ -263,6 +279,15 @@
     await load();
   });
 </script>
+
+<!-- A card's detail surface is its editor (#1969): clicking a card on the board
+     is how you open one, and the modal takes the screen over while it is up —
+     so the tab names it, on the same rule as the Work Items panel. `<svelte:head>`
+     may not sit inside a block, so the condition lives in the expression, which
+     also states the close case rather than leaving it to an unmount. -->
+<svelte:head>
+  <title>{editing ? docTitle("card", editing.node_id) : DOC_TITLE_BASE}</title>
+</svelte:head>
 
 {#snippet tile(item: DndItem)}
   <!-- svelte-ignore a11y_click_events_have_key_events -->

@@ -321,11 +321,26 @@ one number builds every row.
 
 `NODE_TITLE_WORDS` sits beside it and is fenced the same way
 (`every_node_kind_has_a_title_word`): the word each kind goes by in a browser
-tab, so a detail page's title reads `korg — WI 1961` or `korg — proposal 1480`
-rather than the node's own title (#1966). It is the id you want when a long
-body has scrolled the header off screen. The web app reads the generated table
-rather than keeping a copy, for the reason the route table is generated at all —
-a hand-kept kind map is one korg grows out from under.
+tab, so the title reads `korg — WI 1961` or `korg — proposal 1480` rather than
+the node's own title (#1966). It is the id you want when a long body has
+scrolled the header off screen. The web app reads the generated table rather
+than keeping a copy, for the reason the route table is generated at all — a
+hand-kept kind map is one korg grows out from under.
+
+**The tab follows the node you are looking at, not the URL** (#1969). A routed
+page is only one way to open a node: clicking a Work Items row, a proposal's
+title on Planning, or a card on the board opens an in-page surface and changes
+no URL. Those name the node too, and the tab returns to plain `korg` when the
+surface closes. The rule where they overlap is **the topmost open surface owns
+the title** — a slide-over opened over a detail page names the previewed node
+and hands the title back on close.
+
+That rule is enforced by two different mechanisms, which is deliberate: routed
+pages and in-page panels publish a `<svelte:head>`, while the slide-over assigns
+`document.title` directly. `document.title` reads the *first* `<title>` in the
+document, so an overlay that published a second one would lose to the page
+underneath — and only on pages that already set a title, which is the worst
+place for a bug to hide. `detail-titles.spec.ts` holds that line.
 
 **`GET /n/{node_id}`** resolves a node to its page and redirects (307), or 404s
 if there is no such node. It is not under `/api` because it answers with a
