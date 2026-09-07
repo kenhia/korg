@@ -95,3 +95,36 @@ carries `wi_number`, so it is synchronous.
 The proposal suggested putting the tests in the Work Items and Planning specs.
 They went in one file instead: this is one behaviour with one precedence rule,
 and the stacking test belongs to no single surface.
+
+## Deployed
+
+**2026-09-07 to kubsdb** (`:5674`), image
+`kubsdb.encke-wahoo.ts.net:5000/korg:ac9b022f6bce`, built from merge commit
+`ac9b022`. The deploy's revision assertion confirmed the running container
+carries that commit rather than taking `compose pull` on trust.
+
+Rollback target `560337877e68` (sprint 077), confirmed present in the registry
+during preflight. No schema change: 33 migrations before and after.
+
+`post-deploy-check.sh --compare` clean — every count identical across the
+deploy (work items 1276, proposals 357, cards 30, links 15, reports 64,
+projects 57; `node_count` 1868).
+
+Verified in a browser against `https://kubsdb.encke-wahoo.ts.net:5674`, driving
+the three gestures Ken reported plus the two this sprint added:
+
+| Gesture | Tab title |
+| --- | --- |
+| Work Items → click a row | `korg — WI 1966` |
+| … then Escape | `korg` |
+| Planning → click the proposal title | `korg — proposal 1960` |
+| … then Escape | `korg` |
+| Programs → click the title (worked before) | `korg — program 1480` |
+| Cards → click a card | `korg — card 200` |
+| … then Escape | `korg` |
+| `planning/1970`, preview opened over it | `korg — WI 1969` |
+| … then Escape | `korg — proposal 1970` |
+
+The last pair is the precedence rule live: the slide-over takes the title from
+the page beneath it and gives it back on close.
+
