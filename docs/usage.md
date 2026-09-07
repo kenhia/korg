@@ -319,6 +319,14 @@ and `just gen` exports it to the web app as `NODE_ROUTES`.
 A work item's `wi_number` **is** its node id (the 0009 identity migration), so
 one number builds every row.
 
+`NODE_TITLE_WORDS` sits beside it and is fenced the same way
+(`every_node_kind_has_a_title_word`): the word each kind goes by in a browser
+tab, so a detail page's title reads `korg — WI 1961` or `korg — proposal 1480`
+rather than the node's own title (#1966). It is the id you want when a long
+body has scrolled the header off screen. The web app reads the generated table
+rather than keeping a copy, for the reason the route table is generated at all —
+a hand-kept kind map is one korg grows out from under.
+
 **`GET /n/{node_id}`** resolves a node to its page and redirects (307), or 404s
 if there is no such node. It is not under `/api` because it answers with a
 redirect to a page rather than with JSON. This is the call a consumer holding a

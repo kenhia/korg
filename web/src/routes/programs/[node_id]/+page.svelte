@@ -15,6 +15,7 @@
     PROGRESS_VERIFIED_CLASS,
     PROGRESS_WORK_CLASS,
     chip,
+    docTitle,
     nodePage,
     programStatusStyle,
     sliceProgress,
@@ -107,6 +108,13 @@
     await commitStatus(status);
   }
 </script>
+
+<!-- This page set no title at all until #1966, so it read as the bare `korg`
+     fallback — the same bug as the pages that named the node, one register
+     over: neither told you which program you had open. -->
+<svelte:head>
+  <title>{docTitle("program", nodeId)}</title>
+</svelte:head>
 
 <section class="space-y-5">
   <a class="text-sm text-[var(--color-muted)] hover:underline" href="/programs"

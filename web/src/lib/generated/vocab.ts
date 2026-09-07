@@ -84,3 +84,18 @@ export const NODE_ROUTES = {
   schedule: "/schedules/{id}",
   attachment: "/attachments/{id}",
 } as const;
+
+/** What each node kind is called in a browser tab title. korg-core owns this
+ *  table beside NODE_ROUTES, so a kind cannot get a page without getting a word
+ *  for it. */
+export const NODE_TITLE_WORDS = {
+  workitem: "WI",
+  card: "card",
+  link: "link",
+  sprint_proposal: "proposal",
+  report: "report",
+  handoff: "handoff",
+  program: "program",
+  schedule: "schedule",
+  attachment: "attachment",
+} as const;
