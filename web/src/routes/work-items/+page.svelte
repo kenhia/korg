@@ -21,7 +21,9 @@
     DEFAULT_RELATIONSHIP_LABEL,
     IN_PROPOSAL_COLOR,
     KNOWN_RELATIONSHIP_LABELS,
+    DOC_TITLE_BASE,
     chip,
+    docTitle,
     isHiddenByDefault,
     partitionParked,
     projectRailColor,
@@ -748,6 +750,28 @@
 </script>
 
 <svelte:window onkeydown={onKey} />
+
+<!-- The tab names the item open in the detail panel (#1969). Clicking a row is
+     how a work item usually gets opened, and it changes no URL — so sprint
+     077's route-bound title never moved and the tab stayed a bare `korg`.
+
+     Declarative, unlike the slide-over's imperative assignment, and the
+     difference is the precedence rule: this panel is *not* the topmost surface
+     (NodePreview opens over it), so it publishes a title and lets the thing
+     above it win.
+
+     The ternary rather than an `{#if}` around the tag, because `<svelte:head>`
+     may not sit inside a block — and it reads better anyway: closing the panel
+     is a value change back to plain `korg`, which is the "back to plain korg
+     when I leave a detail" half of the ask, stated rather than implied.
+
+     `wi_number` comes off the list row, so this is synchronous and never
+     flickers: the panel cannot be open without it. -->
+<svelte:head>
+  <title
+    >{detail ? docTitle("workitem", detail.wi_number) : DOC_TITLE_BASE}</title
+  >
+</svelte:head>
 
 <section class="space-y-4">
   <div class="flex flex-wrap items-center justify-between gap-2">
