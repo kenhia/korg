@@ -46,7 +46,7 @@ pub struct LabelSpec {
 ///
 /// (This doc said "free-form labels stay legal" until #1387 — text older than
 /// the closure it was describing, which is the drift class that WI is about.)
-pub const REGISTRY: [LabelSpec; 9] = [
+pub const REGISTRY: [LabelSpec; 10] = [
     LabelSpec {
         label: "covers",
         directed: true,
@@ -177,7 +177,47 @@ pub const REGISTRY: [LabelSpec; 9] = [
         same_project: false,
         reads: "node has attachment",
     },
+    LabelSpec {
+        // Sprint 079 (#2152, program korg:2167): a program's terminal array of
+        // extended tests — the work items whose acceptance only the passage of
+        // days can satisfy, and which hold the program in `soaking`.
+        //
+        // An edge rather than a column, and rather than a work-item *type*.
+        // The type was considered and rejected in the design (korg:2150 D-2):
+        // membership of the array IS the fact, and a type alongside it would be
+        // a second source of truth that nothing checks. This registry is the
+        // reason the edge costs so little — `relate`/`unrelate` are already the
+        // API, `rank` already orders (as `includes` uses it), `origin` already
+        // records who wrote it. No new tool.
+        //
+        // `same_project` is false and could not be otherwise: a program has no
+        // project at all, and its soaks routinely span the repos its slices
+        // touched. `includes` settled this argument already.
+        //
+        // Two refusals ride on this label in `repo::relate`, and they are the
+        // point rather than decoration. The work item must carry `check_after`
+        // and `invalidated_if` — that is what makes the #2058 lesson
+        // non-optional instead of the most droppable part of the design — and
+        // it must not still be `covers`-ed by a live proposal, so that
+        // extracting a soak out of a slice is two deliberate calls rather than
+        // one that silently un-claims a proposal's work.
+        label: SOAKS_LABEL,
+        directed: true,
+        left_kind: Some("program"),
+        right_kind: Some("workitem"),
+        same_project: false,
+        reads: "program soaks work item as an extended test",
+    },
 ];
+
+/// The `soaks` label, named because korg-core matches on it in `relate` (both
+/// refusals), reads it back in `get_program` and the board, and quotes it in
+/// two tool descriptions (#2152).
+///
+/// A constant rather than five string literals, for the reason program korg:2070
+/// paid six times: *a string that looks right, parses fine, and matches
+/// nothing*. Every one of those defects was a literal spelled once too often.
+pub const SOAKS_LABEL: &str = "soaks";
 
 /// The registry entry for `label`, or `None` if it is a free-form label.
 pub fn spec(label: &str) -> Option<&'static LabelSpec> {

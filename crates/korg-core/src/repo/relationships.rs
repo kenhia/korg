@@ -9,9 +9,10 @@ use ts_rs::TS;
 
 use crate::error::RepoError;
 use crate::relationships;
+use crate::vocab;
 
 use super::common::{cross_project_covers, node_kind, node_project, wi_handle};
-use super::programs::promote_queued_programs_over;
+use super::programs::promote_programs_over;
 use super::selectors::unknown_label;
 
 // --- generalized relationships --------------------------------------------
@@ -125,6 +126,87 @@ pub async fn relate(
         }
     }
 
+    // The two `soaks` refusals (#2152). Both live here, in core, for the reason
+    // this file gives about every other rule it holds: core is the single write
+    // path both transports share. Both are `invalid_input` and both name the
+    // cause — an agent that gets a bare "refused" retries, and an agent told
+    // which field is missing fills it in.
+    if label == relationships::SOAKS_LABEL {
+        let (wi_number, title) = wi_handle(pool, right).await?;
+
+        // 1. The soak fields are what make the #2058 lesson non-optional. That
+        //    test failed because slices of its own program overwrote the
+        //    baseline it depended on and nothing had recorded that this would
+        //    void it. The design (korg:2150) calls the invalidation statement
+        //    the most valuable and most droppable part of the whole model, so
+        //    the array refuses a member that has not written one down.
+        let soak_fields: Option<(Option<time::Date>, Option<String>)> =
+            sqlx::query_as("SELECT check_after, invalidated_if FROM workitem WHERE node_id = $1")
+                .bind(right)
+                .fetch_optional(pool)
+                .await?;
+        let (check_after, invalidated_if) = soak_fields.unwrap_or((None, None));
+        let mut missing = Vec::new();
+        if check_after.is_none() {
+            missing.push("check_after");
+        }
+        if invalidated_if.as_deref().unwrap_or("").trim().is_empty() {
+            missing.push("invalidated_if");
+        }
+        if !missing.is_empty() {
+            return Err(RepoError::InvalidInput(format!(
+                "cannot soak #{wi_number} ({title}): an extended test must state {} — set {} \
+                 with update_work_item first. `check_after` is the earliest date its evidence \
+                 can be judged (YYYY-MM-DD); `invalidated_if` is what state, if it changes, \
+                 voids the test.",
+                if missing.len() == 2 {
+                    "both of its soak fields".to_string()
+                } else {
+                    format!("its `{}`", missing[0])
+                },
+                missing
+                    .iter()
+                    .map(|m| format!("`{m}`"))
+                    .collect::<Vec<_>>()
+                    .join(" and ")
+            ))
+            .into());
+        }
+
+        // 2. A work item cannot be both covered by a live proposal and soaked.
+        //    Extracting a soak out of a slice (design decision 4) is therefore
+        //    `unrelate covers` then `relate soaks` — two calls, deliberately,
+        //    so that nothing silently un-claims work a proposal is still
+        //    holding. "Live" is the same set the membership markers use and for
+        //    the same reason: a `parked` proposal still claims its work.
+        let covering: Option<(i64, String)> = sqlx::query_as(
+            "SELECT sp.node_id, sp.title FROM relationship r \
+               JOIN sprint_proposal sp ON sp.node_id = r.left_id \
+              WHERE r.relationship = 'covers' AND r.right_id = $1 \
+                AND sp.status::text = ANY($2) \
+              ORDER BY sp.node_id LIMIT 1",
+        )
+        .bind(right)
+        .bind(
+            vocab::PROPOSAL_LIVE_STATUSES
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>(),
+        )
+        .fetch_optional(pool)
+        .await?;
+        if let Some((proposal_id, proposal_title)) = covering {
+            return Err(RepoError::InvalidInput(format!(
+                "cannot soak #{wi_number} ({title}): it is still covered by live proposal \
+                 korg:{proposal_id} ({proposal_title}). An extended test is terminal work, not \
+                 slice work — unrelate the `covers` edge first, then relate `soaks`. The two \
+                 calls are deliberate: one of them un-claims a proposal's work, and that should \
+                 never happen as a side effect."
+            ))
+            .into());
+        }
+    }
+
     // L-10: a registry-undirected label (related-to) whose reverse edge already
     // exists dedups to it instead of storing a mirror. Directed labels keep
     // both orientations — A depends_on B and B depends_on A is a cycle, not a
@@ -182,7 +264,7 @@ pub async fn relate(
     // reason this file already gives twice: core is the one write path both
     // transports share, never a trigger that can drift from it.
     if label == "includes" {
-        promote_queued_programs_over(&mut *tx, right).await?;
+        promote_programs_over(&mut *tx, right).await?;
     }
 
     tx.commit().await?;
@@ -283,14 +365,19 @@ pub const RELATED_CONTEXT_CAP: i64 = 25;
 /// The inlined related-context block for a focused read (LB-3): up to
 /// [`RELATED_CONTEXT_CAP`] of `node`'s edges, ordered by `(label, node_id)` so
 /// structural labels (`covers`, `depends_on`, `finding`) survive truncation
-/// ahead of `related-to`, plus whether more were dropped. `exclude_label` omits
-/// a label already inlined elsewhere — `get_proposal` passes `covers`, which it
+/// ahead of `related-to`, plus whether more were dropped. `exclude_labels` omits
+/// labels already inlined elsewhere — `get_proposal` passes `covers`, which it
 /// carries as `covered`. Titles resolve in one query (no N+1); `directed` comes
 /// from the registry, exactly as `neighbors` computes it.
+///
+/// A slice rather than a single label since #2152: `get_program` now carries
+/// two edge sets in their own arrays (`includes` as `slices`, `soaks` as
+/// `soaks`), and reporting either one twice would spend a slot of the cap
+/// saying something the payload already said better.
 pub async fn related_context(
     pool: &PgPool,
     node: i64,
-    exclude_label: Option<&str>,
+    exclude_labels: &[&str],
 ) -> Result<(Vec<RelatedRef>, bool)> {
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -326,12 +413,17 @@ pub async fn related_context(
          LEFT JOIN handoff hd         ON hd.node_id = other.id \
          LEFT JOIN attachment at      ON at.node_id = other.id \
          WHERE (r.left_id = $1 OR r.right_id = $1) \
-           AND ($2::text IS NULL OR r.relationship <> $2) \
+           AND r.relationship <> ALL($2) \
          ORDER BY r.relationship, other.id \
          LIMIT $3",
     )
     .bind(node)
-    .bind(exclude_label)
+    .bind(
+        exclude_labels
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>(),
+    )
     .bind(RELATED_CONTEXT_CAP)
     .fetch_all(pool)
     .await?;

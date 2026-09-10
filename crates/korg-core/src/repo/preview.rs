@@ -101,7 +101,8 @@ pub async fn get_node_preview(pool: &PgPool, id: i64) -> Result<Option<NodePrevi
         "workitem" => {
             if let Some(r) = sqlx::query(
                 "SELECT w.wi_number, w.wi_type, w.wi_status, w.wi_tshirt, w.sprint, \
-                        a.name AS area, w.title, w.content, w.details \
+                        a.name AS area, w.title, w.content, w.details, \
+                        w.check_after, w.invalidated_if \
                  FROM workitem w LEFT JOIN area a ON a.id = w.area_id \
                  WHERE w.node_id = $1",
             )
@@ -117,6 +118,22 @@ pub async fn get_node_preview(pool: &PgPool, id: i64) -> Result<Option<NodePrevi
                 }
                 if let Some(sprint) = r.get::<Option<String>, _>("sprint") {
                     p.fields.push(field("Sprint", sprint));
+                }
+                // The soak fields (#2153), shown only when set — which is
+                // almost never, because almost no work item is an extended
+                // test. Agents write these over MCP; the web's job is that a
+                // human opening the item can see what the machine is waiting
+                // on and what would void it, without a tool call.
+                if let Some(check_after) = r.get::<Option<time::Date>, _>("check_after") {
+                    p.fields.push(field(
+                        "Judge from",
+                        check_after
+                            .format(&time::format_description::well_known::Iso8601::DATE)
+                            .unwrap_or_else(|_| check_after.to_string()),
+                    ));
+                }
+                if let Some(invalidated_if) = r.get::<Option<String>, _>("invalidated_if") {
+                    p.fields.push(field("Voided if", invalidated_if));
                 }
                 p.body = Some(r.get("content"));
                 p.body_label = Some("Content".into());

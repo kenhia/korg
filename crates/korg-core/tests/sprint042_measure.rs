@@ -213,6 +213,8 @@ async fn seed(pool: &PgPool) {
                 } else {
                     None
                 },
+                check_after: None,
+                invalidated_if: None,
                 category: None,
                 tags: vec![],
             },

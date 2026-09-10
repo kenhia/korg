@@ -32,7 +32,7 @@ enumerates the tools a third time. All three are drift-tested against
 | Awaiting Ken | `set_awaiting`, `list_awaiting` |
 | Board | `get_board` |
 | Search | `search` |
-| Reports | `create_report`, `list_reports`, `get_report`, `list_report_sources`, `set_report_source` |
+| Reports | `create_report`, `list_reports`, `get_report`, `review_report`, `list_report_sources`, `set_report_source` |
 | Schedules | `create_schedule`, `get_schedule`, `list_schedules`, `update_schedule`, `materialize_schedule` |
 | Handoffs | `create_handoff`, `get_handoff`, `update_handoff` |
 | Attachments | `get_attachment`, `list_attachments` |
@@ -45,7 +45,12 @@ Two tools are not what their names suggest:
   decision about a captured URL actually wants.
 - `create_report` upserts: a re-run for the same `(source, date)` replaces the
   previous run's `finding` edges transactionally rather than accumulating them
-  (D-7).
+  (D-7). Since #2154 it also **resets `reviewed` to false** — the content is
+  new, so a review of the text it replaced does not carry forward.
+- `review_report` writes one field and is not a general report update. Rewriting
+  a report's content is `create_report`; a second general update path would give
+  korg two ways to rewrite a body that could disagree about the finding edges,
+  and the edge replacement is the part `create_report` gets right.
 
 `survey_work_items` was a third until sprint 038. #861 folded its projection
 into `list_work_items` and kept the name as an alias for one deprecation
@@ -1228,6 +1233,7 @@ label not in it.
 | `has_handoff` | directed | node **has** handoff | any → `handoff` | no |
 | `materializes` | directed | schedule **materialized** work item | `schedule` → `workitem` | no |
 | `has_attachment` | directed | node **has** attachment | any → `attachment` | no |
+| `soaks` | directed | program **soaks** work item as an extended test | `program` → `workitem` | no — a program has no project |
 
 **Directed** means the stored orientation carries meaning, so the reverse edge
 is a *different* fact: `A depends_on B` and `B depends_on A` together are a
@@ -1256,6 +1262,40 @@ cross-project work is bundled. `depends_on` deliberately carries no such rule �
 the homelab-ai plan's whole structure is dependencies between repos. A work item
 with *no* project is unfiled rather than filed elsewhere and is not refused;
 production holds none (measured 2026-08-05).
+
+**`soaks` is a program's terminal array of extended tests** (#2152, sprint 079)
+— the work whose acceptance only the passage of days can satisfy, and which
+holds the program in `soaking`. Ranked like `includes`, so the array has an
+order; unranked members sort last. **Membership of the array is the fact**:
+there is deliberately no work-item type and no required tag alongside it, which
+would be a second source of truth nothing checks.
+
+It carries **two refusals**, both `invalid_input` naming the cause, and both are
+the design rather than defensive noise:
+
+1. **The work item must already have `check_after` and `invalidated_if` set.**
+   These are the soak fields (#2153): the earliest date the evidence can be
+   judged, and what state — if it changes — voids the test. Requiring them at
+   the edge is what stops the invalidation condition being the part everybody
+   skips. kmon #2058 was a real multi-day test that failed *as a test* because
+   slices of its own program overwrote the baseline it depended on, and nothing
+   had written down that this would void it.
+2. **The work item must not still be covered by a live proposal**
+   (`proposed`/`active`/`parked`). Extracting a test out of a slice is
+   therefore `unrelate` the `covers` edge, *then* `relate` `soaks` — two calls
+   on purpose, because one of them un-claims a proposal's work and that must
+   never happen as a side effect. `parked` counts as live for the same reason
+   the membership markers treat it so: a deferred plan is still a plan.
+
+Neither is re-checked after the edge exists. A soak already in the array is the
+operator's to adjust — moving a `check_after` out is a normal act, and a rule
+that fought it would be a rule that made the honest move harder than the
+dishonest one.
+
+`get_program` and `board.programs[]` carry the array as `soaks`, resolved (not
+bare edge refs) and in rank order, so a consumer never crawls. It is
+correspondingly **excluded from `related`** on those reads — one fact, one place
+in the payload, the same treatment `includes` and `has_attachment` get.
 
 **`has_attachment` carries liveness, not just reference** (sprint 056). It is
 the only label whose *absence* destroys the node on its right end: an attachment

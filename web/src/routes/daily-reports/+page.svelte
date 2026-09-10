@@ -54,6 +54,35 @@
     expanded = next;
   }
 
+  // #2154 — marking a report reviewed. Whoever ACTED on it marks it: Ken from
+  // here, or the overseer over MCP after doing what the report asked. It is not
+  // "I have read this", which is why it is a deliberate control and not
+  // something the expand gesture does for you.
+  //
+  // Optimistic, then reconciled from the response. The failure mode worth
+  // avoiding is the reverse — a click that appears to do nothing until a round
+  // trip lands, on a control whose whole job is letting a list get shorter.
+  let reviewing = $state<Set<number>>(new Set());
+  async function toggleReviewed(r: ReportRow) {
+    if (reviewing.has(r.node_id)) return;
+    reviewing = new Set(reviewing).add(r.node_id);
+    const want = !r.reviewed;
+    rows = rows.map((x) => (x.node_id === r.node_id ? { ...x, reviewed: want } : x));
+    try {
+      const updated = await api.reviewReport(r.node_id, want);
+      rows = rows.map((x) => (x.node_id === r.node_id ? { ...x, reviewed: updated.reviewed } : x));
+    } catch (e) {
+      // Put the row back the way korg still has it — a toggle that lies about
+      // having landed is worse than one that visibly fails.
+      rows = rows.map((x) => (x.node_id === r.node_id ? { ...x, reviewed: !want } : x));
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      const next = new Set(reviewing);
+      next.delete(r.node_id);
+      reviewing = next;
+    }
+  }
+
   load();
 </script>
 
@@ -174,6 +203,27 @@
           {r.source}{r.model ? ` · ${r.model}` : ""}{r.escalated ? " · ESCALATED" : ""}
         </span>
       </button>
+
+      <!-- Outside the expand button, because a button inside a button is not
+           valid HTML and the browser would hoist it out anyway. -->
+      <div class="flex items-center gap-2 px-4 pb-3 -mt-1">
+        <button
+          class={`rounded px-2 py-0.5 text-xs ${
+            r.reviewed
+              ? "bg-emerald-900/60 text-emerald-300"
+              : "bg-[var(--color-surface-hi)] text-[var(--color-muted)]"
+          }`}
+          data-testid={`report-reviewed-${r.node_id}`}
+          aria-pressed={r.reviewed}
+          disabled={reviewing.has(r.node_id)}
+          title={r.reviewed
+            ? "Somebody has acted on this report — click to put it back"
+            : "Mark this reviewed once you have acted on what it says"}
+          onclick={() => toggleReviewed(r)}
+        >
+          {r.reviewed ? "reviewed" : "mark reviewed"}
+        </button>
+      </div>
 
       {#if expanded.has(r.node_id)}
         <div class="border-t border-[var(--color-border)] px-4 py-4">

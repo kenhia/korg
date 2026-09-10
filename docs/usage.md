@@ -128,8 +128,9 @@ covers:
   most: `N / <N / N` means all the work is done and it is waiting on Ken, which
   the old single count rendered as `0/N` and read as "not started". The bar
   encodes the same three states from the same computation, so the two cannot
-  disagree. The header carries a queued/active/holding/done/parked control, so a
-  program is finishable — or parked — from the browser rather than only over REST.
+  disagree. The header carries a queued/active/holding/soaking/done/parked control, so a
+  program is finishable — or parked, or set soaking — from the browser rather
+  than only over REST.
 
   Marking a program **done** is gated by a confirmation when any slice is
   unfinished (#1168), and the dialog names them: a slice is unfinished if its
@@ -288,6 +289,7 @@ describing a route that no longer exists.
 | `GET` | `/api/board` | The whole board in one request: active sprints with progress, the ranked queue, what is blocked and by what, programs with slices, the awaiting lane, per-project depth, newest reports, the status-transition ticker, and every reporting source's freshness. No parameters — see [api.md](api.md#the-board-rollup-970). |
 | `GET` | `/api/reports` | List agent reports (filters `source`, `limit`; newest first). |
 | `GET` | `/api/reports/:node_id` | One report with its findings and comments. |
+| `PUT` | `/api/reports/:node_id/reviewed` | Mark a report reviewed, or put it back (`{reviewed}`). |
 | `POST` | `/api/handoffs` | Create a handoff and attach it to the nodes it describes (`has_handoff` edges) in one call. |
 | `GET`, `PATCH` | `/api/handoffs/:node_id` | One handoff (Markdown body + the nodes it is attached to), or update title/summary/body/tags/archived. |
 | `POST` | `/api/img` | Upload an image (multipart, one file part, ≤32 MB). `?owner=<node_id>` attaches it immediately; omit it for paste-before-save. Returns the attachment metadata, including its `img-<hex>` id and a `url` per variant. |
@@ -420,7 +422,7 @@ Vocabularies are validated in korg-core, so an unknown value comes back as a
 - card `status`: `Backlog`, `Research`, `OnDeck`, `Active`, `Done`, `Cut`
 - link `disposition`: `Unread`, `Done`, `Revisit`, `Summarized`, `VaultSaved`
 - proposal `status`: `proposed`, `active`, `done`, `declined`, `parked`
-- program `status`: `queued`, `active`, `holding`, `done`, `parked`
+- program `status`: `queued`, `active`, `holding`, `soaking`, `done`, `parked`
 - report `status`: `ok`, `attention`, `problem`
 - project `status`: `active`, `archived`
 - project `category`: `AI`, `Dashboard`, `EVAL`, `Fun`, `Infrastructure`, `Ops`, `Other`, `Tools`
@@ -657,12 +659,23 @@ the report survive the re-run (D-7). The response echoes `findings_linked`:
 what you asked for.
 
 Reads are symmetric across transports: `list_reports` / `GET /api/reports`
-(newest first, summary fields only, optional `source` filter) and `get_report` /
-`GET /api/reports/:node_id` (full body plus the linked finding work items).
+(newest first, summary fields only, optional `source` and `reviewed` filters) and
+`get_report` / `GET /api/reports/:node_id` (full body plus the linked finding
+work items).
 
-Writing is MCP-only by design — there is no `POST /api/reports`. Reports are
-written by agents, which speak MCP; the REST side exists so the UI and `curl`
-can read them.
+Writing a report is MCP-only by design — there is no `POST /api/reports`.
+Reports are written by agents, which speak MCP; the REST side exists so the UI
+and `curl` can read them.
+
+**`reviewed`** (#2154) is the exception, and deliberately: it is not part of the
+report, it is a record that somebody **acted on** it, so the browser owns the
+gesture. `review_report` / `PUT /api/reports/:node_id/reviewed` sets it, every
+report row and `board.reports[]` carry it, and `list_reports` filters on it
+three ways (omit for both, `false` for what still wants attention, `true` for
+the audit view). A same-day re-run of the report **resets it to false**: the
+content is new, and a review of the text it replaced does not carry forward.
+There is deliberately no report *classification* alongside it — `list_reports`
+already filters by `source`, so the source value is the class.
 
 ## Data model in brief
 

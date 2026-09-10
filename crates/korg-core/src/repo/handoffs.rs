@@ -214,7 +214,7 @@ pub async fn get_handoff(pool: &PgPool, node_id: i64) -> Result<Option<HandoffFu
         .fetch_one(pool)
         .await?;
     // Nothing excluded: a handoff wants to show every owner it is attached to.
-    let (related, related_truncated) = related_context(pool, node_id, None).await?;
+    let (related, related_truncated) = related_context(pool, node_id, &[]).await?;
     Ok(Some(HandoffFull {
         row,
         body,

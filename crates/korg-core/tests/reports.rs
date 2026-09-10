@@ -62,7 +62,7 @@ async fn upsert_replaces_same_day_and_keeps_node_id() {
         .await
         .unwrap();
     assert_ne!(next.node_id, first.node_id);
-    let rows = list_reports(&pool, Some("kmon"), 10).await.unwrap();
+    let rows = list_reports(&pool, Some("kmon"), None, 10).await.unwrap();
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].report_date, date!(2026 - 07 - 05));
 

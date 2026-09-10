@@ -295,6 +295,28 @@ pub mod schema {
         json_schema!({ "type": "string", "format": "date", "description": "YYYY-MM-DD" })
     }
 
+    /// A nullable `YYYY-MM-DD` — [`report_date`]'s twin for a soak field that
+    /// clears with null (#2153). Separate from [`report_date`] rather than
+    /// widened, because a required date and a clearable one are different
+    /// contracts and a client that reads the schema strictly should be able to
+    /// tell them apart.
+    pub fn soak_date(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": ["string", "null"],
+            "format": "date",
+            "description": "YYYY-MM-DD; null clears"
+        })
+    }
+
+    /// The tri-state `reviewed` filter (#2154) — `archived`'s shape, one
+    /// register over.
+    pub fn reviewed_filter(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": ["boolean", "null"],
+            "description": "Omit for both (the default); false for reports nobody has acted on; true for reviewed only."
+        })
+    }
+
     /// The tri-state `archived` filter every collection read shares (D-3).
     pub fn archived_filter(_: &mut SchemaGenerator) -> Schema {
         json_schema!({
@@ -737,9 +759,23 @@ impl From<ListProposals> for repo::ProposalQuery {
 pub struct ListReports {
     #[serde(default)]
     pub source: Option<String>,
+    /// Three-way (#2154). Omit for both — the default, so nothing an existing
+    /// caller sees changes; `false` for reports nobody has acted on yet; `true`
+    /// for the ones somebody has.
+    #[serde(default)]
+    #[schemars(schema_with = "schema::reviewed_filter")]
+    pub reviewed: Option<bool>,
     #[serde(default = "default_report_limit")]
     #[schemars(schema_with = "schema::report_limit")]
     pub limit: i64,
+}
+
+/// `review_report` — the one-field write behind the `reviewed` flag (#2154).
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct ReviewReport {
+    pub node_id: i64,
+    /// True when somebody has acted on this report; false to put it back.
+    pub reviewed: bool,
 }
 
 /// `neighbors`.

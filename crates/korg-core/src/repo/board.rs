@@ -18,8 +18,8 @@ use super::common::parked_last;
 use super::page::archived_default;
 use super::planning::{planning_rollup, PlanningRollupRow};
 use super::programs::{
-    covered_bucket_coalesce, covered_bucket_filters, list_programs, ProgramList, ProgramOmitted,
-    ProgramRow, ProgramSlice,
+    covered_bucket_coalesce, covered_bucket_filters, list_programs, program_soaks_for, ProgramList,
+    ProgramOmitted, ProgramRow, ProgramSlice, ProgramSoak,
 };
 use super::proposals::{proposal_omitted, ProposalOmitted};
 use super::reports::{list_report_sources, list_reports, ReportRow, SourceHealth};
@@ -259,6 +259,15 @@ pub struct BoardProgram {
     pub program: ProgramRow,
     /// Included proposals in program order (`rank` on the edge, then node_id).
     pub slices: Vec<ProgramSlice>,
+    /// The extended tests holding this program in `soaking` (#2152), in rank
+    /// order — the same type `get_program` returns, for D-4's reason.
+    ///
+    /// Carried on the board so a consumer renders a Delayed Ops row from
+    /// `get_board` alone. A soaking program's whole content is its soaks: the
+    /// slices are all terminal by the time it may enter the state, so a panel
+    /// that had to fetch the array separately would be fetching the only part
+    /// worth drawing.
+    pub soaks: Vec<ProgramSoak>,
 }
 
 /// Everything a board renders, in one read (WI #970).
@@ -595,6 +604,12 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
     .fetch_all(pool)
     .await?;
 
+    // Every live program's soaks in one query, before the synchronous assembly
+    // below — an `await` inside that `map` would be the N+1 `slices` exists to
+    // avoid.
+    let program_ids: Vec<i64> = program_rows.iter().map(|p| p.node_id).collect();
+    let soak_rows = program_soaks_for(pool, &program_ids).await?;
+
     // Slices first: `as_slice` borrows, so this runs before the rows are
     // consumed into the two panels.
     let programs = program_rows
@@ -609,7 +624,16 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
                         .map(|r| r.as_slice(*rank))
                 })
                 .collect();
-            BoardProgram { program, slices }
+            let soaks = soak_rows
+                .iter()
+                .filter(|(pid, _)| *pid == program.node_id)
+                .map(|(_, soak)| soak.clone())
+                .collect();
+            BoardProgram {
+                program,
+                slices,
+                soaks,
+            }
         })
         .collect();
 
@@ -698,7 +722,10 @@ pub async fn board_rollup(pool: &PgPool) -> Result<BoardRollup> {
         programs_omitted,
         awaiting: list_awaiting(pool).await?,
         depth: planning_rollup(pool).await?,
-        reports: list_reports(pool, None, BOARD_REPORT_CAP).await?,
+        // No `reviewed` narrowing on the board (#2154): Sensor Net renders the
+        // flag and lets its own setting hide reviewed rows, which is GP-19's
+        // division of labour — korg emits the literal, the consumer filters.
+        reports: list_reports(pool, None, None, BOARD_REPORT_CAP).await?,
         events: list_transitions(pool, BOARD_EVENT_CAP).await?,
         sources: list_report_sources(pool).await?,
         // Live schedules only (the `list_schedules` default), unarchived, and

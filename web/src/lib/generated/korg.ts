@@ -198,7 +198,18 @@ export type BoardProgram = {
 /**
  * Included proposals in program order (`rank` on the edge, then node_id).
  */
-slices: Array<ProgramSlice>, node_id: number, title: string, aim: string, notes: string | null, status: string, rank: string, pinned: boolean, category: string | null, tags: Array<string>, archived: boolean, comment_count: number, 
+slices: Array<ProgramSlice>, 
+/**
+ * The extended tests holding this program in `soaking` (#2152), in rank
+ * order — the same type `get_program` returns, for D-4's reason.
+ *
+ * Carried on the board so a consumer renders a Delayed Ops row from
+ * `get_board` alone. A soaking program's whole content is its soaks: the
+ * slices are all terminal by the time it may enter the state, so a panel
+ * that had to fetch the array separately would be fetching the only part
+ * worth drawing.
+ */
+soaks: Array<ProgramSoak>, node_id: number, title: string, aim: string, notes: string | null, status: string, rank: string, pinned: boolean, category: string | null, tags: Array<string>, archived: boolean, comment_count: number, 
 /**
  * How many proposals this program includes.
  */
@@ -743,7 +754,14 @@ export type ProgramDetail = {
 /**
  * Included proposals, in program order (`rank`, then node_id).
  */
-slices: Array<ProgramSlice>, comments: Array<Comment>, comments_truncated: boolean, 
+slices: Array<ProgramSlice>, 
+/**
+ * The extended tests holding this program in `soaking` (#2152), in rank
+ * order. Empty for the great majority of programs; a non-empty array is
+ * the precondition for entering `soaking` and the thing the soak scan
+ * reads.
+ */
+soaks: Array<ProgramSoak>, comments: Array<Comment>, comments_truncated: boolean, 
 /**
  * The program's non-`includes` edges, inlined (LB-3) — `slices` already
  * carries `includes`. A program is precisely the kind that accrues a
@@ -812,6 +830,45 @@ rank: string | null, covered_count: number, open: number, resolved: number, done
  * as open.
  */
 parked: number, };
+
+/**
+ * One extended test holding a program in `soaking` (#2152) — a member of the
+ * terminal array the `soaks` edge defines.
+ *
+ * Carried on `get_program` and on the board beside `slices`, for the reason
+ * `slices` exists at all (D-5): a consumer must never crawl. A bare edge ref
+ * would say a soak exists and nothing about whether it can be judged yet, and
+ * "ready to judge on the 13th unless kai's baseline is regenerated" is exactly
+ * the fact a Delayed Ops row is made of.
+ */
+export type ProgramSoak = { 
+/**
+ * Since 0009 this is also the `wi_number` — one number everywhere. Both
+ * are emitted because a consumer rendering `#2058` and a consumer linking
+ * `/n/2058` should not have to know that.
+ */
+node_id: number, wi_number: number, title: string, 
+/**
+ * The soak's own project. A program has none, and its soaks routinely
+ * span the repos its slices touched.
+ */
+project: string | null, wi_status: string, 
+/**
+ * Earliest date this soak's evidence can be judged, `YYYY-MM-DD`. Never
+ * `None` in practice — the `soaks` edge refuses a member without it — but
+ * typed nullable because the column is, and a type that claims otherwise
+ * would be a claim about data korg does not guarantee after the fact.
+ */
+check_after: string | null, 
+/**
+ * What voids this test. Same nullability reasoning as `check_after`.
+ */
+invalidated_if: string | null, 
+/**
+ * Position within the array. `None` on a soak related without a rank;
+ * those sort last, as `includes` does.
+ */
+rank: string | null, };
 
 /**
  * One project plus the areas under it (WI #828).
@@ -1115,6 +1172,16 @@ export type ReportFinding = { wi_number: number, title: string, wi_status: strin
 
 export type ReportFull = { body: string, findings: Array<ReportFinding>, node_id: number, source: string, report_date: string, status: string, summary: string, model: string | null, escalated: boolean, 
 /**
+ * Someone acted on this report (#2154) — so an operations pane can stop
+ * showing it without anyone having to close or delete it.
+ *
+ * **Reset to false by a same-day re-run.** `upsert_report` replaces the
+ * content in place and keeps the node id; a report whose body has changed
+ * has not been reviewed, whatever was true of the text it replaced. That
+ * is the one piece of behaviour here that is not a plain column.
+ */
+reviewed: boolean, 
+/**
  * Comments on this report (WI #535).
  */
 comment_count: number, updated: string, };
@@ -1122,6 +1189,16 @@ comment_count: number, updated: string, };
 export type ReportRef = { node_id: number, replaced: boolean, findings_linked: Array<number>, };
 
 export type ReportRow = { node_id: number, source: string, report_date: string, status: string, summary: string, model: string | null, escalated: boolean, 
+/**
+ * Someone acted on this report (#2154) — so an operations pane can stop
+ * showing it without anyone having to close or delete it.
+ *
+ * **Reset to false by a same-day re-run.** `upsert_report` replaces the
+ * content in place and keeps the node id; a report whose body has changed
+ * has not been reviewed, whatever was true of the text it replaced. That
+ * is the one piece of behaviour here that is not a plain column.
+ */
+reviewed: boolean, 
 /**
  * Comments on this report (WI #535).
  */
@@ -1428,7 +1505,20 @@ related_truncated: boolean,
  * image instead (0027's header). The comment body carries the placement
  * token.
  */
-attachments: Array<AttachmentRow>, wi_number: number, node_id: number, project: string | null, area: string | null, wi_type: string, wi_status: string, wi_tshirt: string, sprint: string | null, title: string, content: string, details: string | null, category: string | null, tags: Array<string>, parent: number | null, archived: boolean, 
+attachments: Array<AttachmentRow>, wi_number: number, node_id: number, project: string | null, area: string | null, wi_type: string, wi_status: string, wi_tshirt: string, sprint: string | null, title: string, content: string, details: string | null, 
+/**
+ * Soak field (#2153): earliest date this item's evidence can be judged,
+ * `YYYY-MM-DD`. `None` on the overwhelming majority of items, which are
+ * not extended tests. Wire format is `report_date_fmt`, the same one
+ * `report_date` has used since 0010 — deliberately, so korg has exactly
+ * one date-on-the-wire convention rather than two that agree until they
+ * don't.
+ */
+check_after: string | null, 
+/**
+ * Soak field (#2153): what state, if it changes, voids this test.
+ */
+invalidated_if: string | null, category: string | null, tags: Array<string>, parent: number | null, archived: boolean, 
 /**
  * Number of comments on this work item (WI #392) — the hint that tells an
  * agent "this row has discussion; fetch it".
@@ -1555,7 +1645,20 @@ omitted: WorkItemOmitted, };
  */
 export type WorkItemOmitted = { closed: number, archived: number, };
 
-export type WorkItemRow = { wi_number: number, node_id: number, project: string | null, area: string | null, wi_type: string, wi_status: string, wi_tshirt: string, sprint: string | null, title: string, content: string, details: string | null, category: string | null, tags: Array<string>, parent: number | null, archived: boolean, 
+export type WorkItemRow = { wi_number: number, node_id: number, project: string | null, area: string | null, wi_type: string, wi_status: string, wi_tshirt: string, sprint: string | null, title: string, content: string, details: string | null, 
+/**
+ * Soak field (#2153): earliest date this item's evidence can be judged,
+ * `YYYY-MM-DD`. `None` on the overwhelming majority of items, which are
+ * not extended tests. Wire format is `report_date_fmt`, the same one
+ * `report_date` has used since 0010 — deliberately, so korg has exactly
+ * one date-on-the-wire convention rather than two that agree until they
+ * don't.
+ */
+check_after: string | null, 
+/**
+ * Soak field (#2153): what state, if it changes, voids this test.
+ */
+invalidated_if: string | null, category: string | null, tags: Array<string>, parent: number | null, archived: boolean, 
 /**
  * Number of comments on this work item (WI #392) — the hint that tells an
  * agent "this row has discussion; fetch it".

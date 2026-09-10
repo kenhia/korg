@@ -654,6 +654,15 @@ const PROPOSAL_STATUS_STYLE: Record<ProposalStatus, string> = {
  * choosing from. It keeps a hue where `done` has none, because dormant is not
  * finished and the two must not become the same colour at a glance.
  *
+ * `soaking` (#2151) is indigo, and the choice is the feature rather than
+ * decoration. It must not read as louder than `active`: the entire problem it
+ * solves is a finished-but-waiting program generating attention nobody can act
+ * on, so a hot colour here would re-create the bug in the one place it is most
+ * visible. It must equally not read as `done` — the work is not complete — nor
+ * borrow `holding`'s amber, which says "between slices" and is precisely the
+ * wrong claim. Indigo is cool, distinct from `queued`'s sky at a glance, and
+ * carries a hue where `done` has none, on the same argument `parked` won.
+ *
  * (Both paragraphs were written against the two identical copies of this map
  * that used to live in the programs routes; #1603 is what a *third* copy of the
  * same idea, keyed by `string`, cost one level down.)
@@ -662,6 +671,7 @@ const PROGRAM_STATUS_STYLE: Record<ProgramStatus, string> = {
   queued: "bg-sky-900/60 text-sky-300",
   active: "bg-emerald-900/60 text-emerald-300",
   holding: "bg-amber-900/60 text-amber-300",
+  soaking: "bg-indigo-900/60 text-indigo-300",
   done: "bg-neutral-800 text-neutral-400",
   parked: "bg-slate-800 text-slate-400",
 };
