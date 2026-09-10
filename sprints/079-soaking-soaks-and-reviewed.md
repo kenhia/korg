@@ -226,3 +226,47 @@ agent which fields clear with `null`, with the same one-sentence meanings
   addition will go stale the same way `work-item-edit.spec.ts` just did, for the
   fifth time. Worth a work item in its own right rather than a fifth line of
   that comment; not filed here because it is not this proposal's scope.
+
+## Deployed
+
+**2026-09-10 to kubsdb** (`:5674`), image
+`kubsdb.encke-wahoo.ts.net:5000/korg:37b03d6e2eb4`, built from merge commit
+`37b03d6`. The deploy's revision assertion confirmed the running container
+carries that commit rather than taking `compose pull` on trust.
+
+Rollback target `ac9b022f6bce` (sprint 078), confirmed present in the registry
+during preflight. Backups current: `korg-20260910-031917.sql.gz`, 2.88 MB,
+larger than the night before, timer healthy.
+
+**Schema change — 33 migrations before, 34 after.** This is the sprint's one
+irreversible-ish step, so the counts are the evidence rather than the
+reassurance:
+
+`post-deploy-check.sh --compare` clean, and every row count is *identical*
+across the deploy — work items 1363, proposals 388, cards 30, links 20, reports
+70, projects 58; `node_count` 2070, `node_max` 2172, sequence untouched. Nothing
+moved but the migration number, which is exactly what 0034's header claims (DDL
+only, no backfill, every new column nullable or defaulted). The claim was
+already rehearsed in turn 2 against a restore of the same morning's dump; this
+is the same result on the live corpus.
+
+Five probes against `https://kubsdb.encke-wahoo.ts.net:5674`, chosen so each
+one fails if the deployed binary is *not* this build:
+
+| Probe | Result |
+| --- | --- |
+| `/plan` deep link | `200` |
+| `relate` with label `soak` | refused, and the near-miss names the registered set **ending in `soaks`** |
+| `relate` `soaks` → #2151 (no soak fields) | refused naming **both** `check_after` and `invalidated_if` |
+| `get_program(2167)` | carries `soaks: []` beside its 5 slices |
+| `list_reports` | every row carries `reviewed`; three-way filter reads 70 false / 0 true / 70 unfiltered |
+| `get_work_item(2151)` | `check_after` and `invalidated_if` present, both `null` |
+
+The first two write nothing — they are refusals, which is what makes them safe
+to run against production and still conclusive. The registry near-miss listing
+`soaks` is the single cheapest proof that the binary answering on `:5674` is the
+one this sprint built, and it is the probe the overseer asked for.
+
+Nothing is `soaking` yet, and nothing should be: the retrofit of program 2070 is
+slice 4's job, and `soaks: []` on a live program is the correct reading of a
+model whose first user has not arrived.
