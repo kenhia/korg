@@ -158,14 +158,71 @@ does not.
 - **Tests** — `crates/korg-core/tests/sprint079.rs`, 19 cases.
   `web/tests/e2e/soaking.spec.ts`, 3 cases.
 
+## Turn 2 — the overseer review (korg:2171)
+
+Rulings accepted everything flagged: the GP-19 amendment as Branch A, the
+`promote_programs_over` rename with its two-CTE fix, the single migration, the
+`related_context` slice, and `set_report_reviewed` not touching the node. Two
+things were asked for before clearance, and both are done.
+
+### The e2e suite was run — 102 passed
+
+Stood up per `docs/setup.md` §195: `postgres:18-alpine` on `:55432`, restored
+from `/gratch/backups/korg/korg-20260910-031917.sql.gz` (the morning's nightly —
+1323 work items, 38 programs, 69 reports), `korg-api` on `:8090` with a built
+bundle, `KORG_E2E_URL` set so Playwright drove that instance.
+
+**This also rehearsed 0034 against a fresh production dump**, which is what
+`CLAUDE.md` asks for and what a testcontainer's empty database cannot do. The
+dump restored at schema **v33**; `korg-api` applied **0034** at startup,
+`_sqlx_migrations` recorded `34 | soaking | t`, and the widened CHECK reads
+`status = ANY (ARRAY['queued','active','holding','soaking','done','parked'])`.
+1323 work items and 69 reports took the two new nullable columns and the
+defaulted `reviewed` without incident — the DDL-only claim in 0034's header,
+tested rather than asserted.
+
+First full run: **100 passed, 2 failed.** Both were fixed; the rerun is
+**102 passed, 0 failed**, and `just check` is green.
+
+**`work-item-edit.spec.ts` — caused by this sprint, and predicted by its own
+comment.** The relationship-label picker is asserted as an exact list in
+registry order, and `soaks` joined it. That comment already recorded three
+previous staleness events for the same structural reason (e2e is out of CI, so
+a registry addition surfaces on the next hand-run). Added `soaks` and the
+fourth line of the history — noting that this one was caught *in* the sprint
+that caused it, because the overseer asked for the suite before the ship rather
+than after.
+
+**`cards-dnd.spec.ts` — not caused by this sprint; stale on production data.**
+Nothing here touches cards. #580 seeded the dragged card at a literal
+`rank: -1` to put it at the top of Backlog, and its own prose claims that holds
+"regardless of how many cards the database holds". It fixed dependence on the
+*count* and left one on the *values*: a restored production dump holds five
+Backlog cards ranked down to `-7`, so the seeded card sorted sixth, rendered at
+y≈982 in a 720px viewport, and the geometry tripwire fired exactly as designed
+rather than flaking twenty lines later.
+
+Not a product bug — `ORDER BY c.status, c.rank ASC, c.node_id ASC` is doing
+precisely what it says. The fix reads the current Backlog minimum from
+`/api/cards` and seeds below it, which is what "regardless of what the database
+holds" was always supposed to mean. `docs/setup.md`'s instruction to run against
+production-sized data is what surfaced it; an empty database would have passed
+and left the assumption in place.
+
+### `update_work_item`'s nullable-field list
+
+`check_after` and `invalidated_if` added to the parenthesised list that tells an
+agent which fields clear with `null`, with the same one-sentence meanings
+`create_work_item` carries, plus the note that they are independently clearable.
+`tools_schema.json` regenerated.
+
 ## Follow-ups
 
-- **The e2e spec was written but not run.** Playwright is not in `just check`
-  or CI — it needs a built bundle, a running `korg-api` and a Postgres, and CI
-  says so deliberately. `soaking.spec.ts` is written against the existing
-  `program-close-out.spec.ts` conventions and should be run against a live
-  instance at the next opportunity.
 - **`list_work_items` stays lean** — the soak fields are on the full row and
   the detail read, not the lean MCP summary, exactly as #2153 asked. If the
   soak scan wants "every soak across every program" as one call, that is a new
   read and a new work item, not a widening of this one.
+- **The e2e suite is still out of CI**, so the next registry or vocabulary
+  addition will go stale the same way `work-item-edit.spec.ts` just did, for the
+  fifth time. Worth a work item in its own right rather than a fifth line of
+  that comment; not filed here because it is not this proposal's scope.

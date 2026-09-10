@@ -30,6 +30,17 @@ import { test, expect } from "@playwright/test";
 //    the page is scrolled down that box is entirely above the viewport, so there
 //    is no reachable point to clamp to.
 //
+//    **Sprint 079 — "a low rank" has to mean lower than the data, not lower
+//    than zero.** #580 fixed the dependence on how many cards there are and
+//    left one on what ranks they carry: it seeded a literal `rank: -1`, and a
+//    restored production dump holds five Backlog cards ranked down to `-7`. The
+//    seeded card therefore sorted *sixth*, not first, landed at y≈982 in a
+//    720px viewport, and the tripwire below fired exactly as designed. The fix
+//    is to read the current minimum and go below it, which is what "regardless
+//    of what the database holds" was always supposed to mean. Caught by the
+//    first full-suite run against production-sized data, which is the state
+//    docs/setup.md says to use for precisely this reason.
+//
 // 2. **The titles collided.** `drag ${Date.now()}` is unique only if no two runs
 //    share a millisecond, and this WI's acceptance command (`--repeat-each=5`)
 //    runs its copies in parallel. Two identically-named cards make the `hasText`
@@ -54,8 +65,15 @@ test("drag a card from Backlog to Active", async ({ page, request }, testInfo) =
   // Unique per parallel repeat, not merely per millisecond — see (2) above.
   const title = `drag ${Date.now()}-${testInfo.workerIndex}-${testInfo.repeatEachIndex}`;
 
-  // Seeded at the top of Backlog — see (1) above.
-  const created = await request.post("/api/cards", { data: { title, rank: -1 } });
+  // Seeded at the top of Backlog — see (1) above. The rank is computed from the
+  // corpus rather than hardcoded: `ORDER BY rank ASC` means "top" is a fact
+  // about the other rows, and a literal here is only ever a guess about them.
+  const backlog = await request.get("/api/cards?status=Backlog&limit=200");
+  expect(backlog.ok()).toBeTruthy();
+  const ranks = ((await backlog.json()).items as { rank: string }[]).map((c) => Number(c.rank));
+  const topRank = (ranks.length ? Math.min(...ranks) : 0) - 1;
+
+  const created = await request.post("/api/cards", { data: { title, rank: topRank } });
   expect(created.ok()).toBeTruthy();
 
   await page.goto("/cards");
