@@ -21,7 +21,7 @@ export type Disposition = (typeof LINK_DISPOSITIONS)[number];
 export const PROPOSAL_STATUSES = ["proposed", "active", "done", "declined", "parked"] as const;
 export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 
-export const PROGRAM_STATUSES = ["queued", "active", "holding", "done", "parked"] as const;
+export const PROGRAM_STATUSES = ["queued", "active", "holding", "soaking", "done", "parked"] as const;
 export type ProgramStatus = (typeof PROGRAM_STATUSES)[number];
 
 export const REPORT_STATUSES = ["ok", "attention", "problem"] as const;
@@ -67,6 +67,7 @@ export const RELATIONSHIP_LABELS = [
   { label: "collides-with", directed: false, reads: "the two nodes collide (same contract / fold on landing; no direction)" },
   { label: "materializes", directed: true, reads: "schedule materialized work item" },
   { label: "has_attachment", directed: true, reads: "node has attachment" },
+  { label: "soaks", directed: true, reads: "program soaks work item as an extended test" },
 ] as const;
 export type RelationshipLabel = (typeof RELATIONSHIP_LABELS)[number]["label"];
 

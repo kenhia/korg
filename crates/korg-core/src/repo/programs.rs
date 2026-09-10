@@ -20,15 +20,18 @@ use ts_rs::TS;
 
 use crate::error::RepoError;
 use crate::ops::{self, schema};
+use crate::relationships;
 use crate::vocab::{
-    PROGRAM_INITIAL_STATUS, PROGRAM_LIVE_STATUSES, PROGRAM_STATUSES, PROPOSAL_STARTED_STATUSES,
-    WI_STATUSES,
+    self, PROGRAM_INITIAL_STATUS, PROGRAM_LIFTABLE_STATUSES, PROGRAM_LIVE_STATUSES,
+    PROGRAM_STATUSES, PROPOSAL_STARTED_STATUSES, PROPOSAL_TERMINAL_STATUSES, WI_STATUSES,
+    WI_UNFINISHED_STATUSES,
 };
 
 use super::awaiting::settle_awaiting;
 use super::comments::Comment;
 use super::common::{
-    node_kind, parked_last, record_transition, require_kind, touch_node, validate_status,
+    node_kind, parked_last, record_transition, report_date_fmt, require_kind, touch_node,
+    validate_status,
 };
 use super::page::ArchivedFilter;
 use super::relationships::{related_context, RelatedRef};
@@ -301,16 +304,20 @@ where
 /// it**, and the WI asked for it to be decided rather than discovered. Parking
 /// is a declaration — this whole line of work is dormant, regardless of what its
 /// slices are doing — so a slice starting under a parked program must not lift
-/// it, and a parked program may legitimately hold `active` slices. No clause was
-/// added: gating on `queued` already excludes every other status, which is why
-/// `parked_programs_are_never_auto_promoted` asserts the behaviour against the
-/// database instead of this comment asserting it in prose. That is the same
-/// distinction `PROGRAM_STATUSES` draws between the derived state and the
-/// declared one.
-pub(super) async fn promote_queued_programs_over<'e, E>(
-    executor: E,
-    proposal_node_id: i64,
-) -> Result<()>
+/// it, and a parked program may legitimately hold `active` slices.
+/// `parked_programs_are_never_auto_promoted` asserts that against the database
+/// instead of this comment asserting it in prose. That is the same distinction
+/// `PROGRAM_STATUSES` draws between the derived state and the declared one.
+///
+/// **`soaking` joins `queued` here (#2151, sprint 079)** and is why this is no
+/// longer called `promote_queued_programs_over`: the set it gates on is
+/// [`PROGRAM_LIFTABLE_STATUSES`], and a name asserting one member of a two-member
+/// set is the drift kfdc #1196 was about. Both are states meaning *nothing is in
+/// flight*, and a slice starting is the fact that falsifies them. For `soaking`
+/// this is the design's failure path: a failed soak returns the program to
+/// `holding`, the fix arrives as a new slice, and that slice starting lifts the
+/// program back to `active` — without every skill re-implementing it.
+pub(super) async fn promote_programs_over<'e, E>(executor: E, proposal_node_id: i64) -> Result<()>
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
@@ -318,10 +325,20 @@ where
         .iter()
         .map(|s| s.to_string())
         .collect();
+    let liftable: Vec<String> = PROGRAM_LIFTABLE_STATUSES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    // Two CTEs rather than one, because the transition log needs the status
+    // each program moved OUT of and `UPDATE ... RETURNING` yields the new row.
+    // With one liftable status that could be a bound literal; with two it
+    // cannot, and a log that recorded every lift as leaving `queued` would
+    // quietly falsify the one record of a soak having failed.
     sqlx::query(
-        "WITH moved AS ( \
-             UPDATE program g SET status = 'active' \
-              WHERE g.status = $2 \
+        "WITH candidates AS ( \
+             SELECT g.node_id, g.status AS from_status \
+               FROM program g \
+              WHERE g.status = ANY($2) \
                 AND EXISTS ( \
                     SELECT 1 FROM relationship r \
                       JOIN sprint_proposal sp ON sp.node_id = r.right_id \
@@ -329,15 +346,93 @@ where
                        AND r.relationship = 'includes' \
                        AND r.right_id = $1 \
                        AND sp.status::text = ANY($3)) \
-             RETURNING g.node_id) \
+         ), moved AS ( \
+             UPDATE program g SET status = 'active' \
+               FROM candidates c \
+              WHERE c.node_id = g.node_id \
+             RETURNING g.node_id, c.from_status) \
          INSERT INTO transition (node_id, from_status, to_status) \
-         SELECT node_id, $2, 'active' FROM moved",
+         SELECT node_id, from_status, 'active' FROM moved",
     )
     .bind(proposal_node_id)
-    .bind(PROGRAM_INITIAL_STATUS)
+    .bind(&liftable)
     .bind(&started)
     .execute(executor)
     .await?;
+    Ok(())
+}
+
+/// Entering `soaking` (#2151) — korg's first real transition rule on a program.
+///
+/// `update_program` has always validated a status for enum membership only, and
+/// that stays true of every other value: `holding` and `done` are somebody's
+/// decision and korg does not audit them. `soaking` is different because it
+/// *asserts something about the slices* the way `queued` does — "all slice work
+/// is done; what remains is a clock" — and an assertion korg emits on the board
+/// is one korg should be able to stand behind.
+///
+/// One rule, deliberately, and no general transition matrix. Leaving `soaking`
+/// is unconstrained in all three directions the design needs: `done` is the
+/// explicit close (korg never closes a program itself), `holding` is a failed
+/// soak, and `active` is the new slice that fixes it. A matrix would have to be
+/// re-litigated every time the lifecycle grows a state, and the failure path
+/// must stay frictionless — a soak that fails at 04:00 should become new work
+/// without arguing with a state machine.
+async fn check_soaking_entry<'e, E>(executor: E, node_id: i64) -> Result<()>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let terminal: Vec<String> = PROPOSAL_TERMINAL_STATUSES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let unfinished: Vec<String> = WI_UNFINISHED_STATUSES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    // Both halves in one round trip: the count of slices that are NOT terminal,
+    // and the count of soaks that are still unfinished.
+    let (unterminal_slices, live_soaks): (i64, i64) = sqlx::query_as(
+        "SELECT \
+           (SELECT count(*) FROM relationship r \
+              JOIN sprint_proposal sp ON sp.node_id = r.right_id \
+             WHERE r.left_id = $1 AND r.relationship = 'includes' \
+               AND sp.status::text <> ALL($2)), \
+           (SELECT count(*) FROM relationship r \
+              JOIN workitem w ON w.node_id = r.right_id \
+             WHERE r.left_id = $1 AND r.relationship = $4 \
+               AND w.wi_status = ANY($3))",
+    )
+    .bind(node_id)
+    .bind(&terminal)
+    .bind(&unfinished)
+    .bind(relationships::SOAKS_LABEL)
+    .fetch_one(executor)
+    .await?;
+
+    if unterminal_slices > 0 {
+        return Err(RepoError::InvalidInput(format!(
+            "cannot move program {node_id} to '{soaking}': {unterminal_slices} slice(s) are not \
+             yet terminal ({terminal_list}). '{soaking}' means all slice work is done and only a \
+             clock remains — finish or decline the outstanding slices first, or use 'holding' if \
+             the program is simply between slices.",
+            soaking = vocab::SOAKING_STATUS,
+            terminal_list = PROPOSAL_TERMINAL_STATUSES.join(" / "),
+        ))
+        .into());
+    }
+    if live_soaks == 0 {
+        return Err(RepoError::InvalidInput(format!(
+            "cannot move program {node_id} to '{soaking}': it has no unfinished '{label}' edge to \
+             a work item. '{soaking}' means waiting on extended tests, so there must be at least \
+             one — relate the test work items to this program under the '{label}' label first, \
+             and give each one 'check_after' and 'invalidated_if'. A program whose slices are all \
+             done and which is soaking nothing is 'done', not '{soaking}'.",
+            soaking = vocab::SOAKING_STATUS,
+            label = relationships::SOAKS_LABEL,
+        ))
+        .into());
+    }
     Ok(())
 }
 
@@ -410,6 +505,92 @@ pub struct ProgramSlice {
     pub parked: i64,
 }
 
+/// One extended test holding a program in `soaking` (#2152) — a member of the
+/// terminal array the `soaks` edge defines.
+///
+/// Carried on `get_program` and on the board beside `slices`, for the reason
+/// `slices` exists at all (D-5): a consumer must never crawl. A bare edge ref
+/// would say a soak exists and nothing about whether it can be judged yet, and
+/// "ready to judge on the 13th unless kai's baseline is regenerated" is exactly
+/// the fact a Delayed Ops row is made of.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize, PartialEq, Eq, TS)]
+#[ts(export, export_to = "korg.ts")]
+pub struct ProgramSoak {
+    /// Since 0009 this is also the `wi_number` — one number everywhere. Both
+    /// are emitted because a consumer rendering `#2058` and a consumer linking
+    /// `/n/2058` should not have to know that.
+    pub node_id: i64,
+    pub wi_number: i64,
+    pub title: String,
+    /// The soak's own project. A program has none, and its soaks routinely
+    /// span the repos its slices touched.
+    pub project: Option<String>,
+    pub wi_status: String,
+    /// Earliest date this soak's evidence can be judged, `YYYY-MM-DD`. Never
+    /// `None` in practice — the `soaks` edge refuses a member without it — but
+    /// typed nullable because the column is, and a type that claims otherwise
+    /// would be a claim about data korg does not guarantee after the fact.
+    #[serde(with = "report_date_fmt::option")]
+    #[ts(type = "string | null")]
+    pub check_after: Option<time::Date>,
+    /// What voids this test. Same nullability reasoning as `check_after`.
+    pub invalidated_if: Option<String>,
+    /// Position within the array. `None` on a soak related without a rank;
+    /// those sort last, as `includes` does.
+    #[ts(type = "string | null")]
+    pub rank: Option<Decimal>,
+}
+
+/// The soak arrays for `program_ids`, each in rank order, paired with the
+/// program they belong to.
+///
+/// One query for every program on purpose. `get_program` needs one array and
+/// the board needs one per live program, and the board assembles its programs
+/// synchronously — so the naive shape here is an `await` inside a `map`, which
+/// is the N+1 that `slices` was explicitly built to avoid (D-5). Written once
+/// and shared for the second reason too: two copies of this query is how the
+/// two reads drift on what the array contains, and #2152's risk class is
+/// precisely a fact with two homes.
+pub(super) async fn program_soaks_for(
+    pool: &PgPool,
+    program_ids: &[i64],
+) -> Result<Vec<(i64, ProgramSoak)>> {
+    if program_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        program_id: i64,
+        #[sqlx(flatten)]
+        soak: ProgramSoak,
+    }
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT r.left_id AS program_id, \
+                w.node_id, w.wi_number, w.title, pj.name AS project, w.wi_status, \
+                w.check_after, w.invalidated_if, r.rank \
+         FROM relationship r \
+         JOIN workitem w ON w.node_id = r.right_id \
+         JOIN node n ON n.id = w.node_id \
+         LEFT JOIN project pj ON pj.id = n.project_id \
+         WHERE r.left_id = ANY($1) AND r.relationship = $2 \
+         ORDER BY r.left_id ASC, r.rank ASC NULLS LAST, w.node_id ASC",
+    )
+    .bind(program_ids)
+    .bind(relationships::SOAKS_LABEL)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| (r.program_id, r.soak)).collect())
+}
+
+/// The soak array for one program, in rank order.
+pub(super) async fn program_soaks(pool: &PgPool, node_id: i64) -> Result<Vec<ProgramSoak>> {
+    Ok(program_soaks_for(pool, &[node_id])
+        .await?
+        .into_iter()
+        .map(|(_, soak)| soak)
+        .collect())
+}
+
 /// A program, its ordered slices with per-slice rollups, its comments, and its
 /// other edges. The read a consumer makes instead of crawling
 /// program → proposals → work items.
@@ -421,6 +602,11 @@ pub struct ProgramDetail {
     pub program: ProgramRow,
     /// Included proposals, in program order (`rank`, then node_id).
     pub slices: Vec<ProgramSlice>,
+    /// The extended tests holding this program in `soaking` (#2152), in rank
+    /// order. Empty for the great majority of programs; a non-empty array is
+    /// the precondition for entering `soaking` and the thing the soak scan
+    /// reads.
+    pub soaks: Vec<ProgramSoak>,
     pub comments: Vec<Comment>,
     pub comments_truncated: bool,
     /// The program's non-`includes` edges, inlined (LB-3) — `slices` already
@@ -463,10 +649,13 @@ pub async fn get_program_detail(pool: &PgPool, node_id: i64) -> Result<Option<Pr
     .fetch_all(pool)
     .await?;
     let comments_truncated = program.comment_count > WORKITEM_COMMENT_CAP;
-    let (related, related_truncated) = related_context(pool, node_id, Some("includes")).await?;
+    let soaks = program_soaks(pool, node_id).await?;
+    let (related, related_truncated) =
+        related_context(pool, node_id, &["includes", relationships::SOAKS_LABEL]).await?;
     Ok(Some(ProgramDetail {
         program,
         slices,
+        soaks,
         comments,
         comments_truncated,
         related,
@@ -625,6 +814,14 @@ pub async fn update_program(
             .bind(node_id)
             .fetch_one(&mut *tx)
             .await?;
+        // The one entry rule (#2151), checked only on the way IN and only when
+        // the status actually changes — re-asserting `soaking` on a program
+        // already soaking must not fail once its soaks start being judged, or
+        // an unrelated `update_program` call would be refused for a reason that
+        // has nothing to do with it.
+        if v == vocab::SOAKING_STATUS && before != vocab::SOAKING_STATUS {
+            check_soaking_entry(&mut *tx, node_id).await?;
+        }
         sqlx::query("UPDATE program SET status = $2 WHERE node_id = $1")
             .bind(node_id)
             .bind(v)

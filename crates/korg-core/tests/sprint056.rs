@@ -432,7 +432,7 @@ async fn any_node_can_own_images_and_they_resolve_by_name() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].node_id, a.node_id);
 
-    let (related, _) = repo::related_context(&pool, proposal.row.node_id, None)
+    let (related, _) = repo::related_context(&pool, proposal.row.node_id, &[])
         .await
         .expect("related");
     let edge = related

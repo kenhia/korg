@@ -20,7 +20,7 @@ use super::common::{
     validate_status, wi_handle,
 };
 use super::page::ArchivedFilter;
-use super::programs::promote_queued_programs_over;
+use super::programs::promote_programs_over;
 use super::relationships::{related_context, RelatedRef};
 use super::selectors::{project_name_for_id, resolve_project};
 use super::work_items::{node_id_for_wi, WORKITEM_COMMENT_CAP};
@@ -553,7 +553,7 @@ pub async fn get_proposal_detail(pool: &PgPool, node_id: i64) -> Result<Option<P
     .await?;
     let comments_truncated = proposal.comment_count > WORKITEM_COMMENT_CAP;
     // Everything except covers — that is already inlined as `covered`.
-    let (related, related_truncated) = related_context(pool, node_id, Some("covers")).await?;
+    let (related, related_truncated) = related_context(pool, node_id, &["covers"]).await?;
     Ok(Some(ProposalDetail {
         proposal,
         covered,
@@ -664,7 +664,7 @@ pub async fn update_proposal(
         // usual way that stops being true — start-sprint marking slice 1
         // `active`. No-op unless the new status is a start and some program
         // over this proposal is still queued.
-        promote_queued_programs_over(&mut *tx, node_id).await?;
+        promote_programs_over(&mut *tx, node_id).await?;
     }
     if let Some(v) = patch.rank {
         sqlx::query("UPDATE sprint_proposal SET rank = $2 WHERE node_id = $1")

@@ -407,7 +407,38 @@ pub const PROPOSAL_STARTED_STATUSES: [&str; 2] = ["active", "done"];
 /// horizon, `parked` is waiting on a condition with no end date. korg:1480 was
 /// `holding` for the RMA — true about the motion and completely wrong about the
 /// reason, which is the gap this closes.
-pub const PROGRAM_STATUSES: [&str; 5] = ["queued", "active", "holding", "done", PARKED_STATUS];
+///
+/// **`soaking` (#2151, sprint 079) is the third neighbour in that same
+/// argument**: *all slice work is done; acceptance waits on tests only the
+/// passage of time can satisfy.* It exists because `active` was being made to
+/// carry it — program korg:2070 finished its engineering and then sat `active`
+/// for days, which kfdc's Operations panel renders as "wants your attention",
+/// generating demand nobody could satisfy. `holding` was the alternative and it
+/// is wrong for the same reason it was wrong for korg:1480: true about the
+/// motion, silent about the reason. The three now read apart cleanly —
+/// `holding` is between slices, `parked` is dormant with no end date, `soaking`
+/// is finished work waiting on a clock that is already running.
+///
+/// It is **declared** like `parked`, not derived like `queued` — but unlike
+/// `parked` it is the one status korg gates on entry (`soaking` asserts a fact
+/// about the slices, so korg checks it: see `check_soaking_entry`), and unlike
+/// `parked` a slice starting under it lifts it back to `active`. That pairing
+/// is deliberate: entering is a claim worth checking, and leaving is free
+/// because a failed soak must be able to become new work without ceremony.
+pub const PROGRAM_STATUSES: [&str; 6] = [
+    "queued",
+    "active",
+    "holding",
+    SOAKING_STATUS,
+    "done",
+    PARKED_STATUS,
+];
+
+/// The status a program takes while its engineering is done and its acceptance
+/// waits on extended tests. Named because korg-core matches on it in three
+/// places (the entry rule, the promotion lift, and the live partition) and
+/// #2151's whole risk class is the literal spelled three ways.
+pub const SOAKING_STATUS: &str = "soaking";
 
 /// The state a program is born in — written explicitly by `create_program`
 /// (#526: the vocabulary is the authority, the DB default is the backstop) and
@@ -429,11 +460,42 @@ pub const PROGRAM_INITIAL_STATUS: &str = "queued";
 /// `parked` is live for #810's reason instead (#1535): it is kept in view on
 /// purpose, below a divider. Filing it terminal would make it invisible and
 /// count it in `omitted.done`, which would claim a dormant program had finished.
-pub const PROGRAM_LIVE_STATUSES: [&str; 4] = ["queued", "active", "holding", PARKED_STATUS];
+///
+/// `soaking` is live (#2151) and it is the value where getting this wrong would
+/// have cost the most: a soaking program is precisely the one somebody must
+/// still act on — judge the evidence, or notice the test was invalidated — and
+/// filing it terminal would drop it out of `list_programs` and `board.programs`
+/// on the day it most needs watching. The point of the status is to move it to
+/// a calmer *panel*, which is kfdc's job downstream of this list, never to
+/// remove it from the read.
+pub const PROGRAM_LIVE_STATUSES: [&str; 5] =
+    ["queued", "active", "holding", SOAKING_STATUS, PARKED_STATUS];
 
 /// The complement of [`PROGRAM_LIVE_STATUSES`] — excluded from a default
 /// `list_programs` and counted in its `omitted`.
 pub const PROGRAM_TERMINAL_STATUSES: [&str; 1] = ["done"];
+
+/// The statuses a starting slice lifts a program **out of**, to `active`
+/// (#1424 for `queued`, #2151 for `soaking`).
+///
+/// Both are states that assert *nothing is in flight*, and a slice starting is
+/// exactly the fact that falsifies them — so korg maintains them rather than
+/// letting them outlive their condition. For `soaking` this is what makes the
+/// design's failure path work without every skill re-implementing it: a failed
+/// soak returns the program to `holding`, the fix arrives as a new slice, and
+/// that slice starting is what makes the program `active` again.
+///
+/// **`holding` and `done` are deliberately absent**, unchanged from #1424:
+/// `holding` is somebody's decision that the program is resting, and `done` is
+/// finished; neither is korg's to overturn off a slice edit.
+///
+/// **`parked` is absent for the stronger reason** (#1535): parking is a
+/// declaration that this whole line of work is dormant regardless of what its
+/// slices do, and `parked_programs_are_never_auto_promoted` fences it against
+/// the database rather than against this comment. That test is why adding
+/// `soaking` here is safe: the set is now two values and the excluded ones are
+/// asserted, not assumed.
+pub const PROGRAM_LIFTABLE_STATUSES: [&str; 2] = [PROGRAM_INITIAL_STATUS, SOAKING_STATUS];
 
 /// Daily-report statuses; mirrors the `report.status` CHECK (0010).
 pub const REPORT_STATUSES: [&str; 3] = ["ok", "attention", "problem"];

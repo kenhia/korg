@@ -257,6 +257,62 @@
       {/if}
     </div>
 
+    <!-- Extended tests (#2152). Rendered below the slices and only when there
+         are any, because for the great majority of programs there are none —
+         and above `Related`, because for a `soaking` program this section IS
+         the content: every slice is terminal by then, so the soaks are the
+         only part left to act on.
+
+         `invalidated_if` gets equal billing with the date rather than a
+         tooltip. It is the field the design calls most valuable and most
+         droppable, and the one an agent about to touch the same state needs to
+         see without hovering — kmon #2058 rotted for a day because nothing
+         said out loud what would void it. -->
+    {#if program.soaks.length > 0}
+      <div>
+        <h2 class="mb-2 text-sm font-semibold">
+          Extended tests
+          <span class="ml-1 font-normal text-xs text-[var(--color-muted)]">
+            waiting on time, not on work
+          </span>
+        </h2>
+        <ul class="space-y-2" data-testid="program-soaks">
+          {#each program.soaks as soak (soak.node_id)}
+            <li
+              class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
+              data-testid={`soak-${soak.node_id}`}
+            >
+              <div class="flex flex-wrap items-baseline gap-2">
+                <span class={ID_CLASS}>#{soak.wi_number}</span>
+                <a
+                  class="font-medium hover:underline"
+                  href={`/work-items/${soak.wi_number}`}>{soak.title}</a
+                >
+                {#if soak.project}<span class={chip.project}>{soak.project}</span
+                  >{/if}
+                <span class="text-xs text-[var(--color-muted)]"
+                  >{soak.wi_status}</span
+                >
+                {#if soak.check_after}
+                  <span
+                    class="ml-auto text-xs tabular-nums text-[var(--color-muted)]"
+                    title="The earliest date this test's evidence can be judged"
+                    >judge from {soak.check_after}</span
+                  >
+                {/if}
+              </div>
+              {#if soak.invalidated_if}
+                <p class="mt-1 text-xs text-[var(--color-muted)]">
+                  <span class="text-amber-400">voided if</span>
+                  {soak.invalidated_if}
+                </p>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+
     {#if program.related.length > 0}
       <div>
         <h2 class="mb-2 text-sm font-semibold">Related</h2>

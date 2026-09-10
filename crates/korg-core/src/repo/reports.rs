@@ -77,9 +77,16 @@ pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
 
     let (node_id, replaced) = match existing {
         Some(id) => {
+            // `reviewed = false` on the replace (#2154), and it is the one
+            // clause here worth arguing for. A same-day re-run keeps the node
+            // id so comments and relationships survive — but the *content* is
+            // new, and carrying a review of the text it replaced forward would
+            // let a corrected report that raised a fresh problem arrive already
+            // marked as dealt with. Silence must mean nothing changed, never
+            // nothing was read.
             sqlx::query(
                 "UPDATE report SET status = $2, summary = $3, body = $4, model = $5, \
-                 escalated = $6 WHERE node_id = $1",
+                 escalated = $6, reviewed = false WHERE node_id = $1",
             )
             .bind(id)
             .bind(&new.status)
@@ -505,6 +512,14 @@ pub struct ReportRow {
     pub summary: String,
     pub model: Option<String>,
     pub escalated: bool,
+    /// Someone acted on this report (#2154) — so an operations pane can stop
+    /// showing it without anyone having to close or delete it.
+    ///
+    /// **Reset to false by a same-day re-run.** `upsert_report` replaces the
+    /// content in place and keeps the node id; a report whose body has changed
+    /// has not been reviewed, whatever was true of the text it replaced. That
+    /// is the one piece of behaviour here that is not a plain column.
+    pub reviewed: bool,
     /// Comments on this report (WI #535).
     pub comment_count: i64,
     #[serde(with = "time::serde::rfc3339")]
@@ -513,25 +528,65 @@ pub struct ReportRow {
 }
 
 /// Newest first; summary fields only (the list view).
+///
+/// `reviewed` is three-way (#2154): `None` — the default — means both, so an
+/// existing caller sees exactly what it saw before. `Some(false)` is the
+/// operations question ("what still wants attention?") and `Some(true)` is the
+/// audit one.
 pub async fn list_reports(
     pool: &PgPool,
     source: Option<&str>,
+    reviewed: Option<bool>,
     limit: i64,
 ) -> Result<Vec<ReportRow>> {
     let rows = sqlx::query_as::<_, ReportRow>(
         "SELECT r.node_id, r.source, r.report_date, r.status, r.summary, r.model, \
-                r.escalated, \
+                r.escalated, r.reviewed, \
                 (SELECT count(*) FROM comment cm WHERE cm.node_id = r.node_id) AS comment_count, \
                 n.updated \
          FROM report r JOIN node n ON n.id = r.node_id \
          WHERE ($1::text IS NULL OR r.source = $1) \
-         ORDER BY r.report_date DESC, r.source ASC LIMIT $2",
+           AND ($2::bool IS NULL OR r.reviewed = $2) \
+         ORDER BY r.report_date DESC, r.source ASC LIMIT $3",
     )
     .bind(source)
+    .bind(reviewed)
     .bind(limit)
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+/// Set (or clear) a report's `reviewed` flag (#2154) — the whole write surface
+/// the flag needs.
+///
+/// Deliberately one field. "Update a report" as a general operation already
+/// exists and is `create_report`: it upserts on `(source, report_date)` and
+/// replaces the content, which is how a corrected run lands. A second general
+/// update path would give korg two ways to rewrite a report body that could
+/// disagree about the finding edges, and the finding-edge replacement is the
+/// part `upsert_report` gets right (D-7).
+pub async fn set_report_reviewed(
+    pool: &PgPool,
+    node_id: i64,
+    reviewed: bool,
+) -> Result<ReportFull> {
+    let updated = sqlx::query("UPDATE report SET reviewed = $2 WHERE node_id = $1")
+        .bind(node_id)
+        .bind(reviewed)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if updated == 0 {
+        return Err(RepoError::NotFound(format!("no report with node_id {node_id}")).into());
+    }
+    // `touch_node` deliberately NOT called: marking a report read is not a
+    // change to the report, and bumping `updated` would move it in a list
+    // ordered by recency and make the source-freshness read think a new report
+    // had landed.
+    get_report(pool, node_id)
+        .await?
+        .ok_or_else(|| RepoError::NotFound(format!("no report with node_id {node_id}")).into())
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -556,7 +611,7 @@ pub struct ReportFull {
 pub async fn get_report(pool: &PgPool, node_id: i64) -> Result<Option<ReportFull>> {
     let Some(r) = sqlx::query(
         "SELECT r.node_id, r.source, r.report_date, r.status, r.summary, r.model, \
-                r.escalated, r.body, \
+                r.escalated, r.reviewed, r.body, \
                 (SELECT count(*) FROM comment cm WHERE cm.node_id = r.node_id) AS comment_count, \
                 n.updated \
          FROM report r JOIN node n ON n.id = r.node_id WHERE r.node_id = $1",
@@ -589,6 +644,7 @@ pub async fn get_report(pool: &PgPool, node_id: i64) -> Result<Option<ReportFull
             summary: r.get("summary"),
             model: r.get("model"),
             escalated: r.get("escalated"),
+            reviewed: r.get("reviewed"),
             comment_count: r.get("comment_count"),
             updated: r.get("updated"),
         },

@@ -1,6 +1,6 @@
 [
   {
-    "description": "Create a work item. Returns the created row (including node_id and the serial wi_number, which are the same number since the 0009 identity migration).",
+    "description": "Create a work item. Returns the created row (including node_id and the serial wi_number, which are the same number since the 0009 identity migration). Two SOAK fields (korg #2153) travel on this item and matter only for extended tests: `check_after` (a `YYYY-MM-DD` date -- the earliest the item's evidence can be judged) and `invalidated_if` (free text -- what state, if it changes, VOIDS the test). Both are null on ordinary work and both are REQUIRED before a program may `soaks` this item. Write `invalidated_if` as a condition somebody could check, not a hope: \"invalidated if kai's baseline is regenerated before the 09-10 nightly\" is the shape, and it is the whole difference between a soak that is watched and one that quietly rots.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -24,10 +24,25 @@
             "null"
           ]
         },
+        "check_after": {
+          "description": "Soak field (#2153): the earliest date this item's evidence can be\njudged. Required, with `invalidated_if`, before a program may `soaks`\nthis item.",
+          "format": "date",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "content": {
           "type": "string"
         },
         "details": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "invalidated_if": {
+          "description": "Soak field (#2153): what state, if it changes, voids this test.",
           "type": [
             "string",
             "null"
@@ -219,6 +234,14 @@
             "null"
           ]
         },
+        "check_after": {
+          "description": "Soak field (#2153); null clears. `YYYY-MM-DD`.",
+          "format": "date",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "content": {
           "type": [
             "string",
@@ -226,6 +249,13 @@
           ]
         },
         "details": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "invalidated_if": {
+          "description": "Soak field (#2153); null clears.",
           "type": [
             "string",
             "null"
@@ -802,7 +832,7 @@
     "name": "mark_link_read"
   },
   {
-    "description": "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these labels and no others: `covers` (proposal -> work item), `includes` (program -> proposal), `finding` (report -> work item), `depends_on` (dependent -> dependency), `materializes` (schedule -> work item: a schedule's generation history, normally written by materialize_schedule -- `last_wi_id` points only at the newest, the edges are the record of every one), `has_handoff` (node -> handoff; normally written by create_handoff, but relate attaches an existing handoff to another node), and `has_attachment` (node -> attachment: what makes an uploaded image BELONG to something -- an attachment with no such edge is `pending` and the sweeper deletes it 24h after upload, so writing this edge rescues an image and unrelating one lets it go) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` (the two nodes are related) and `collides-with` (same contract / fold on landing -- the kfdc curator's mined collisions, korg #1002) are UNDIRECTED -- orientation is stored but meaningless, so read them symmetrically. An unregistered label is invalid_input naming the registry and the near-miss. Endpoint kinds are validated wherever the registry pins them: `covers`, `includes`, `finding` and `materializes` pin BOTH ends, `has_handoff` pins its right end (it must be a handoff) and `has_attachment` its right end (an attachment); `covers` additionally requires BOTH ENDS IN THE SAME PROJECT -- a proposal bundles work from one project, and cross-project work belongs to a program, the layer above proposals (korg #968). `includes` is the layer where cross-project work is legal, so it has NO same-project rule; `depends_on` across projects likewise stays legal and is the normal case. Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `rank` -- the position of the right endpoint within the left one, which is how a program's slices are ordered; re-relating an existing edge WITH a rank moves it in place and keeps its provenance, and re-relating without one leaves the position alone (so reordering never needs unrelate + relate). Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected).",
+    "description": "Create a relationship edge between any two nodes. The label reads left-to-right. The vocabulary is CLOSED -- these labels and no others: `covers` (proposal -> work item), `includes` (program -> proposal), `finding` (report -> work item), `depends_on` (dependent -> dependency), `materializes` (schedule -> work item: a schedule's generation history, normally written by materialize_schedule -- `last_wi_id` points only at the newest, the edges are the record of every one), `has_handoff` (node -> handoff; normally written by create_handoff, but relate attaches an existing handoff to another node), `has_attachment` (node -> attachment: what makes an uploaded image BELONG to something -- an attachment with no such edge is `pending` and the sweeper deletes it 24h after upload, so writing this edge rescues an image and unrelating one lets it go), and `soaks` (program -> work item: the program's terminal array of EXTENDED TESTS -- the work whose acceptance only the passage of days can satisfy, korg #2152) are DIRECTED -- orientation is meaningful, and the reverse is a distinct edge (A depends_on B plus B depends_on A is a cycle, not a duplicate). `related-to` (the two nodes are related) and `collides-with` (same contract / fold on landing -- the kfdc curator's mined collisions, korg #1002) are UNDIRECTED -- orientation is stored but meaningless, so read them symmetrically. An unregistered label is invalid_input naming the registry and the near-miss. Endpoint kinds are validated wherever the registry pins them: `covers`, `includes`, `finding`, `materializes` and `soaks` pin BOTH ends, `has_handoff` pins its right end (it must be a handoff) and `has_attachment` its right end (an attachment); `covers` additionally requires BOTH ENDS IN THE SAME PROJECT -- a proposal bundles work from one project, and cross-project work belongs to a program, the layer above proposals (korg #968). `includes` is the layer where cross-project work is legal, so it has NO same-project rule; `depends_on` across projects likewise stays legal and is the normal case, and `soaks` has none either (a program has no project at all). `soaks` carries TWO REFUSALS of its own, both invalid_input naming the cause. (1) The work item must already have `check_after` AND `invalidated_if` set -- set them with update_work_item first; this is what keeps a soak's invalidation condition from being the part everybody skips. (2) The work item must NOT still be covered by a LIVE proposal (`proposed`/`active`/`parked`) -- extracting a test out of a slice is `unrelate` the covers edge, THEN `relate` soaks, two calls on purpose, because one of them un-claims a proposal's work and that must never happen as a side effect. Exact duplicates dedup, and relating the reverse of an undirected edge returns the existing one. Optionally pass `rank` -- the position of the right endpoint within the left one, which is how a program's slices are ordered; re-relating an existing edge WITH a rank moves it in place and keeps its provenance, and re-relating without one leaves the position alone (so reordering never needs unrelate + relate). Optionally pass `origin` -- self-reported provenance (e.g. your skill name); it is recorded, not verified. Both endpoints must exist (isError `not_found`) and must differ (isError `invalid_input` -- self-edges are rejected).",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1037,13 +1067,20 @@
     "name": "create_report"
   },
   {
-    "description": "List daily reports, newest first (summary fields only). Pass `source` to filter.",
+    "description": "List daily reports, newest first (summary fields only). Pass `source` to filter -- there is no report `class`, because the SOURCE value is the class (a soak scan files under `kfo-soak`). Pass `reviewed` to filter on whether somebody has acted on the report (korg #2154): omit for both (the default, so nothing an existing caller sees changes), `false` for what still wants attention, `true` for the audit view. Every row carries `reviewed`.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "limit": {
           "default": 30,
           "type": "integer"
+        },
+        "reviewed": {
+          "description": "Three-way (#2154). Omit for both — the default, so nothing an existing\ncaller sees changes; `false` for reports nobody has acted on yet; `true`\nfor the ones somebody has.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "source": {
           "type": [
@@ -1057,7 +1094,7 @@
     "name": "list_reports"
   },
   {
-    "description": "Fetch one report by node_id: full body plus linked finding work items. isError with code `not_found` if there is none.",
+    "description": "Fetch one report by node_id: full body plus linked finding work items, and `reviewed` -- whether somebody has acted on it (korg #2154). isError with code `not_found` if there is none.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1072,6 +1109,28 @@
       "type": "object"
     },
     "name": "get_report"
+  },
+  {
+    "description": "Mark a report reviewed, or put it back (korg #2154). Returns the updated report; isError `not_found` if that node is not a report. ONE field, deliberately: rewriting a report's CONTENT is create_report, which upserts on (source, report_date) and replaces the finding edges with it. Mark it when you have ACTED on what it says -- done the ops action, filed the work item, judged the soak -- not when you have merely read it; the flag is what lets an operations pane stop showing a report without anyone closing or deleting it. A same-day re-run of the report RESETS this to false, because the content is new and a review of the text it replaced does not carry forward.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "reviewed": {
+          "description": "True when somebody has acted on this report; false to put it back.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "node_id",
+        "reviewed"
+      ],
+      "type": "object"
+    },
+    "name": "review_report"
   },
   {
     "description": "The sprint queue: parked last, then pinned first, then rank, then node_id (a stable order -- equal ranks no longer shuffle between calls). Returns {items, omitted} -- NOT a bare array; `omitted` counts the rows the defaults hid ({done, declined, archived}), so a narrowed queue can never be mistaken for the whole corpus. Defaults: live proposals only (`proposed` + `active` + `parked`), unarchived, and the lean projection -- node_id, title, status, project, rank, pinned, covered_count, comment_count, no `summary`. Pass status:\"all\" (or one status) for the rest, detail:\"full\" for every column including `summary` and `notes`. `parked` (korg #1534) is DEFERRED INDEFINITELY, not declined and not hidden: korg keeps it in the default read on purpose and sorts it below the line -- there is no `omitted` field for it, because nothing was hidden. It is the answer for work blocked with no end date, where `declined` would say the opposite (a decision not to do it). Filter it out yourself if your surface wants only what can be started now. Reading one proposal is get_proposal, which also gives you the work items it covers.",
@@ -1281,7 +1340,7 @@
     "name": "create_program"
   },
   {
-    "description": "Fetch one program by node_id with the whole rollup, so a consumer NEVER crawls program -> proposals -> work items: the program fields, `span` (its derived projects), and `slices` -- the included proposals in program order, each with node_id, title, status, project, its position `rank`, `covered_count`, and one work-item count per status (open/resolved/done/closed/parked -- they sum to `covered_count`). Also carries inlined comments and the `related` block, where a `has_handoff` edge surfaces -- a program is precisely the kind that accrues one, and it is required context. isError with code `not_found` if there is none.",
+    "description": "Fetch one program by node_id with the whole rollup, so a consumer NEVER crawls program -> proposals -> work items: the program fields, `span` (its derived projects), and `slices` -- the included proposals in program order, each with node_id, title, status, project, its position `rank`, `covered_count`, and one work-item count per status (open/resolved/done/closed/parked -- they sum to `covered_count`). It also carries `soaks` (korg #2152) -- the program's terminal array of EXTENDED TESTS in rank order, each {node_id, wi_number, title, project, wi_status, check_after, invalidated_if, rank}. That is the whole content of a `soaking` program: by the time one may enter that state every slice is terminal, so the soaks are the only part left to render or judge. `check_after` is `YYYY-MM-DD`, the earliest the evidence can be judged; `invalidated_if` says what voids the test, and a scan should check it FIRST, before asking whether the date has arrived. Empty for the great majority of programs. Also carries inlined comments and the `related` block, where a `has_handoff` edge surfaces -- a program is precisely the kind that accrues one, and it is required context. (`includes` and `soaks` edges are NOT repeated in `related`; they are `slices` and `soaks`.) isError with code `not_found` if there is none.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1298,7 +1357,7 @@
     "name": "get_program"
   },
   {
-    "description": "List programs, parked last, then pinned first then rank then node_id. Returns {items, omitted} -- NOT a bare array; `omitted` is {done, archived}, the rows the defaults hid. Defaults: live programs only (`queued` + `active` + `holding` + `parked`), unarchived. Pass status:\"all\" (or one status) for the rest. There is no detail flag and no project filter: a program has no project of its own (its `span` is derived and is on every row), and with a 500-character `aim` the full row is already the lean one. Three of the five statuses exist because \"active\" alone would lie in several directions. `queued` (korg #1424) means NO slice has started -- a program is born there, and korg promotes it the moment any slice does, so you may read it as a fact about the slices rather than reconstructing one. `holding` means started but nothing currently in flight -- it is the state a program spends most of its life in, and it is deliberately not collapsed into `active`. `parked` (korg #1535) is the one status that is NOT on the lifecycle: it means dormant with no end date, and unlike `queued` it is DECLARED rather than derived -- korg never sets or clears it, nothing promotes a parked program, and a parked program may legitimately hold `active` slices. Read it as the operator overriding what the slices imply. It stays in the default list, sorted below the line.",
+    "description": "List programs, parked last, then pinned first then rank then node_id. Returns {items, omitted} -- NOT a bare array; `omitted` is {done, archived}, the rows the defaults hid. Defaults: live programs only (`queued` + `active` + `holding` + `soaking` + `parked`), unarchived. Pass status:\"all\" (or one status) for the rest. There is no detail flag and no project filter: a program has no project of its own (its `span` is derived and is on every row), and with a 500-character `aim` the full row is already the lean one. Four of the six statuses exist because \"active\" alone would lie in several directions. `queued` (korg #1424) means NO slice has started -- a program is born there, and korg promotes it the moment any slice does, so you may read it as a fact about the slices rather than reconstructing one. `holding` means started but nothing currently in flight -- it is the state a program spends most of its life in, and it is deliberately not collapsed into `active`. `soaking` (korg #2151) means all slice work is DONE and acceptance is waiting on extended tests that only the passage of time can satisfy -- read it as \"finished, on a clock\", and get its `soaks` array from get_program. It is LIVE and stays in every default read on purpose: a soaking program is precisely the one somebody must still act on, and moving it to a calmer panel is the consumer's job, never korg's. `parked` (korg #1535) is the one status that is NOT on the lifecycle: it means dormant with no end date, and unlike `queued` it is DECLARED rather than derived -- korg never sets or clears it, nothing promotes a parked program, and a parked program may legitimately hold `active` slices. Read it as the operator overriding what the slices imply. It stays in the default list, sorted below the line.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1315,6 +1374,7 @@
             "queued",
             "active",
             "holding",
+            "soaking",
             "done",
             "parked",
             "all"
@@ -1330,7 +1390,7 @@
     "name": "list_programs"
   },
   {
-    "description": "Partially update a program by its node_id; returns the updated program (isError `not_found` if that node is missing or is not a program). Only the fields you pass change: title, aim, notes, status (active -> holding -> done, plus `parked` off that line -- dormant with no end date, declared by you and never by korg, and un-parking requires naming the status to return to because korg will not guess it), rank, pinned, archived, tags. `aim` is capped at 500 characters. Slice membership and ORDER are not here -- use relate/unrelate with the `includes` label, passing `rank` to position a slice.",
+    "description": "Partially update a program by its node_id; returns the updated program (isError `not_found` if that node is missing or is not a program). Only the fields you pass change: title, aim, notes, status (active -> holding -> soaking -> done, plus `parked` off that line -- dormant with no end date, declared by you and never by korg, and un-parking requires naming the status to return to because korg will not guess it), rank, pinned, archived, tags. Entering `soaking` (korg #2151) is korg's ONE transition rule on a program, because unlike every other status it asserts something about the slices: it is invalid_input unless EVERY slice is terminal (`done`/`declined`) AND the program has at least one `soaks` edge to an unfinished work item. Leaving it is unconstrained in all three useful directions -- `done` is the explicit close, `holding` is a failed soak, and `active` is the new slice that fixes it (korg makes that last one itself, lifting a soaking program the moment a slice starts, exactly as it lifts a `queued` one). `aim` is capped at 500 characters. Slice membership and ORDER are not here -- use relate/unrelate with the `includes` label, passing `rank` to position a slice.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1371,6 +1431,7 @@
             "queued",
             "active",
             "holding",
+            "soaking",
             "done",
             "parked"
           ],

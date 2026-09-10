@@ -442,7 +442,7 @@ pub async fn get_schedule_detail(pool: &PgPool, node_id: i64) -> Result<Option<S
     .fetch_all(pool)
     .await?;
     let comments_truncated = schedule.comment_count > WORKITEM_COMMENT_CAP;
-    let (related, related_truncated) = related_context(pool, node_id, Some("materializes")).await?;
+    let (related, related_truncated) = related_context(pool, node_id, &["materializes"]).await?;
     Ok(Some(ScheduleDetail {
         schedule,
         materialized,

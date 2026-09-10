@@ -14,13 +14,29 @@ use crate::vocab::{self, WI_LIVE_STATUSES, WI_STATUSES};
 use super::attachments::{list_attachments, AttachmentRow};
 use super::awaiting::settle_awaiting;
 use super::comments::Comment;
-use super::common::{record_transition, touch_node, validate_status};
+use super::common::{record_transition, report_date_fmt, touch_node, validate_status};
 use super::page::{archived_default, ArchivedFilter, Page, PageQuery};
 use super::relationships::{related_context, RelatedRef};
 use super::schedules::advance_completed_anchor;
 use super::selectors::{resolve_area, resolve_area_patch, resolve_project, resolve_project_patch};
 
 // --- work items -----------------------------------------------------------
+
+/// `ops::double_option`'s date twin, for `check_after` (#2153).
+///
+/// The plain `double_option` would deserialize a `time::Date` through `time`'s
+/// own serde impl rather than through `report_date_fmt`, and korg has been
+/// here before: 0010's `report_date` was parsed by hand in each transport with
+/// its own error message until the shared format description ended the
+/// divergence. A soak date that is a `Date` on REST and a string on MCP is the
+/// same defect wearing a new column name, so both transports go through the
+/// one format description or neither does.
+fn double_option_date<'de, D>(de: D) -> Result<Option<Option<time::Date>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    report_date_fmt::option::deserialize(de).map(Some)
+}
 
 /// `create_work_item` / `POST /api/work-items`. Both transports deserialize
 /// this exact type, and the MCP input schema is derived from it (WI #539/#540).
@@ -57,6 +73,15 @@ pub struct NewWorkItem {
     pub content: String,
     #[serde(default)]
     pub details: Option<String>,
+    /// Soak field (#2153): the earliest date this item's evidence can be
+    /// judged. Required, with `invalidated_if`, before a program may `soaks`
+    /// this item.
+    #[serde(default, with = "report_date_fmt::option")]
+    #[schemars(schema_with = "schema::soak_date")]
+    pub check_after: Option<time::Date>,
+    /// Soak field (#2153): what state, if it changes, voids this test.
+    #[serde(default)]
+    pub invalidated_if: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
     #[serde(default)]
@@ -112,8 +137,9 @@ pub async fn create_work_item(pool: &PgPool, new: NewWorkItem) -> Result<WorkIte
     // Since 0009_identity, wi_number IS the node id — one number everywhere.
     let wi_number: i64 = sqlx::query(
         "INSERT INTO workitem \
-         (node_id, wi_number, area_id, wi_type, wi_status, wi_tshirt, sprint, title, content, details) \
-         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING wi_number",
+         (node_id, wi_number, area_id, wi_type, wi_status, wi_tshirt, sprint, title, content, details, \
+          check_after, invalidated_if) \
+         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING wi_number",
     )
     .bind(node_id)
     .bind(area_id)
@@ -124,6 +150,8 @@ pub async fn create_work_item(pool: &PgPool, new: NewWorkItem) -> Result<WorkIte
     .bind(&new.title)
     .bind(&new.content)
     .bind(&new.details)
+    .bind(new.check_after)
+    .bind(&new.invalidated_if)
     .fetch_one(&mut *tx)
     .await?
     .get("wi_number");
@@ -150,6 +178,17 @@ pub struct WorkItemRow {
     pub title: String,
     pub content: String,
     pub details: Option<String>,
+    /// Soak field (#2153): earliest date this item's evidence can be judged,
+    /// `YYYY-MM-DD`. `None` on the overwhelming majority of items, which are
+    /// not extended tests. Wire format is `report_date_fmt`, the same one
+    /// `report_date` has used since 0010 — deliberately, so korg has exactly
+    /// one date-on-the-wire convention rather than two that agree until they
+    /// don't.
+    #[serde(with = "report_date_fmt::option")]
+    #[ts(type = "string | null")]
+    pub check_after: Option<time::Date>,
+    /// Soak field (#2153): what state, if it changes, voids this test.
+    pub invalidated_if: Option<String>,
     pub category: Option<String>,
     pub tags: Vec<String>,
     pub parent: Option<i64>,
@@ -241,6 +280,7 @@ pub(super) const WORKITEM_SELECT: &str = concat!(
     "SELECT w.wi_number, w.node_id, \
         pj.name AS project, a.name AS area, \
         w.wi_type, w.wi_status, w.wi_tshirt, w.sprint, w.title, w.content, w.details, \
+        w.check_after, w.invalidated_if, \
         n.category, n.tags, pw.wi_number AS parent, n.archived, \
         (SELECT count(*) FROM comment c WHERE c.node_id = w.node_id) AS comment_count, ",
     membership_columns!(),
@@ -377,7 +417,7 @@ pub async fn get_work_item_detail(pool: &PgPool, wi_number: i64) -> Result<Optio
     // `attachments` below carries it in full, so leaving it in `related` too
     // would report the same edge twice and spend a slot of the cap doing it.
     let (related, related_truncated) =
-        related_context(pool, item.node_id, Some("has_attachment")).await?;
+        related_context(pool, item.node_id, &["has_attachment"]).await?;
     let attachments = list_attachments(pool, item.node_id).await?;
     Ok(Some(WorkItemDetail {
         item,
@@ -659,6 +699,13 @@ pub struct WorkItemPatch {
     pub wi_tshirt: Option<String>,
     #[serde(default, deserialize_with = "ops::double_option")]
     pub sprint: Option<Option<String>>,
+    /// Soak field (#2153); null clears. `YYYY-MM-DD`.
+    #[serde(default, deserialize_with = "double_option_date")]
+    #[schemars(schema_with = "schema::soak_date")]
+    pub check_after: Option<Option<time::Date>>,
+    /// Soak field (#2153); null clears.
+    #[serde(default, deserialize_with = "ops::double_option")]
+    pub invalidated_if: Option<Option<String>>,
     /// Move to this project (id); null unassigns. Get ids from list_projects.
     // `Some(Some(id))` moves, `Some(None)` unassigns, `None` leaves it (WI
     // #291). A move clears an area that no longer belongs to the target project
@@ -771,6 +818,26 @@ pub async fn update_work_item(
     }
     if let Some(v) = &patch.sprint {
         sqlx::query("UPDATE workitem SET sprint = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    // The soak fields (#2153). Independently clearable on purpose: the two say
+    // different things — when the evidence can be judged, and what voids the
+    // test — and a soak whose window moves has not stopped being invalidated
+    // by the same condition. The `soaks` edge requires both at relate time and
+    // does not re-check afterwards, which is the deliberate looser half: a
+    // soak already in a program's array is the operator's to adjust.
+    if let Some(v) = &patch.check_after {
+        sqlx::query("UPDATE workitem SET check_after = $2 WHERE node_id = $1")
+            .bind(node_id)
+            .bind(*v)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(v) = &patch.invalidated_if {
+        sqlx::query("UPDATE workitem SET invalidated_if = $2 WHERE node_id = $1")
             .bind(node_id)
             .bind(v)
             .execute(&mut *tx)

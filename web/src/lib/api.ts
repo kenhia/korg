@@ -247,6 +247,15 @@ export const api = {
     http<ReportRow[]>("GET", `/api/reports${listQuery({ source })}`),
   report: (node_id: number) =>
     http<ReportFull>("GET", `/api/reports/${node_id}`),
+  /**
+   * Mark a report reviewed, or put it back (#2154).
+   *
+   * The write lives in korg's own web app, never a consumer's — GP-18: a
+   * consumer that needs korg's write surface embeds korg. kfdc's Sensor Net
+   * renders the flag and filters on it; the toggle is here.
+   */
+  reviewReport: (node_id: number, reviewed: boolean) =>
+    http<ReportFull>("PUT", `/api/reports/${node_id}/reviewed`, { reviewed }),
 
   // projects
   projects: () => http<ProjectRow[]>("GET", "/api/projects"),

@@ -160,8 +160,25 @@ pub mod new {
             title: title.into(),
             content: String::new(),
             details: None,
+            check_after: None,
+            invalidated_if: None,
             category: None,
             tags: Vec::new(),
+        }
+    }
+
+    /// A work item carrying both soak fields (#2153) — what the `soaks` edge
+    /// requires. The date is a caller's choice because half the soak tests turn
+    /// on whether the window has elapsed.
+    pub fn soak_work_item(
+        title: &str,
+        check_after: time::Date,
+        invalidated_if: &str,
+    ) -> NewWorkItem {
+        NewWorkItem {
+            check_after: Some(check_after),
+            invalidated_if: Some(invalidated_if.into()),
+            ..work_item(title)
         }
     }
 

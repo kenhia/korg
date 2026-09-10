@@ -118,6 +118,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/nodes/:id/awaiting", put(set_awaiting))
         .route("/api/reports", get(list_reports))
         .route("/api/reports/:node_id", get(get_report))
+        .route("/api/reports/:node_id/reviewed", put(review_report))
         .route("/api/handoffs", post(create_handoff))
         .route(
             "/api/handoffs/:node_id",
@@ -709,12 +710,39 @@ async fn project_plan(State(s): State<AppState>, Path(name): Path<String>) -> Ap
 #[derive(Deserialize)]
 struct ReportsQuery {
     source: Option<String>,
+    /// Three-way (#2154): absent = both, which is what every existing caller
+    /// sends.
+    reviewed: Option<bool>,
     limit: Option<i64>,
 }
 
 async fn list_reports(State(s): State<AppState>, Query(q): Query<ReportsQuery>) -> ApiResult {
     Ok(Json(json!(
-        repo::list_reports(&s.pool, q.source.as_deref(), q.limit.unwrap_or(30)).await?
+        repo::list_reports(
+            &s.pool,
+            q.source.as_deref(),
+            q.reviewed,
+            q.limit.unwrap_or(30)
+        )
+        .await?
+    )))
+}
+
+#[derive(Deserialize)]
+struct ReviewReportBody {
+    reviewed: bool,
+}
+
+/// The web toggle behind `report.reviewed` (#2154). korg's own web app owns
+/// this write, not a consumer's — GP-18: a consumer that needs korg's write
+/// surface embeds korg.
+async fn review_report(
+    State(s): State<AppState>,
+    Path(node_id): Path<i64>,
+    Json(body): Json<ReviewReportBody>,
+) -> ApiResult {
+    Ok(Json(json!(
+        repo::set_report_reviewed(&s.pool, node_id, body.reviewed).await?
     )))
 }
 
