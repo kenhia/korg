@@ -6,11 +6,23 @@
 #     | ssh kubsdb 'bash /datastore/korg/cold-start.sh'
 #
 # Everything above this in the deploy path assumes a container to inherit
-# environment from. After a host rebuild there is none, and three things must
+# environment from. After a host rebuild there is none, and four things must
 # exist before `docker compose up -d` can work: the `korg` role, the `korg`
-# database, and korg.env. This script creates all three, idempotently, and is
-# the only korg procedure that reads the age store — a routine deploy never
-# moves the password off this host.
+# database, korg.env, and KORG_DB_PASSWORD in /etc/khomelab/secrets.env.
+#
+# This script creates the first three, idempotently. **The fourth is not its
+# job** (korg #2547, program korg:2440): the per-host secrets file is rendered
+# by k-homelab from the same age store, with
+#
+#     bin/apply kubsdb khomelab-secrets
+#
+# and korg must not write a second producer of it. This script still needs the
+# password because it is what sets the role's password on the cluster — but it
+# no longer writes the value anywhere on disk, which is the whole change.
+#
+# So the order after a rebuild is: run this, then render the secrets file, then
+# `docker compose up -d`. Both steps take their value from the one age-store
+# entry, so they cannot disagree.
 #
 # THE PASSWORD ARRIVES ON STDIN AND NOWHERE ELSE. Not argv (world-readable in
 # `ps`), not the environment (readable in /proc and `docker inspect`), not a
@@ -47,22 +59,17 @@ fi
 IFS= read -r pw || true
 [ -n "${pw:-}" ] || { note "error: no password on stdin"; exit 2; }
 
-# The password is embedded in a URL, so a literal @ or / would silently corrupt
-# the authority section and produce a connection failure that looks like a wrong
-# password. Refuse rather than percent-encode: encoding here would mean the
-# stored value and the deployed value differ, which is the drift this whole
-# exercise exists to prevent.
-case "$pw" in
-  *@* | */*)
-    note "error: password contains '@' or '/', which cannot appear unencoded in"
-    note "       a postgres:// URL. Rotate to a value without them."
-    exit 2
-    ;;
-esac
-
-url="postgres://${ROLE}:${pw}@${PG_CONTAINER}:5432/${DB}"
-note "password  sha256[:12] = $(fingerprint "$pw")"
-note "DATABASE_URL sha256[:12] = $(fingerprint "$url")"
+# This script used to refuse any password containing '@' or '/', because it
+# embedded the value in a postgres:// URL where either character silently
+# corrupts the authority section and fails as if the password were wrong.
+#
+# That refusal is GONE (korg #2547). korg now receives the password as its own
+# variable and applies it to parsed connection options rather than splicing it
+# into a string, so no character in it is special to anything here. That matters
+# beyond tidiness: the constraint was a string format dictating what values the
+# fleet's rotation tooling was allowed to generate, and korg:2439's proof pass
+# rotates exactly this password.
+note "password sha256[:12] = $(fingerprint "$pw")"
 
 # --- role and database -------------------------------------------------------
 
@@ -100,15 +107,22 @@ note "role '${ROLE}' and database '${DB}' present"
 
 # --- korg.env ----------------------------------------------------------------
 
+# KORG_TIMEZONE and nothing else. DATABASE_URL moved to docker-compose.yml when
+# it stopped carrying a credential, and the credential itself is only ever in
+# the age store and the file k-homelab renders from it (korg #2547).
+#
+# Writing this file at all is now a small thing — it exists because korg-core
+# rejects a missing IANA zone at startup rather than guessing one, so something
+# has to put it on the host, and this is the script that runs on a bare one.
 mkdir -p "$(dirname "$ENV_PATH")"
 umask 077
 tmp="$(mktemp "${ENV_PATH}.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
-printf 'DATABASE_URL=%s\nKORG_TIMEZONE=%s\n' "$url" "$TIMEZONE" > "$tmp"
+printf 'KORG_TIMEZONE=%s\n' "$TIMEZONE" > "$tmp"
 chmod 600 "$tmp"
 mv "$tmp" "$ENV_PATH"
 trap - EXIT
-note "wrote $ENV_PATH (mode 600)"
+note "wrote $ENV_PATH (mode 600, no secret)"
 
 # --- prove it, don't assume it -----------------------------------------------
 
@@ -133,10 +147,30 @@ if docker exec -i -e PGPASSWORD="$pw" "$PG_CONTAINER" \
   note "verified: role '${ROLE}' authenticates against database '${DB}'"
 else
   note "error: role '${ROLE}' could NOT authenticate against '${DB}' after setup."
-  note "       korg.env is written but the container will not start. Check"
-  note "       pg_hba.conf in the ${PG_CONTAINER} container before retrying."
+  note "       Check pg_hba.conf in the ${PG_CONTAINER} container before retrying."
   exit 4
 fi
 
+# The control. The paragraph above explains why a loopback check would accept
+# any password; this is what stops that explanation from being the only thing
+# standing between us and a check that passes for the wrong reason. If a WRONG
+# password is also accepted, the check above proved nothing and saying so is the
+# only honest outcome.
+if docker exec -i -e PGPASSWORD="${pw}-wrong" "$PG_CONTAINER" \
+     psql -U "$ROLE" -d "$DB" -h "$PG_CONTAINER" -tAc 'select 1' >/dev/null 2>&1; then
+  note "error: a DELIBERATELY WRONG password was also accepted, so the check"
+  note "       above verified nothing. Something is matching a 'trust' rule in"
+  note "       ${PG_CONTAINER}'s pg_hba.conf — fix that before trusting any of"
+  note "       this. Nothing about the stored password is proven either way."
+  exit 5
+fi
+note "control:  a wrong password is refused"
+
 note ""
-note "next: docker compose -f $(dirname "$ENV_PATH")/docker-compose.yml up -d"
+note "next: render the per-host secrets file, from kubs0:"
+note "        cd ~/k-homelab && bin/apply kubsdb khomelab-secrets"
+note "      then start korg:"
+note "        docker compose -f $(dirname "$ENV_PATH")/docker-compose.yml up -d"
+note ""
+note "korg will not start until KORG_DB_PASSWORD is in /etc/khomelab/secrets.env"
+note "— this script deliberately does not write it (korg #2547)."

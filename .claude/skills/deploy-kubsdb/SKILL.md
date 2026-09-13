@@ -45,13 +45,20 @@ was exactly that.
 
 Two things the compose file cannot carry:
 
-- **`/datastore/korg/korg.env`** (mode 0600) holds `DATABASE_URL` and
-  `KORG_TIMEZONE`. It is not in this repo and never will be, and a redeploy does
-  not touch it — which is how the password stays on kubsdb without anyone
-  hand-copying it. If it is *missing* (a rebuilt host), you are in the **cold
-  start** case, which this skill does not cover: see
+- **`/datastore/korg/korg.env`** (mode 0600) holds `KORG_TIMEZONE` and nothing
+  else. It is not in this repo and never will be, and a redeploy does not touch
+  it. If it is *missing* (a rebuilt host), you are in the **cold start** case,
+  which this skill does not cover: see
   [docs/operations.md](../../../docs/operations.md#cold-start) and
   `deploy/cold-start.sh`.
+- **`/etc/khomelab/secrets.env`**, which supplies `KORG_DB_PASSWORD` (korg
+  #2547). k-homelab renders it from the age store; korg only reads it, and the
+  compose file names it as a second `env_file`. Two things follow. It is read by
+  the `docker compose` CLI **on kubsdb**, so the invoking user needs the
+  `khomelab` group — `ken` has it, and a user without it sees `env file … not
+  found`, which is a permission error in the words of a missing one. And the
+  password is applied at container **create**, so a changed value needs
+  `up -d --force-recreate`; `docker compose restart` will not pick it up.
 - **`KORG_TIMEZONE` is required** — `korg-core`'s config rejects a missing or
   invalid value at startup rather than guessing a zone, so a first deploy onto a
   host with no `korg.env` crash-loops immediately.
@@ -212,7 +219,12 @@ every build and name nothing — the commit is korg's real version.
      echo "running revision $actual"
    EOF
    ```
-   `korg.env` is untouched by all of this — compose reads it in place.
+   `korg.env` and `/etc/khomelab/secrets.env` are untouched by all of this —
+   compose reads both in place. A deploy that changes the image recreates the
+   container anyway, so it picks up whatever they say. A deploy that changes
+   *only* one of those files does not: add `--force-recreate` for that case,
+   because compose resolves `env_file:` at container create and `restart` reads
+   nothing new.
 
    **`docker compose pull` is required, and it does not report whether it did
    anything.** Compose will not re-fetch an image it already has cached under

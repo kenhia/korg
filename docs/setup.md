@@ -58,7 +58,8 @@ health check, and point an MCP client at `http://<host>:8090/mcp`.
 
 | Variable           | Required | Default          | Purpose                                                   |
 | ------------------ | -------- | ---------------- | --------------------------------------------------------- |
-| `DATABASE_URL`     | yes      | —                | PostgreSQL connection string.                             |
+| `DATABASE_URL`     | yes      | —                | PostgreSQL connection string. May carry the password inline (the local-development shape) or omit it and let `KORG_DB_PASSWORD` supply it (the deployed shape). |
+| `KORG_DB_PASSWORD` | no       | —                | The database password, kept out of `DATABASE_URL` so the deployed host holds no second copy of it (korg #2547 — on kubsdb it comes from `/etc/khomelab/secrets.env`). Setting it **and** a password inside `DATABASE_URL` is a startup error, not a precedence rule: two sources for one credential make "is korg off its own copy?" unanswerable from config. Set but empty is also an error. |
 | `KORG_TIMEZONE`    | yes      | —                | DST-aware IANA timezone used for daily lifecycle boundaries (for example `Etc/UTC`). Startup rejects missing/invalid values. |
 | `KORG_LISTEN_ADDR` | no       | `0.0.0.0:8080`   | Address/port the server binds to.                         |
 | `KORG_WEB_DIR`     | no       | `/app/web/build` | Path to the built SvelteKit bundle; UI is served when the directory exists. The default is the in-container path, so a Docker run needs nothing set. |
