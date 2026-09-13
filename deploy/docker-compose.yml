@@ -41,14 +41,31 @@ services:
       - "127.0.0.1:5674:5674"
       - "192.168.1.60:5674:5674"
 
-    # DATABASE_URL and KORG_TIMEZONE only. Resolved relative to this file, so it
-    # is /datastore/korg/korg.env once deployed — mode 0600, never in this repo
-    # (deploy/korg.env is gitignored). See korg.env.example.
+    # Two files, and neither of them is korg's own copy of a password any more.
+    #
+    # /etc/khomelab/secrets.env is the per-host file k-homelab renders from the
+    # age store (program korg:2440, recipe `khomelab-secrets`) — root:khomelab
+    # 0640, taken WHOLE by the ruling on korg #2501, the same way every other
+    # compose consumer on this fleet takes it. korg wants one key from it,
+    # KORG_DB_PASSWORD, and combines it with the credential-free DATABASE_URL
+    # below. Until korg #2547 the same password also sat in korg.env; that
+    # second copy is what this entry exists to remove.
+    #
+    # The reader is the `docker compose` CLI on kubsdb, NOT the container, so
+    # the invoking user must be in the `khomelab` group — `ken` is. A user who
+    # is not gets "env file /etc/khomelab/secrets.env not found" at `up`, which
+    # is a permission error wearing the words of a missing one.
+    #
+    # korg.env is resolved relative to this file — /datastore/korg/korg.env once
+    # deployed — and now holds KORG_TIMEZONE and nothing else. Still mode 0600,
+    # still never in this repo (deploy/korg.env is gitignored). See
+    # korg.env.example.
     #
     # KORG_WEB_DIR and KORG_LISTEN_ADDR are deliberately absent: the image sets
     # them via Dockerfile ENV, and duplicating them here would create a second
     # place for them to drift.
     env_file:
+      - /etc/khomelab/secrets.env
       - korg.env
 
     # The embed allowlist (WI #1468, sprint 070). Here rather than in korg.env
@@ -68,6 +85,20 @@ services:
     # korg up, it closes embedding entirely: korg-core defaults to
     # `frame-ancestors 'none'`.
     environment:
+      # Server, role and database — and no credential, which is precisely why
+      # this belongs here in git rather than in the gitignored env file. The
+      # password arrives separately as KORG_DB_PASSWORD from the per-host file
+      # above, and korg-core puts the two together at startup
+      # (crates/korg-core/src/db.rs). korg #2547.
+      #
+      # This must NOT become "postgres://korg:${KORG_DB_PASSWORD}@…". Compose
+      # interpolation cannot see values that arrive via `env_file:`, so that
+      # form resolves to an empty password unless EVERY compose command run in
+      # /datastore/korg passes --env-file /etc/khomelab/secrets.env — `down`,
+      # `logs` and `ps` included. Measured by k-homelab sprint 062 (korg:2565),
+      # which had to solve it that way for unpoller because unpoller cannot
+      # assemble its own credential. korg can, so korg does.
+      DATABASE_URL: "postgres://korg@postgresql:5432/korg"
       KORG_FRAME_ANCESTORS: "https://kubsdb.encke-wahoo.ts.net:8100"
 
     # Image attachments (sprint 056, #582/#1119). The bytes are the one part of

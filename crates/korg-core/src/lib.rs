@@ -9,18 +9,13 @@ pub fn migrator() -> sqlx::migrate::Migrator {
     sqlx::migrate!("./migrations")
 }
 
-/// Connect a pool to `url` and ensure the schema is migrated. Used by the
-/// MCP/CLI/web surfaces.
-pub async fn connect(url: &str) -> anyhow::Result<sqlx::PgPool> {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(8)
-        .connect(url)
-        .await?;
-    migrator().run(&pool).await?;
-    Ok(pool)
-}
+// Connecting lives in `db`, which also owns how the deployed binary gets its
+// password (korg #2547). `connect` is re-exported here because it is the name
+// every test and the importer already call.
+pub use db::connect;
 
 pub mod config;
+pub mod db;
 pub mod error;
 pub mod ops;
 pub mod relationships;

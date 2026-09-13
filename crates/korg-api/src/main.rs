@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use korg_api::{build_router, AppState};
 use korg_core::config::KorgConfig;
-use korg_core::connect;
+use korg_core::db::{connect_options_from_env, connect_with};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -16,13 +16,15 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let database_url =
-        std::env::var("DATABASE_URL").map_err(|_| anyhow::anyhow!("DATABASE_URL is required"))?;
+    // `DATABASE_URL` names the server, the role and the database; the password
+    // arrives separately in `KORG_DB_PASSWORD` so that the deployed
+    // `korg.env` holds no credential (korg #2547). See `korg_core::db`.
+    let connect_options = connect_options_from_env()?;
     let listen_addr: SocketAddr = std::env::var("KORG_LISTEN_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
         .parse()?;
 
-    let pool = connect(&database_url).await?;
+    let pool = connect_with(connect_options).await?;
     let config = KorgConfig::from_env()?;
 
     // The image store (sprint 056). Created at startup so a misconfigured or

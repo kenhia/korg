@@ -21,7 +21,7 @@ needs in an emergency is written down here, in the repo, next to the code.
 | Database | Postgres in the `postgresql` container on the same host, database `korg` |
 | Image | built on kai from committed code, pushed to the homelab docker registry `kubsdb.encke-wahoo.ts.net:5000` as `korg:<short-sha>` + `korg:latest`, pulled by kubsdb (korg #1011) |
 | Run config | [`deploy/docker-compose.yml`](../deploy/docker-compose.yml), copied to `/datastore/korg/docker-compose.yml` at deploy time — the one declaration of network, ports, restart policy and env file |
-| Credential | korg authenticates as the **non-superuser role `korg`**. The container reads `/datastore/korg/korg.env` (mode 0600); the recoverable copy is k-homelab's age store, `kubsdb-korg-db-password`. See [Cold start](#cold-start) |
+| Credential | korg authenticates as the **non-superuser role `korg`**. The password reaches the container as `KORG_DB_PASSWORD` from `/etc/khomelab/secrets.env`, the per-host file k-homelab renders from the age store entry `kubsdb-korg-db-password` (korg #2547). korg holds no copy of its own: `/datastore/korg/korg.env` has held no secret since sprint 080, and the credential-free `DATABASE_URL` is in the compose file. See [Cold start](#cold-start) |
 
 One process serves the web UI, the REST API and the MCP endpoint. Deploying is
 therefore all-or-nothing — there is no way to ship a UI change without shipping
@@ -182,12 +182,15 @@ After a kubsdb rebuild there is neither, and three things must exist before
 |---|---|
 | the `korg` **role** | `pg_dump` of a database carries no `CREATE ROLE` — roles are cluster-level, and only `pg_dumpall --roles-only` would carry them. Restoring last night's dump therefore does **not** recreate the role korg authenticates as, and every `GRANT`/`ALTER … OWNER` in the dump fails without it. |
 | the `korg` **database** | Created empty; korg applies its migrations at startup. If you are restoring a dump, create it here and restore *before* starting the container. |
-| `/datastore/korg/korg.env` | Mode 0600, holding `DATABASE_URL` and `KORG_TIMEZONE`. |
+| `/datastore/korg/korg.env` | Mode 0600, holding `KORG_TIMEZONE` and nothing else. Needed because korg-core rejects a missing IANA zone at startup rather than guessing one. |
+| `/etc/khomelab/secrets.env` | Must carry `KORG_DB_PASSWORD`, or the container starts and cannot authenticate. **Not korg's to write** — render it from kubs0 with `bin/apply kubsdb khomelab-secrets` (korg #2547). |
 | `/datastore/korg/images` | The image-attachment store (sprint 056), bind-mounted to `/data/images` in the container. Docker creates it root-owned on first `up` if missing, which works — the image declares no `USER`. Nothing else needs doing, and on a host that lost `/datastore` there is nothing to restore into it yet (see Backups). |
 
-[`deploy/cold-start.sh`](../deploy/cold-start.sh) does all three, idempotently.
-It is the **only** korg procedure that reads the password out of k-homelab's age
-store — a routine deploy never moves the value off kubsdb.
+[`deploy/cold-start.sh`](../deploy/cold-start.sh) does the first three,
+idempotently. It reads the password out of k-homelab's age store to set it on
+the `korg` role — but since korg #2547 it **writes the value nowhere**, and the
+fourth row is k-homelab's to render, not korg's. Both take the same age-store
+entry, so they cannot disagree.
 
 ```bash
 ssh kubsdb 'mkdir -p /datastore/korg'
@@ -198,8 +201,17 @@ scp deploy/docker-compose.yml deploy/cold-start.sh kubsdb:/datastore/korg/
 ssh kubs0 'cd ~/k-homelab && bin/secret get kubsdb-korg-db-password' \
   | ssh kubsdb 'bash /datastore/korg/cold-start.sh'
 
+# The per-host secrets file — korg reads KORG_DB_PASSWORD from it and will not
+# authenticate without it.
+ssh kubs0 'cd ~/k-homelab && bin/apply kubsdb khomelab-secrets'
+
 ssh kubsdb 'cd /datastore/korg && docker compose pull && docker compose up -d'
 ```
+
+`docker compose` reads `/etc/khomelab/secrets.env` **on the host**, as the user
+running it, so that user must be in the `khomelab` group (`ken` is). One who is
+not gets `env file /etc/khomelab/secrets.env not found` — a permission error
+phrased as a missing one.
 
 The `pull` is what makes this work on a host with no korg image at all. Before
 sprint 048 the image reached kubsdb only as a `docker load` from a kai build,
