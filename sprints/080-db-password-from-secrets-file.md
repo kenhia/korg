@@ -196,3 +196,53 @@ inside this repo, and the same discipline the rest of this sprint is held to.
 Not executed against a live cold start — the script only runs on a rebuilt host.
 Its logic is the same two-probe shape measured live above, and a mistake in it
 fails loudly during DR rather than silently.
+
+## Deployed
+
+**2026-09-13, kubsdb**, revision `eb0d91b3c5fc` (squash `eb0d91b`, PR #85),
+pulled from the homelab registry. Rollback target `37b03d6e2eb4`, confirmed
+present in the registry before building.
+
+The cutover ran in the order the sprint record set out and the overseer's
+clearance accepted, from a fresh login on kubsdb each time (compose reads
+`/etc/khomelab/secrets.env` as the invoking user; the login carried the
+`khomelab` group).
+
+1. New image + new compose file, `up -d --force-recreate`. Revision assertion
+   passed.
+2. Verified.
+3. `/datastore/korg/korg.env` rewritten to `KORG_TIMEZONE` only — 34 bytes,
+   mode 0600, written through kaed's typed dotenv edit so the old value was
+   never read into a transcript.
+4. `up -d --force-recreate` again, so korg is proven to start from the **final**
+   on-disk state and not from a file that has since changed. Revision assertion
+   passed.
+5. Verified again.
+
+### What was verified live, and the control for each
+
+Every probe run from kubsdb, the host that does the work.
+
+| check | result | control |
+|---|---|---|
+| container's `DATABASE_URL` | carries no credential | — |
+| container's `KORG_DB_PASSWORD` | `59ba378d2eab`, identical to the per-host file's | — |
+| reads + writes, both transports | `post-deploy-check.sh --compare` **OK** | — |
+| row counts vs the pre-deploy baseline | cards 30, links 20, projects 59, proposals 456, reports 74, work items 1544 — **all unchanged**; migrations 34, node_count 2483 | — |
+| korg genuinely authenticates with that variable | — | **the same image with a deliberately wrong `KORG_DB_PASSWORD` refuses to start**: `password authentication failed for user "korg"` |
+| `bin/secret verify kubsdb-korg-db-password` | `ok` | its own negative control refused |
+
+The wrong-password control is the load-bearing one. "korg still answers" proves
+nothing — a running container keeps its create-time environment, so only a
+process that fails without the variable shows the variable is doing the work.
+
+### The consequence of the whole-file ruling, now measurable
+
+The container's environment carries all six of kubsdb's keys —
+`GRAFANA_ADMIN_PASSWORD`, `POSTGRES_PASSWORD`, `REDISCLI_AUTH` and both
+`UNIFI_CONTROLLER_*` beside `KORG_DB_PASSWORD`. That follows the WI 2501 ruling
+and the overseer upheld it for korg (review korg:2585, ruling 3), recording the
+narrowing option for Ken: korg's deploy passing
+`--env-file /etc/khomelab/secrets.env` with a single interpolated
+`KORG_DB_PASSWORD`, at the cost of every compose command in `/datastore/korg`
+needing the flag.
