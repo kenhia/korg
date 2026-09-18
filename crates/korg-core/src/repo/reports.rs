@@ -525,11 +525,34 @@ pub async fn set_report_source(
     // calls build exactly the row a single call is refused for — and that row
     // *is* reachable by a caller who declared a cadence months ago and is now
     // correcting it, which is the likeliest way anyone meets this at all.
+    //
+    // **Read and write are ONE transaction, and the read takes the row lock.**
+    // Checking the resulting row state closes the two-call assembly path by
+    // sequence; without the lock the identical row is still reachable by
+    // *timing*. Two concurrent calls against a row with neither declaration —
+    // one sending `on_demand`, one sending `cadence_days` — would both read the
+    // clean state, both pass the check, and both write, leaving the row carrying
+    // both. It would then be invisible, because `judged` short-circuits on
+    // `on_demand` and never looks at the cadence again. korg is a no-auth HTTP
+    // server with two transports and several agents writing to it, so "one write
+    // path" means one code path, not one caller at a time.
+    //
+    // A CHECK constraint would also close it and is deliberately not used: 0035
+    // argues that case on error-message grounds — core names both fields and the
+    // fix, a constraint violation names neither — and a transaction keeps every
+    // one of those messages intact.
+    //
+    // `FOR UPDATE` locks nothing when the row does not yet exist, so the
+    // first-insert race is not closed by the lock; `ON CONFLICT DO UPDATE` makes
+    // the loser an update instead of a duplicate, and any subsequent call
+    // re-reads under the lock. That residue needs an advisory lock to close and
+    // is not worth one.
+    let mut tx = pool.begin().await?;
     let existing = sqlx::query_as::<_, (Option<i32>, bool)>(
-        "SELECT cadence_days, on_demand FROM report_source WHERE source = $1",
+        "SELECT cadence_days, on_demand FROM report_source WHERE source = $1 FOR UPDATE",
     )
     .bind(source)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?;
     let (stored_cadence, stored_on_demand) = existing.unwrap_or((None, false));
     let effective_on_demand = patch.on_demand.unwrap_or(stored_on_demand);
@@ -585,8 +608,9 @@ pub async fn set_report_source(
     .bind(patch.cadence_days.is_some())
     .bind(patch.grace_days.is_some())
     .bind(patch.note.is_some())
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
 
     list_report_sources(pool)
         .await?

@@ -425,3 +425,95 @@ async fn a_cadence_refuses_a_row_that_is_already_on_demand() {
         "the refusal must name the lift: {msg}"
     );
 }
+
+/// Two contradictory declarations racing cannot build the row the check refuses
+/// (overseer round 2 on korg:2814).
+///
+/// The check reads the row's resulting state rather than the call's fields,
+/// which closes the two-**call** assembly path. Without a row lock the identical
+/// row is still reachable by **timing**: both callers read the clean state, both
+/// pass, both write, and the result carries `on_demand` *and* a cadence. It is
+/// then invisible, because `judged` short-circuits on `on_demand` and never
+/// consults the cadence again.
+///
+/// **The interleave is forced, not hoped for.** The obvious version of this test
+/// — spawn both calls and see what happens — was written first and passed 5/5
+/// against the *unfixed* code, because two fast calls do not collide on their
+/// own. A concurrency test that cannot fail is the mirror-image failure GP-14
+/// warns about: it asserts the opposite of its own name and nothing ever says
+/// so. So this holds the row lock explicitly and proves both halves — that the
+/// call blocks while the lock is held, and that it is refused once it can read
+/// the committed state.
+///
+/// The row is created first on purpose. `FOR UPDATE` locks nothing when the row
+/// does not exist, so starting from a missing row would exercise the one residue
+/// the lock deliberately does not close.
+#[tokio::test]
+async fn a_contradictory_declaration_racing_another_cannot_land() {
+    let (_pg, pool) = fresh_korg().await;
+
+    set_report_source(
+        &pool,
+        "contended",
+        ReportSourcePatch {
+            note: Some(Some("neither on-demand nor on a cadence".into())),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("seed the row");
+
+    // Stand in for the winning caller, holding exactly the lock
+    // `set_report_source` takes.
+    let mut winner = pool.begin().await.expect("begin");
+    sqlx::query("SELECT cadence_days, on_demand FROM report_source WHERE source = $1 FOR UPDATE")
+        .bind("contended")
+        .execute(&mut *winner)
+        .await
+        .expect("take the row lock");
+
+    let loser = {
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            set_report_source(
+                &pool,
+                "contended",
+                ReportSourcePatch {
+                    cadence_days: Some(Some(7)),
+                    ..Default::default()
+                },
+            )
+            .await
+        })
+    };
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !loser.is_finished(),
+        "the competing call ran to completion while the row lock was held — it \
+         never waited, so it read a state that was about to change under it"
+    );
+
+    // The winner declares on-demand and commits. The loser can now proceed.
+    sqlx::query("UPDATE report_source SET on_demand = true WHERE source = $1")
+        .bind("contended")
+        .execute(&mut *winner)
+        .await
+        .expect("declare on-demand");
+    winner.commit().await.expect("commit");
+
+    let result = loser.await.expect("task");
+    assert!(
+        result.is_err(),
+        "the losing call must re-read under the lock and be refused; instead it \
+         landed a cadence on a source that is now on-demand, which is exactly \
+         the row the check exists to prevent"
+    );
+
+    let row = source_of(&list_report_sources(&pool).await.unwrap(), "contended");
+    assert!(
+        !(row.on_demand && row.cadence_declared),
+        "the row carries both on_demand and a declared cadence: {row:?}"
+    );
+    assert_eq!(row.freshness, "on-demand");
+}

@@ -155,6 +155,37 @@ The spec's staleness log now records that the count stops at four, and why.
 
 ## Repaired in passing
 
+**`set_report_source` read and wrote outside a transaction, so concurrency could
+build the row the check refuses.** Found by the overseer's round-2 review
+(handoff korg:2820).
+
+The contradiction check deliberately reads the *resulting row state* rather than
+the call's fields, which closes the two-call assembly path by **sequence**.
+Without a row lock the identical row is reachable by **timing**: against a row
+carrying neither declaration, one call sending `on_demand: true` and another
+sending `cadence_days: 7` both read the clean state, both pass, and both write.
+The result carries both — and is then invisible, because `judged` short-circuits
+on `on_demand` and never consults the cadence again.
+
+Fixed by wrapping the read and the upsert in one transaction with
+`SELECT … FOR UPDATE`. Not a CHECK constraint: migration 0035 already argues
+that case on error-message grounds — core names both fields and the fix, a
+constraint violation names neither — and a transaction keeps every one of those
+messages intact. `FOR UPDATE` locks nothing on a row that does not yet exist, so
+the first-insert race is not closed by the lock; `ON CONFLICT DO UPDATE` makes
+the loser an update, and that residue needs an advisory lock, which is not worth
+one. Recorded in the code comment rather than left implicit.
+
+**The first version of the test was wrong and is worth recording as such.**
+Spawning the two competing calls and asserting the outcome passed **5/5 against
+the unfixed code** — two fast calls do not collide on their own. That is the
+mirror-image failure GP-14 warns about: a test that asserts the opposite of its
+own name while nothing ever says so. Replaced with one that forces the
+interleave — hold the row lock in an explicit transaction, assert the competing
+call *blocks*, then commit a contradictory declaration and assert the call is
+refused when it re-reads. That version fails 3/3 without the lock and passes
+with it, checked by perturbation the same way the 2172 gate was.
+
 **korg's own web app had no treatment for the literal korg was about to grow.**
 Found because korg is its own consumer here — `web/src/routes/daily-reports`
 renders source freshness, so GP-19's "consumer ships later" sequencing does not
