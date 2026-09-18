@@ -9,14 +9,19 @@ test:
     cargo test --workspace
 
 # Regenerate every derived artefact from korg-core: the TypeScript the web app
-# imports (ts-rs + the vocabularies), and the MCP tool-schema snapshot. Run this
-# after changing any shared operation struct, response row, or vocabulary — CI
-# and `just check` fail if the checked-in output is stale (WI #540/#541).
+# imports (ts-rs + the vocabularies), the MCP tool-schema snapshot, and the
+# published read-shape contract. Run this after changing any shared operation
+# struct, response row, or vocabulary — CI and `just check` fail if the
+# checked-in output is stale (WI #540/#541, WI 2041).
 gen:
     # The ts-rs export directory and integer mapping live in .cargo/config.toml
     # so that a plain `cargo test` writes to the same place this does.
     cargo test -p korg-core --lib export_bindings
     UPDATE_SCHEMA_SNAPSHOT=1 cargo test -p korg-mcp --test schema
+    # The only generated artefact that needs a database: it is measured off real
+    # dispatched responses, not derived from the structs. testcontainers supplies
+    # the Postgres, the same way the test suite does.
+    UPDATE_READ_SHAPES=1 cargo test -p korg-mcp --test read_shapes
 
 # Everything CI enforces, in the order that fails fastest. Mirrors
 # .github/workflows/ci.yml — keep the two in step.
@@ -49,13 +54,14 @@ web-check:
 gen-check:
     #!/usr/bin/env bash
     set -euo pipefail
-    paths=(web/src/lib/generated crates/korg-mcp/tests/tools_schema.json)
+    paths=(web/src/lib/generated crates/korg-mcp/tests/tools_schema.json contract/read-shapes.json)
     fingerprint() { find "${paths[@]}" -type f | sort | xargs sha256sum; }
     before=$(fingerprint)
     just gen
     if [ "$before" != "$(fingerprint)" ]; then
         echo "error: generated files are stale — 'just gen' changed them." >&2
-        echo "       review the diff (every schema line is a change agents see), then commit." >&2
+        echo "       review the diff (every schema line is a change agents see, and every" >&2
+        echo "       read-shapes line is one a consumer may already assert on), then commit." >&2
         exit 1
     fi
 

@@ -48,6 +48,7 @@ pub fn build_router(state: AppState) -> Router {
     let state_config = state.config.clone();
     let api = Router::new()
         .route("/api/health", get(health))
+        .route("/api/contract/read-shapes", get(read_shapes_contract))
         .route("/api/projects", get(list_projects).post(create_project))
         .route("/api/projects/recent", get(recent_project))
         .route(
@@ -284,6 +285,29 @@ fn not_found(msg: String) -> ApiError {
 
 async fn health() -> Json<Value> {
     Json(json!({ "status": "ok" }))
+}
+
+/// korg's published read-shape contract (WI 2041), for a consumer to assert
+/// against in its own CI.
+///
+/// Embedded at build time rather than regenerated per request, and that is the
+/// decision rather than an optimisation. A consumer needs to know what **the
+/// korg it is talking to** promises, which is exactly the document the running
+/// binary was built from; korg-mcp's `read_shapes` suite gates that file against
+/// the real dispatched wire shapes, so the chain is consumer → this endpoint →
+/// embedded file → drift gate → measured responses. Regenerating live would need
+/// a seeded database, which production does not have and must not grow.
+///
+/// Served as a pre-serialised string: re-parsing it to hand axum a `Value` would
+/// let a byte the gate approved come back out differently.
+const READ_SHAPES_CONTRACT: &str = include_str!("../../../contract/read-shapes.json");
+
+async fn read_shapes_contract() -> Response {
+    (
+        [(header::CONTENT_TYPE, "application/json")],
+        READ_SHAPES_CONTRACT,
+    )
+        .into_response()
 }
 
 // --- projects -------------------------------------------------------------

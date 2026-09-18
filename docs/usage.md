@@ -271,6 +271,7 @@ describing a route that no longer exists.
 | Method(s) | Path | Description |
 | --- | --- | --- |
 | `GET` | `/api/health` | Liveness check. |
+| `GET` | `/api/contract/read-shapes` | korg's published read-shape contract (WI 2041): what every collection read returns, for a consumer to assert against in its own CI. Served byte-for-byte from `contract/read-shapes.json`, embedded at build time — so it describes the build this binary was made from, and a consumer can hash what it fetched against what it vendored. Needs no database. See [api.md](api.md#the-published-read-shape-contract-2041). |
 | `GET`, `POST` | `/api/projects` | List or create projects. |
 | `GET` | `/api/projects/recent` | Most recently used project. |
 | `PATCH` | `/api/projects/:name` | Update project metadata (everything but the name). |
