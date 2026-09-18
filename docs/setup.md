@@ -9,7 +9,9 @@ API, and the MCP endpoint (`POST /mcp`) from one process backed by PostgreSQL.
 - **PostgreSQL** 14+ reachable via a connection URL.
 - **Node.js** 24+ and **pnpm** 10+ (only needed to build the web UI).
 - **Docker** — required for the test suite (tests spin up throwaway Postgres
-  containers via `testcontainers`) and for container deployment.
+  containers via `testcontainers`), for `just gen` (one of the generated
+  artefacts is measured against a real database — see
+  [Generated files](#generated-files)), and for container deployment.
 - **[`just`](https://github.com/casey/just)** — optional, runs the task recipes
   in `justfile`.
 
@@ -102,14 +104,27 @@ cd web && KORG_API=http://localhost:8090 pnpm dev   # http://localhost:5173
 
 ### Generated files
 
-`web/src/lib/generated/` and `crates/korg-mcp/tests/tools_schema.json` are
-derived from korg-core and must never be hand-edited. After changing a shared
-operation struct (`korg_core::ops`, or any `New*`/`*Patch` in `repo`),
-a response row, or a vocabulary:
+`web/src/lib/generated/`, `crates/korg-mcp/tests/tools_schema.json` and
+`contract/read-shapes.json` are derived from korg-core and must never be
+hand-edited. After changing a shared operation struct (`korg_core::ops`, or any
+`New*`/`*Patch` in `repo`), a response row, or a vocabulary:
 
 ```bash
-just gen        # rewrites the TypeScript and the MCP tool-schema snapshot
+just gen        # TypeScript, the MCP tool-schema snapshot, the read-shape contract
 ```
+
+**`just gen` needs Docker.** The first two artefacts are derived from the
+structs and need nothing; `contract/read-shapes.json` is *measured* off real
+dispatched responses against a throwaway Postgres, which is what makes it
+trustworthy enough to publish — so the recipe provisions a container the same
+way the test suite does. A `just gen` that fails with a connection or daemon
+error is almost always Docker not running, not a code problem.
+
+That last file is also the only generated artefact with readers **outside this
+repo**: it is korg's published read-shape contract, served at
+`GET /api/contract/read-shapes`, and consumers assert against it in their own
+CI. Regenerating it is announcing a contract change — see
+[api.md](api.md#the-published-read-shape-contract-2041).
 
 The ts-rs export directory and its `i64 -> number` mapping live in
 `.cargo/config.toml`, not in the recipe, so a plain `cargo test --workspace`
