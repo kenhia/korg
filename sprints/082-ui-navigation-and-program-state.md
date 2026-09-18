@@ -148,3 +148,53 @@ touches `web/`, and this sprint touches nothing else.
 `status-control-current.spec.ts` asserts no colour anywhere, deliberately: a
 treatment that only worked for the coloured statuses would pass a colour test
 and still be the bug Ken filed.
+
+## Deployed
+
+**2026-09-18, to kubsdb** (`https://kubsdb.encke-wahoo.ts.net:5674`), by
+`deploy-kubsdb` as declared in `.sprint-deploy`.
+
+- **Image** `kubsdb.encke-wahoo.ts.net:5000/korg:00f2c2cd92e3`, built from
+  merged `main` (`00f2c2cd92e3b4e37462d0d0331c3e8d8f4e0872`), both the SHA tag
+  and `latest` pushed. Previous release `43d68e7f26e6` (sprint 081) remains in
+  the registry as the rollback target.
+- **Revision gate passed**: the running container's
+  `org.opencontainers.image.revision` equals the commit built — the one check
+  that catches a `compose pull` that silently did nothing.
+- **No migration.** `post-deploy-check.sh --compare` green: migrations 35 → 35,
+  and every row count unchanged (cards 30, links 21, projects 59, proposals 491,
+  reports 81, work items 1637; 2728 nodes).
+
+### Verified live, not inferred
+
+All four deep links 200. Then the three shipped behaviours, driven in a browser
+against the deployed instance — read-only on the server, with no status clicks
+on production:
+
+- **2710, on program 2232 — the program in Ken's screenshot, at `done`.** One
+  status marked current; it is `done`; its ring computes to
+  `oklch(0.708 0 0) 0px 0px 0px 2px` — a real 2px ring in `done`'s own ink,
+  `ring-current` doing what it was chosen for — and a settable option has
+  `box-shadow: none`. Weight 600 against 400.
+- **2444** — slice 2813's title is an `<a href="/planning/2813">` and clicking
+  it lands on the proposal.
+- **2380** — the control is an `<a>`, and the scope **moved**: parked on `kfdc`
+  from the rail first, then "Show in project" left the stored scope at `korg`
+  with both korg rail entries `aria-current="true"` and `kfdc` false. Parking it
+  first is the point — landing on `korg` otherwise proves nothing, since `korg`
+  is the scope a session here would already have.
+
+### Two notes from verifying, neither a defect in what shipped
+
+- **`korg` appears twice in the project rail** — once in the starred band, once
+  in the list, both correctly `aria-current`. That is sprint 074's starred
+  banding, not a duplicate. It broke a strict-mode locator in the throwaway
+  smoke script; `show-in-project.spec.ts` is unaffected because it creates its
+  own unstarred projects.
+- **`status-control-current.spec.ts`'s ring assertion is weaker than intended.**
+  It asserts `boxShadow !== "none"`, which does catch the regression it exists
+  for (drop the ring utility and the property computes to `none`), but would
+  pass on Tailwind's transparent offset scaffolding alone — so `ring-2` → `ring-0`
+  would slip through. Named rather than repaired: the branch is merged, and
+  sharpening it is a code change that belongs in a PR, not in a deploy-record
+  push to `main`.
