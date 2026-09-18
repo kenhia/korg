@@ -97,11 +97,16 @@ jobs:
       - name: Generated files are current
         run: |
           set -euo pipefail
-          paths=(web/src/lib/generated crates/korg-mcp/tests/tools_schema.json)
+          paths=(web/src/lib/generated crates/korg-mcp/tests/tools_schema.json contract/read-shapes.json)
           fingerprint() { find "${paths[@]}" -type f | sort | xargs sha256sum; }
           before=$(fingerprint)
           cargo test -p korg-core --lib export_bindings
           UPDATE_SCHEMA_SNAPSHOT=1 cargo test -p korg-mcp --test schema
+          # Needs the Docker daemon, unlike the two above: the read-shape
+          # contract is measured off real dispatched responses against a
+          # throwaway Postgres (WI 2041). The runner already has one for the
+          # test job, so this costs a container and no setup.
+          UPDATE_READ_SHAPES=1 cargo test -p korg-mcp --test read_shapes
           if [ "$before" != "$(fingerprint)" ]; then
             echo "::error::generated files are stale — run 'just gen' and commit the diff" >&2
             exit 1

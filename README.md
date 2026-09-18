@@ -22,6 +22,13 @@ and a web UI reachable from Windows browsers.
   querying the live database.
 - [docs/migration.md](docs/migration.md) — the historical kwi + kcard import.
 
+Building something that reads korg? Start with
+[`contract/read-shapes.json`](contract/read-shapes.json) — the shape of every
+collection read, measured off the wire and served live at
+`GET /api/contract/read-shapes`. Assert against it in your own CI and a korg
+shape change fails in your build rather than in production
+([why](docs/api.md#the-published-read-shape-contract-2041)).
+
 ## Model
 
 Everything is a **node** sharing one surrogate id space, so any kind can link to
