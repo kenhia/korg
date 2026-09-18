@@ -272,6 +272,16 @@ pub struct SourceHealth {
     /// source earns a cadence, so a consumer can show progress toward being
     /// rated instead of a flat "unknown".
     pub history_span_days: Option<i64>,
+    /// Declared to have **no cadence by design** (0035, #2183) — it files on an
+    /// event, not a schedule.
+    ///
+    /// Carried as data rather than left for a consumer to infer from
+    /// `cadence_days IS NULL AND NOT retired`, which is GP-13: a fact korg
+    /// knows and the consumer would have to reconstruct is korg's to return.
+    /// That particular reconstruction is also wrong — it is equally true of an
+    /// `unrated` source, and telling those two apart is the whole point of the
+    /// declaration.
+    pub on_demand: bool,
     /// Why this source was retired, or any operator note from `report_source`.
     pub note: Option<String>,
 }
@@ -279,9 +289,10 @@ pub struct SourceHealth {
 impl SourceHealth {
     /// Whether this row should raise an alert on a board.
     ///
-    /// Exactly one freshness value does. `retired` is a declared end, and
-    /// `unrated` is korg admitting it cannot judge yet — alerting on either
-    /// trains people to ignore the panel, and a channel nobody looks at is not a
+    /// Exactly one freshness value does. `retired` is a declared end, `unrated`
+    /// is korg admitting it cannot judge yet, and `on-demand` is a source that
+    /// has no cadence to be overdue against — alerting on any of them trains
+    /// people to ignore the panel, and a channel nobody looks at is not a
     /// channel (`vocab::exactly_one_freshness_is_the_alert` fences the set).
     pub fn alerts(&self) -> bool {
         self.freshness == "stale"
@@ -291,7 +302,7 @@ impl SourceHealth {
 /// `list_report_sources` / `GET /api/report-sources` — every known source with
 /// its freshness, most-alarming first.
 ///
-/// Order is **stale → fresh → unrated → retired**, then oldest report first
+/// Order is **stale → fresh → unrated → on-demand → retired**, then oldest report first
 /// inside each bucket. Ranking by freshness rather than by date is #1398's fix:
 /// the key used to be `is_stale DESC, last_report_date ASC`, which was right
 /// about stale and then sorted unrated against fresh *by date* — and an unrated
@@ -311,6 +322,22 @@ impl SourceHealth {
 /// appears; `judged` lets a declared cadence beat an inferred one and refuses to
 /// infer below [`SOURCE_MIN_HISTORY`]; `graced` defaults grace to the cadence
 /// itself, floor one day; `rated` resolves the freshness.
+///
+/// **`on_demand` short-circuits in `judged`, not in `rated`** (#2183). Pinning
+/// only the freshness literal would leave `cadence_days` carrying an inferred
+/// number, and everything downstream is computed from it — `grace_days`,
+/// `due_by`, `overdue_days`. The row would then read `on-demand` while also
+/// reporting the source three days overdue against a cadence korg invented,
+/// which is the contradiction the declaration exists to remove rather than
+/// relabel. Nulling the cadence at its source makes all four fall out together,
+/// and puts the declaration ahead of every one of [`SOURCE_CADENCE_WINDOW`],
+/// [`SOURCE_MIN_HISTORY`] and [`SOURCE_MIN_SPAN_CADENCES`] — no threshold can
+/// reach the outcome, so none of them can expire into it the way
+/// [`SOURCE_MIN_SPAN_CADENCES`] did for `kyac`.
+///
+/// `retired` still outranks `on_demand` in `rated`: a source may carry both
+/// flags, and "this ended" is the stronger claim — `on_demand` describes how a
+/// *live* source files.
 ///
 /// `rated` exists so freshness is decided **once**. It used to be an expression
 /// repeated three times — in the SELECT, in the `asserts` guard and in the
@@ -361,6 +388,7 @@ pub async fn list_report_sources(pool: &PgPool) -> Result<Vec<SourceHealth>> {
                     l.status                                             AS last_status, \
                     coalesce(a.report_count, 0)                          AS report_count, \
                     coalesce(rs.retired, false)                          AS retired, \
+                    coalesce(rs.on_demand, false)                        AS on_demand, \
                     rs.note                                              AS note, \
                     rs.cadence_days                                      AS declared_cadence, \
                     rs.grace_days                                        AS declared_grace, \
@@ -374,11 +402,13 @@ pub async fn list_report_sources(pool: &PgPool) -> Result<Vec<SourceHealth>> {
          ), \
          judged AS ( \
              SELECT b.*, \
-                    coalesce(b.declared_cadence::bigint, \
-                             CASE WHEN b.report_count >= {SOURCE_MIN_HISTORY} \
-                                   AND b.history_span_days >= \
-                                       {SOURCE_MIN_SPAN_CADENCES} * b.inferred_cadence \
-                                  THEN b.inferred_cadence END)          AS cadence_days \
+                    CASE WHEN b.on_demand THEN NULL \
+                         ELSE coalesce(b.declared_cadence::bigint, \
+                                  CASE WHEN b.report_count >= {SOURCE_MIN_HISTORY} \
+                                        AND b.history_span_days >= \
+                                            {SOURCE_MIN_SPAN_CADENCES} * b.inferred_cadence \
+                                       THEN b.inferred_cadence END) \
+                    END                                                 AS cadence_days \
                FROM base b \
          ), \
          graced AS ( \
@@ -391,6 +421,7 @@ pub async fn list_report_sources(pool: &PgPool) -> Result<Vec<SourceHealth>> {
          rated AS ( \
              SELECT g.*, \
                     CASE WHEN g.retired                     THEN 'retired' \
+                         WHEN g.on_demand                    THEN 'on-demand' \
                          WHEN g.cadence_days IS NULL \
                            OR g.last_report_date IS NULL     THEN 'unrated' \
                          WHEN (current_date - g.last_report_date) \
@@ -409,12 +440,13 @@ pub async fn list_report_sources(pool: &PgPool) -> Result<Vec<SourceHealth>> {
                 (r.last_report_date + (r.cadence_days + r.grace_days)::int) AS due_by, \
                 greatest(0, coalesce((current_date - r.last_report_date) \
                             - (r.cadence_days + r.grace_days), 0))::bigint AS overdue_days, \
-                r.report_count, r.history_span_days, r.note \
+                r.report_count, r.history_span_days, r.on_demand, r.note \
            FROM rated r \
-          ORDER BY CASE r.freshness WHEN 'stale'   THEN 0 \
-                                    WHEN 'fresh'   THEN 1 \
-                                    WHEN 'unrated' THEN 2 \
-                                    ELSE                3 END, \
+          ORDER BY CASE r.freshness WHEN 'stale'     THEN 0 \
+                                    WHEN 'fresh'     THEN 1 \
+                                    WHEN 'unrated'   THEN 2 \
+                                    WHEN 'on-demand' THEN 3 \
+                                    ELSE                  4 END, \
                    r.last_report_date ASC NULLS FIRST, r.source ASC",
         vocab::SOURCE_ASSERTS_UNKNOWN
     ))
@@ -424,11 +456,15 @@ pub async fn list_report_sources(pool: &PgPool) -> Result<Vec<SourceHealth>> {
 }
 
 /// `set_report_source` / `PATCH /api/report-sources/:source` — declare a
-/// cadence, a grace window, or retirement.
+/// cadence, a grace window, retirement, or that there is no cadence at all.
 ///
 /// Every field is an override; leaving one unset keeps the derivation. The row
 /// may be written **before** the source's first report, which is how a new daily
 /// source skips `unrated` on day one rather than spending three days in it.
+///
+/// The four declarations are not four settings: `cadence_days` and `on_demand`
+/// are contradictory claims and `set_report_source` refuses a row that would
+/// carry both (#2183).
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 pub struct ReportSourcePatch {
     /// Expected days between reports. `null` clears the override and returns the
@@ -445,6 +481,15 @@ pub struct ReportSourcePatch {
     /// distinguishable from "this died", which silence alone can never do.
     #[serde(default)]
     pub retired: Option<bool>,
+    /// Declare that this source has **no cadence at all** — it files on an
+    /// event, not a schedule, so its silence never means anything (#2183).
+    ///
+    /// The fourth override, and the one that cannot be combined with
+    /// `cadence_days`: declaring both is `invalid_input`, because they are
+    /// contradictory claims about the same source rather than two settings that
+    /// happen to disagree.
+    #[serde(default)]
+    pub on_demand: Option<bool>,
     #[serde(default, deserialize_with = "ops::double_option")]
     pub note: Option<Option<String>>,
 }
@@ -472,20 +517,70 @@ pub async fn set_report_source(
         }
     }
 
+    // `on_demand` and a declared cadence are contradictory claims about the same
+    // source: one says "there is no schedule", the other says what the schedule
+    // is. Checked against the state the row would END UP in, not against this
+    // call's fields, because the contradiction is a property of the row and not
+    // of how it was assembled. Guarding only the same-call case would let two
+    // calls build exactly the row a single call is refused for — and that row
+    // *is* reachable by a caller who declared a cadence months ago and is now
+    // correcting it, which is the likeliest way anyone meets this at all.
+    let existing = sqlx::query_as::<_, (Option<i32>, bool)>(
+        "SELECT cadence_days, on_demand FROM report_source WHERE source = $1",
+    )
+    .bind(source)
+    .fetch_optional(pool)
+    .await?;
+    let (stored_cadence, stored_on_demand) = existing.unwrap_or((None, false));
+    let effective_on_demand = patch.on_demand.unwrap_or(stored_on_demand);
+    let effective_cadence = match patch.cadence_days {
+        Some(v) => v,
+        None => stored_cadence.map(i64::from),
+    };
+    if effective_on_demand {
+        if let Some(cadence) = effective_cadence {
+            let (already, fix) = match (patch.on_demand, patch.cadence_days) {
+                // Both in one call: the caller contradicted themselves.
+                (Some(true), Some(Some(_))) => (
+                    "on_demand and cadence_days were both declared in this call",
+                    "pass one or the other",
+                ),
+                // Arriving on-demand at a row that already declares a cadence.
+                (Some(true), None) => (
+                    "this source already declares a cadence",
+                    "pass cadence_days: null in the same call to clear it",
+                ),
+                // Declaring a cadence on a row that is already on-demand.
+                _ => (
+                    "this source is already declared on_demand",
+                    "pass on_demand: false in the same call to lift it",
+                ),
+            };
+            return Err(RepoError::invalid(format!(
+                "'{source}' cannot be both on_demand and on a {cadence}-day cadence — {already}. \
+                 An on-demand source files on an event, not a schedule, so a cadence is not a \
+                 stricter version of the same claim, it is the opposite one; {fix}"
+            ))
+            .into());
+        }
+    }
+
     sqlx::query(
-        "INSERT INTO report_source (source, cadence_days, grace_days, retired, note) \
-         VALUES ($1, $2, $3, coalesce($4, false), $5) \
+        "INSERT INTO report_source (source, cadence_days, grace_days, retired, on_demand, note) \
+         VALUES ($1, $2, $3, coalesce($4, false), coalesce($5, false), $6) \
          ON CONFLICT (source) DO UPDATE SET \
-             cadence_days = CASE WHEN $6 THEN EXCLUDED.cadence_days ELSE report_source.cadence_days END, \
-             grace_days   = CASE WHEN $7 THEN EXCLUDED.grace_days   ELSE report_source.grace_days   END, \
+             cadence_days = CASE WHEN $7 THEN EXCLUDED.cadence_days ELSE report_source.cadence_days END, \
+             grace_days   = CASE WHEN $8 THEN EXCLUDED.grace_days   ELSE report_source.grace_days   END, \
              retired      = coalesce($4, report_source.retired), \
-             note         = CASE WHEN $8 THEN EXCLUDED.note         ELSE report_source.note         END, \
+             on_demand    = coalesce($5, report_source.on_demand), \
+             note         = CASE WHEN $9 THEN EXCLUDED.note         ELSE report_source.note         END, \
              updated      = now()",
     )
     .bind(source)
     .bind(patch.cadence_days.flatten().map(|v| v as i32))
     .bind(patch.grace_days.flatten().map(|v| v as i32))
     .bind(patch.retired)
+    .bind(patch.on_demand)
     .bind(patch.note.clone().flatten())
     .bind(patch.cadence_days.is_some())
     .bind(patch.grace_days.is_some())

@@ -765,6 +765,8 @@ const SOURCE_FRESHNESS_STYLE: Record<string, string> = {
   stale: "bg-red-900/40 text-red-300 border-red-700",
   retired: "bg-[var(--color-surface-hi)] text-[var(--color-muted)] border-[var(--color-border)]",
   unrated: "bg-[var(--color-surface-hi)] text-[var(--color-muted)] border-[var(--color-border)]",
+  "on-demand":
+    "bg-[var(--color-surface-hi)] text-[var(--color-muted)] border-[var(--color-border)]",
 };
 
 /** The complete class list for a source-freshness pill. */
@@ -790,6 +792,7 @@ const SOURCE_FRESHNESS_TEXT: Record<string, string> = {
   stale: "text-red-300",
   retired: "text-[var(--color-muted)]",
   unrated: "text-[var(--color-muted)]",
+  "on-demand": "text-[var(--color-muted)]",
 };
 
 /** Colour alone for a source's freshness — the collapsed bar's form. */
@@ -812,8 +815,20 @@ export function sourceFreshnessText(freshness: string): string {
  * whose entire premise is "a source that stopped filing is itself an alert"
  * is the one failure mode worth designing against. An unknown value shows up
  * in the bar, uncoloured, and gets noticed.
+ *
+ * `on-demand` joined in sprint 081 (#2183), and it is the case that comment
+ * anticipated arriving. Note which direction the default failed in: an
+ * on-demand source is the *most* explicitly unscheduled row korg can serve —
+ * somebody declared that it has no cadence — and the exclusion default would
+ * have listed it in the bar as a source korg holds to one. That is the safe
+ * direction (surfacing beats hiding on this panel) but it is still wrong, so
+ * the declaration goes in the set rather than being left to the default.
  */
-const UNSCHEDULED_FRESHNESS: ReadonlySet<string> = new Set(["retired", "unrated"]);
+const UNSCHEDULED_FRESHNESS: ReadonlySet<string> = new Set([
+  "retired",
+  "unrated",
+  "on-demand",
+]);
 
 /** True when korg holds this source to a cadence, so lateness means something. */
 export function isScheduledSource(freshness: string): boolean {

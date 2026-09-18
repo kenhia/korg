@@ -166,6 +166,23 @@
             <span class="text-xs text-[var(--color-muted)]">
               retired{s.note ? ` — ${s.note}` : ""}
             </span>
+          {:else if s.freshness === "on-demand"}
+            <!-- #2183. This arm is not decoration: the `{:else}` below prints
+                 "every {cadence_days} days", and an on-demand source has no
+                 cadence by construction — it would have rendered "every
+                 undefined days" on the row whose entire content is that there
+                 is no schedule.
+
+                 Says what it DOES report on, not just that it has no cadence,
+                 because the reasonable next question about a source korg has
+                 stopped judging is who is watching it instead. The operator
+                 note is where that lives, and it replaces the generic line
+                 rather than joining it — the same rule the `unrated` arm
+                 follows (#1398). -->
+            <span class="text-xs text-[var(--color-muted)]">
+              {s.note ?? "no cadence by design — files on an event, not a schedule"} · last filed
+              {s.last_report_date ?? "never"}
+            </span>
           {:else}
             <span class="text-xs text-[var(--color-muted)]">
               last filed {s.last_report_date} · every {s.cadence_days}

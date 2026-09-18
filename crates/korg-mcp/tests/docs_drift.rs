@@ -1131,3 +1131,61 @@ fn every_shipped_sprint_since_047_records_its_deploy() {
         );
     }
 }
+
+/// The e2e relationship-label assertion matches the registry it hand-copies
+/// (#2172).
+///
+/// `web/tests/e2e/work-item-edit.spec.ts` asserts the label picker's options as
+/// a literal list in registry order. Playwright is deliberately outside
+/// `just check` and CI (`docs/setup.md`), so for four registry additions in a
+/// row the break surfaced only on the next hand-run of the suite — by which
+/// time the sprint that caused it had shipped.
+///
+/// This is the gate rather than the derive. The spec could read the registry
+/// from the generated `vocab.ts` and assert "the picker shows the registry",
+/// and that would be the more elegant fix; it would also still only fail where
+/// Playwright runs, which is the actual problem. **A gate in `just check` fails
+/// in front of the sprint that caused it**, which is the only place the fix is
+/// cheap, and it needs no browser to do it. The spec keeps its literal list —
+/// a literal is what makes it a readable assertion about the UI — and this
+/// makes the literal honest.
+///
+/// Note what is being asserted: order as well as membership. The spec uses
+/// `toHaveText`, which is positional, so a registry reordering breaks it just
+/// as surely as an addition and would otherwise be just as invisible.
+#[test]
+fn the_e2e_label_picker_list_matches_the_registry() {
+    const SPEC: &str = "web/tests/e2e/work-item-edit.spec.ts";
+    const ANCHOR: &str = r#"labelPicker.locator("option")).toHaveText(["#;
+
+    let spec = read(SPEC);
+    let at = spec.find(ANCHOR).unwrap_or_else(|| {
+        panic!(
+            "{SPEC} no longer asserts the picker options with `{ANCHOR}`.\n\
+             If the assertion moved or was rewritten to derive the list from the \
+             registry, delete this test — it exists to guard a hand-copied \
+             literal, and it is worth nothing guarding something else."
+        )
+    });
+    let rest = &spec[at + ANCHOR.len()..];
+    let close = rest
+        .find(']')
+        .expect("the toHaveText array closes before end of file");
+    let spec_labels: Vec<&str> = rest[..close].split('"').skip(1).step_by(2).collect();
+
+    let registry: Vec<&str> = korg_core::relationships::REGISTRY
+        .iter()
+        .map(|s| s.label)
+        .collect();
+
+    assert_eq!(
+        spec_labels, registry,
+        "\nthe relationship-label list in {SPEC} has drifted from \
+         `korg_core::relationships::REGISTRY`.\n\
+         spec:     {spec_labels:?}\n\
+         registry: {registry:?}\n\
+         Update the literal in the spec to match the registry, in registry \
+         order. You are seeing this in `just check` instead of in a hand-run \
+         Playwright suite weeks from now, which is what #2172 bought."
+    );
+}

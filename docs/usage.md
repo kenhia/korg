@@ -430,7 +430,7 @@ Vocabularies are validated in korg-core, so an unknown value comes back as a
 - schedule `anchor_mode`: `completed`, `created`
 - schedule `status`: `active`, `paused`, `done`
 - schedule substitutions: `YEAR`, `MONTH`, `DAY`, `DATE`, `QUARTER`
-- source `freshness`: `fresh`, `stale`, `retired`, `unrated`
+- source `freshness`: `fresh`, `stale`, `retired`, `unrated`, `on-demand`
 - source `asserts`: `ok`, `attention`, `problem`, `unknown`
 
 ## MCP endpoint

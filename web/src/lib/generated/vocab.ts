@@ -45,7 +45,7 @@ export type ScheduleStatus = (typeof SCHEDULE_STATUSES)[number];
 export const SCHEDULE_SUBSTITUTIONS = ["YEAR", "MONTH", "DAY", "DATE", "QUARTER"] as const;
 export type ScheduleSubstitution = (typeof SCHEDULE_SUBSTITUTIONS)[number];
 
-export const SOURCE_FRESHNESS = ["fresh", "stale", "retired", "unrated"] as const;
+export const SOURCE_FRESHNESS = ["fresh", "stale", "retired", "unrated", "on-demand"] as const;
 export type SourceFreshness = (typeof SOURCE_FRESHNESS)[number];
 
 export const SOURCE_ASSERTIONS = ["ok", "attention", "problem", "unknown"] as const;

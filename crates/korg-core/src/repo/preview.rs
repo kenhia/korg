@@ -64,6 +64,28 @@ fn field(label: &str, value: impl Into<String>) -> NodeField {
     }
 }
 
+/// The `kind` of any node, or `None` if no node has that id (#2446).
+///
+/// The public counterpart of `common::node_kind`, which is `pub(super)` and
+/// spells absence as a `not_found` error because its callers — `relate`'s
+/// endpoint checks — genuinely are refusing a bad id. A caller that is
+/// *dispatching* on kind wants absence as a value: it has one more branch to
+/// pick, not an error to propagate. Same query, and the difference is entirely
+/// in what the caller is entitled to do with the answer.
+///
+/// This exists so a caller holding a bare id can reach the right typed read
+/// without guessing. That guess is not free: a session in #2446 spent
+/// `get_work_item` and `get_proposal` before `get_program` answered for node
+/// 2440, and the two failures were indistinguishable from the id being wrong.
+pub async fn node_kind_of(pool: &PgPool, id: i64) -> Result<Option<String>> {
+    Ok(
+        sqlx::query_scalar::<_, String>("SELECT kind FROM node WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
 /// Resolve any node id to a uniform preview, dispatching on its kind. Returns
 /// `None` if no node has that id. Dates are read as `YYYY-MM-DD` text so the
 /// payload needs no client-side date parsing.
