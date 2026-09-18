@@ -268,3 +268,65 @@ slice of their own.
   same for `kfo-soak`, each with its note rewritten to drop the paragraph
   explaining why it was lying. kyac is the live acceptance check — it should
   leave `stale`/`overdue_days: 3` the moment it is declared.
+
+## Deployed
+
+**2026-09-18, to kubsdb** (`https://kubsdb.encke-wahoo.ts.net:5674`) via the
+`deploy-kubsdb` skill, from merged `main`.
+
+- Image `kubsdb.encke-wahoo.ts.net:5000/korg:43d68e7f26e6`, digest
+  `sha256:630bb7af0ff0…`, both tags pushed (SHA first, then `latest`).
+- Revision assertion passed in-deploy: running
+  `43d68e7f26e64850ebc51c6d8aae82f6a6170343`, the commit built. Previous
+  release was `eb0d91b3c5fc` (sprint 080), still in the registry as the
+  rollback target.
+- `post-deploy-check.sh --compare`: **OK**. Migrations **34 → 35** (0035
+  applied). Every row count unchanged — cards 30, links 21, projects 59,
+  proposals 490, reports 81, work items 1633, nodes 2719. Nothing dropped.
+
+### Verified live, against the deployed release
+
+**`get_item` (WI 2446)** — 57 tools advertised, up from 56. Called on four
+kinds through the deployed MCP endpoint, each returning the right `kind` and
+that node's payload: 2183 → `workitem`, 2814 → `sprint_proposal`, 2816 →
+`program`, 2819 → `handoff`. A bare id naming no node returns
+`{"code":"not_found"}`, which is the unambiguous case the tool exists to give.
+
+**`on_demand` (WI 2183) — the acceptance, with numbers.** Declared against the
+deployed release, not a fixture. `kyac` before and after:
+
+| field | before | after |
+|---|---|---|
+| `freshness` | **`stale`** | **`on-demand`** |
+| `overdue_days` | **3** | **0** |
+| `cadence_days` | **2** | **null** |
+| `cadence_declared` | false | false |
+| `grace_days` | 2 | null |
+| `due_by` | 2026-09-15 | null |
+| `asserts` | unknown | unknown |
+| `report_count` | 6 | 6 |
+| `history_span_days` | 64 | 64 |
+
+The invented cadence and everything computed from it fall away together, which
+is what putting the short-circuit in `judged` rather than `rated` bought. The
+history is still reported — the declaration stops korg *judging* this source,
+not remembering it.
+
+**An open question from the clearance, answered by doing it rather than
+assuming:** kyac did **not** need `cadence_days: null` in the same call. The
+contradiction guard reads the *stored* declaration, and kyac's cadence was
+inferred — stored `NULL` — so the declaration passed on its own. A source with
+a genuinely *declared* cadence would have been refused, which is the behaviour
+`on_demand_refuses_a_row_that_already_declares_a_cadence` pins.
+
+`kfo-soak` likewise moved `unrated` → `on-demand`, `cadence_days` null,
+2 reports, and can no longer be promoted by any amount of history.
+
+Live ordering confirmed on `/api/report-sources`: `fresh → on-demand →
+retired`, with `on_demand` travelling as data on the REST surface as well as
+MCP. **The panel now carries zero `stale` sources** — kyac was the only alert
+on it, and it was a false one for days.
+
+Both notes were rewritten in the same calls: kyac's drops the paragraph
+explaining why `retired` was being refused, and kfo-soak's drops its
+instruction to fall back to `retired: true`, which no longer applies.
