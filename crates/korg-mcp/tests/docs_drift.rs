@@ -1189,3 +1189,102 @@ fn the_e2e_label_picker_list_matches_the_registry() {
          Playwright suite weeks from now, which is what #2172 bought."
     );
 }
+
+// ---------------------------------------------------------------------------
+// The Dockerfile's copy set
+// ---------------------------------------------------------------------------
+
+/// A file a crate embeds with `include_str!` is a **build input**, and the
+/// release image only copies the paths its Dockerfile names.
+///
+/// Sprint 083 shipped `include_str!("../../../contract/read-shapes.json")` in
+/// `korg-api`, and the image build failed at compile time with *"couldn't read …
+/// contract/read-shapes.json"* — after the merge, after CI was green, and after
+/// a multi-minute build. Nothing in the gate could have caught it: `just check`
+/// and CI compile in the full tree, and only the `rust` stage sees a restricted
+/// copy set. So the gate grew this instead of the repo growing a habit of
+/// remembering.
+///
+/// It checks the *root* directory of each embedded path rather than the whole
+/// path, because that is the granularity `COPY` works at and the granularity the
+/// failure has: `crates/` was copied and `contract/` was not.
+#[test]
+fn embedded_files_are_copied_into_the_image() {
+    let dockerfile = read("Dockerfile");
+
+    // The `rust` stage is the only one that compiles, so it is the only one
+    // whose copy set can starve an `include_str!`.
+    let rust_stage: String = dockerfile
+        .split("AS rust")
+        .nth(1)
+        .expect("the Dockerfile has a stage named `rust`")
+        .split("FROM ")
+        .next()
+        .expect("the rust stage ends at the next FROM")
+        .to_string();
+
+    let mut sources = Vec::new();
+    for crate_dir in ["korg-api", "korg-core", "korg-mcp", "korg-img"] {
+        rust_sources(
+            &repo_root().join("crates").join(crate_dir).join("src"),
+            &mut sources,
+        );
+    }
+
+    let mut missing = Vec::new();
+    for path in &sources {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        for macro_name in ["include_str!", "include_bytes!"] {
+            for (idx, _) in text.match_indices(macro_name) {
+                let rest = &text[idx + macro_name.len()..];
+                let Some(open) = rest.find('"') else { continue };
+                let Some(close) = rest[open + 1..].find('"') else {
+                    continue;
+                };
+                let literal = &rest[open + 1..open + 1 + close];
+
+                // Resolve the literal relative to the including file, then make
+                // it repo-relative, so `../../../contract/x.json` from
+                // `crates/korg-api/src/` becomes `contract/x.json`.
+                let resolved = path.parent().expect("a file has a parent").join(literal);
+                let Ok(canonical) = resolved.canonicalize() else {
+                    // A path that does not resolve is a compile error already;
+                    // this test is not the place to report it.
+                    continue;
+                };
+                let Ok(root) = repo_root().canonicalize() else {
+                    continue;
+                };
+                let Ok(rel) = canonical.strip_prefix(&root) else {
+                    continue;
+                };
+
+                let Some(top) = rel.components().next() else {
+                    continue;
+                };
+                let top = top.as_os_str().to_string_lossy().to_string();
+                // A path inside `crates/` rides along with the crate sources.
+                if top == "crates" {
+                    continue;
+                }
+                if !rust_stage.contains(&format!("COPY {top}/")) {
+                    let source = path
+                        .canonicalize()
+                        .ok()
+                        .and_then(|p| p.strip_prefix(&root).map(|p| p.display().to_string()).ok())
+                        .unwrap_or_else(|| path.display().to_string());
+                    missing.push(format!("{source} embeds {} ({})", rel.display(), literal));
+                }
+            }
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "these files are embedded into the binary but the Dockerfile's `rust` stage \
+         never copies them, so the release image cannot build — while `just check` and \
+         CI pass, because both compile in the full tree:\n  {}\n\
+         Add a `COPY <dir>/ ./<dir>/` line to the rust stage.",
+        missing.join("\n  ")
+    );
+}
