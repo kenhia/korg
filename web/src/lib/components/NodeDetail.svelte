@@ -21,6 +21,7 @@
   import { api, type NodePreview, type Neighbor } from "$lib/api";
   import { chip, docTitle, nodePage, stamp } from "$lib/domain";
   import { imgIdFromNodeId, imgUrl } from "$lib/img";
+  import { writeProjectScope } from "$lib/projectScope";
   import Comments from "./Comments.svelte";
   import ErrorNotice from "./ErrorNotice.svelte";
   import MarkdownView from "./MarkdownView.svelte";
@@ -28,11 +29,25 @@
   let {
     nodeId,
     expect,
+    projectRail,
   }: {
     nodeId: number;
     /** The kind this route is for, so a mismatched id says so rather than
      *  rendering a schedule under the Cards heading. */
     expect: string;
+    /**
+     * Where "Show in project" should land — a list page whose project rail
+     * honours the shared `korg.project` scope (WI #2380).
+     *
+     * Opt-in per route, and deliberately a path the *route* supplies rather
+     * than a kind this component switches on. Two reasons, and neither is
+     * style: only Work Items and Planning read that key, so a card or a
+     * schedule offering the control would write a scope nothing reads; and a
+     * kind -> list-page map inside a shared component is the copy GP-16 says a
+     * consumer must not keep. The route already holds this path — it is the
+     * same one its `<BackTo>` points at.
+     */
+    projectRail?: string;
   } = $props();
 
   let node = $state<NodePreview | null>(null);
@@ -89,6 +104,13 @@
   );
 
   const wrongKind = $derived(node != null && node.kind !== expect);
+
+  // Re-checks `node` rather than asserting it: the template's `{#if node}`
+  // narrowing does not reach inside a handler, because a handler runs later.
+  // The `<a>` navigates on its own, so this only has to set the scope.
+  function scopeToProject() {
+    if (node?.project) writeProjectScope(node.project);
+  }
 </script>
 
 <svelte:head>
@@ -137,12 +159,36 @@
             · updated {stamp(node.updated)}{/if}</span
         >
       </div>
-      <div class="flex flex-wrap gap-1 text-xs">
+      <div class="flex flex-wrap items-center gap-1 text-xs">
         {#each node.badges as b (b)}
           <span class="rounded bg-[var(--color-surface-hi)] px-1.5 py-0.5">{b}</span>
         {/each}
         {#if node.project}<span class={chip.project}>{node.project}</span>{/if}
         {#each node.tags as t (t)}<span class={chip.tag}>#{t}</span>{/each}
+        <!-- WI #2380 — Ken types an id to get this view, then wants the rest of
+             the project it belongs to. The project was already on screen and
+             there was nothing to do with it, so the only route was retyping
+             `/work-items` and re-picking from the rail.
+
+             A button of its own rather than making the chip clickable: the
+             project chip is a static label at fifteen call sites, and making it
+             a control in one of them would promise the same behaviour at the
+             other fourteen.
+
+             An `<a>` rather than a click handler, so middle- and ⌘-click open a
+             correctly-scoped tab; the scope write happens either way, which is
+             what makes that work. It writes the SHARED scope (WI #1310) rather
+             than a URL parameter, so the destination is the ordinary Work Items
+             page at the ordinary sticky selection. -->
+        {#if node.project && projectRail}
+          <a
+            class="ml-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[var(--color-muted)] hover:bg-[var(--color-surface-hi)] hover:text-[var(--color-text)]"
+            data-testid="show-in-project"
+            href={projectRail}
+            title={`Show ${node.project}`}
+            onclick={scopeToProject}>Show in project ↗</a
+          >
+        {/if}
       </div>
     </header>
 

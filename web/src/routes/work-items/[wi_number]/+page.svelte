@@ -23,5 +23,8 @@
 
 <section class="space-y-4">
   <BackTo href="/work-items" label="← Work items" />
-  <NodeDetail {nodeId} expect="workitem" />
+  <!-- The same destination the control above goes to, and that is the point:
+       "back" leaves the scope alone, "Show in project" (WI #2380) sets it to
+       this item's project on the way. -->
+  <NodeDetail {nodeId} expect="workitem" projectRail="/work-items" />
 </section>

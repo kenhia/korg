@@ -170,7 +170,8 @@ covers:
 
 ### Behaviour common to every page
 
-Six rules hold across the UI (sprint 019, plus one each from 049, 055 and 057):
+Eight rules hold across the UI (sprint 019, plus one each from 049, 055, 057,
+074 and 082):
 
 **Nothing fails silently.** Every mutation reports failure in a toast, and a
 failed *load* renders a distinguishable "couldn't load" state with a retry —
@@ -198,6 +199,22 @@ their id in one shared mono-and-muted style. The reverse direction holds too:
 find-by-ID on Work Items resolves **every** node kind to its real title (a work
 item navigates; anything else previews), and `crates/korg-core/tests/sprint049.rs`
 fails if a kind is ever added without a `get_node_preview` arm to resolve it.
+
+**The title is the link; the id is a handle you read, not a control** (#2444).
+Ken's report was that korg seemed to have two standards for what you click. It
+has one, with two exceptions that turn out to be the same rule seen from the
+other side: where the title is already spoken for by a different navigation,
+the id takes the affordance instead. The **Reading list**'s title *is* the
+outbound URL, and a **Schedule**'s title is a rendered preview of what
+materialising would create rather than a handle for the schedule — so on those
+two rows the id opens the node, and it is the id because that is what find-by-ID
+takes. Everywhere else — the programs list, a program's slices, its soaks and
+Related lists, a proposal's covered items — the title carries the link and the
+id sits beside it in the shared mono-and-muted style, because the id's job is to
+be matched against agent output and retyped, not clicked. One corollary, from
+the same register: a per-node destination is built from korg's own answer
+(`nodePage`, or the `url` on a ref korg returned), never from a path written out
+by hand.
 
 **Every node has comments and timestamps, wherever you can preview it**
 (sprint 055, closing #870's audit punch list). `add_comment`/`list_comments`
