@@ -50,6 +50,16 @@ test("edit, archive, and relate a work item", async ({ page }) => {
   // joined in 056 and was caught by the first suite run afterwards, in 057;
   // `soaks` joined in 079 and was caught in 079, by the overseer asking for the
   // suite to be run before the ship rather than after it.
+  //
+  // **The count stops at four** (#2172, sprint 081). This list is now gated by
+  // `the_e2e_label_picker_list_matches_the_registry` in korg-mcp's `docs_drift`
+  // suite, which parses the array below and compares it against
+  // `korg_core::relationships::REGISTRY` — membership and order both. So a
+  // registry addition now fails in `just check`, in front of the sprint that
+  // caused it, instead of waiting for whenever somebody next runs Playwright by
+  // hand. Keep the literal: the gate is what makes it honest, and a literal is
+  // what makes this a readable assertion about the UI rather than the registry
+  // compared with itself.
   await expect(labelPicker.locator("option")).toHaveText([
     "covers",
     "finding",

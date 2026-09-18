@@ -159,6 +159,9 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
         ),
         ("list_work_items", json!({})),
         ("get_work_item", json!({"wi_number": wi.wi_number})),
+        // One kind here is enough for the dispatch floor; all nine are covered
+        // behaviourally by `get_item_covers_every_node_kind` below.
+        ("get_item", json!({"node_id": wi.node_id})),
         (
             "update_work_item",
             json!({"wi_number": wi.wi_number, "title": "retitled"}),
@@ -358,6 +361,109 @@ async fn every_advertised_tool_is_dispatched() {
             "`{name}` dispatched to an error result: {result:?}"
         );
     }
+}
+
+/// `get_item` resolves **every** node kind, and says which one it resolved
+/// (#2446).
+///
+/// The fence is deliberately behavioural rather than a grep of `tools.rs` for
+/// match arms. An arm proves nothing here: the failure this tool exists to
+/// remove is a caller guessing wrong and getting a `not_found` it cannot tell
+/// from a bad id, and an arm calling the wrong typed read reproduces that
+/// exactly while looking correct in source.
+///
+/// The load-bearing assertion is the last one. Adding a tenth kind to
+/// `NODE_KINDS` without a `get_item` arm fails here, which is the whole reason
+/// the covered set is compared against the vocabulary instead of against a
+/// second hand-written list — that would be the drift this sprint's other two
+/// items are about, reintroduced by the test meant to prevent it.
+#[tokio::test]
+async fn get_item_covers_every_node_kind() {
+    let (_pg, pool) = fresh_korg().await;
+    repo::create_project(&pool, "korg").await.expect("project");
+
+    let wi = repo::create_work_item(&pool, new::work_item("an item"))
+        .await
+        .expect("wi");
+    let card = repo::create_card(&pool, new::card("a card"))
+        .await
+        .expect("card");
+    let link = repo::create_link(&pool, new::link("https://example.invalid/i"))
+        .await
+        .expect("link");
+    let proposal = repo::create_proposal(&pool, new::proposal("a proposal"))
+        .await
+        .expect("proposal");
+    let program = repo::create_program(
+        &pool,
+        korg_core::repo::NewProgram {
+            slices: vec![proposal.row.node_id],
+            ..new::program("a program")
+        },
+    )
+    .await
+    .expect("program");
+    let schedule = repo::create_schedule(
+        &pool,
+        new::schedule("a drill - {MONTH} {YEAR}", "quarterly", None),
+    )
+    .await
+    .expect("schedule");
+    let report = repo::upsert_report(&pool, new::report("kmon", date!(2026 - 07 - 10)))
+        .await
+        .expect("report");
+    let mut new_handoff = new::handoff("a handoff");
+    new_handoff.related_node_ids = vec![wi.node_id];
+    let handoff = repo::create_handoff(&pool, new_handoff)
+        .await
+        .expect("handoff");
+    let attachment = repo::create_attachment(
+        &pool,
+        repo::NewAttachment {
+            owner_node_id: Some(wi.node_id),
+            ..new::attachment("shot.png")
+        },
+    )
+    .await
+    .expect("attachment");
+
+    let specimens: Vec<(&str, i64)> = vec![
+        ("workitem", wi.node_id),
+        ("card", card.node_id),
+        ("link", link.node_id),
+        ("sprint_proposal", proposal.row.node_id),
+        ("report", report.node_id),
+        ("handoff", handoff.handoff.node_id),
+        ("program", program.row.node_id),
+        ("schedule", schedule.node_id),
+        ("attachment", attachment.node_id),
+    ];
+
+    let server = server(pool);
+    for (kind, node_id) in &specimens {
+        let result = server
+            .call("get_item", args(json!({"node_id": node_id})))
+            .await
+            .unwrap_or_else(|e| panic!("get_item on a {kind} returned a protocol error: {e:?}"));
+        let v = body(&result);
+        assert_eq!(
+            v["kind"], *kind,
+            "get_item on node {node_id} reported the wrong kind"
+        );
+        assert_eq!(
+            v["item"]["node_id"], *node_id,
+            "get_item on a {kind} returned some other node's payload"
+        );
+    }
+
+    let covered: BTreeSet<&str> = specimens.iter().map(|(k, _)| *k).collect();
+    let declared: BTreeSet<&str> = korg_core::vocab::NODE_KINDS.into_iter().collect();
+    assert_eq!(
+        covered, declared,
+        "get_item must resolve every kind in NODE_KINDS — a kind with no arm \
+         gives back the `internal` bug error, which is the guess-and-fail this \
+         tool exists to remove"
+    );
 }
 
 /// An unregistered name is a protocol error, not a silent success. The inverse

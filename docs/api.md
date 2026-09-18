@@ -31,7 +31,7 @@ enumerates the tools a third time. All three are drift-tested against
 | Programs | `create_program`, `get_program`, `list_programs`, `update_program` |
 | Awaiting Ken | `set_awaiting`, `list_awaiting` |
 | Board | `get_board` |
-| Search | `search` |
+| Search | `search`, `get_item` |
 | Reports | `create_report`, `list_reports`, `get_report`, `review_report`, `list_report_sources`, `set_report_source` |
 | Schedules | `create_schedule`, `get_schedule`, `list_schedules`, `update_schedule`, `materialize_schedule` |
 | Handoffs | `create_handoff`, `get_handoff`, `update_handoff` |
@@ -512,6 +512,39 @@ There is also **no index to maintain**. The tsvectors are generated columns
 (migration 0029), so Postgres keeps them current inside the writing
 transaction: a write is searchable the moment it lands, there is no refresh, no
 rebuild, and no staleness for a hit to report.
+
+### `get_item`: reading a node without knowing its kind (#2446)
+
+`search` hands out bare node ids, and so do `related` blocks, `covered` lists
+and Ken. The typed reads all require you to know the kind first, which means a
+caller holding only an id has to guess — and the guesses fail identically to a
+bad id. Measured: a session spent `get_work_item` then `get_proposal` before
+`get_program` answered for node 2440.
+
+`get_item(node_id)` resolves the stored kind and dispatches. It returns an
+envelope:
+
+```json
+{ "kind": "program", "item": { … } }
+```
+
+where `item` is **exactly** the payload that kind's typed read returns —
+`get_item` on a work item returns `get_work_item`'s body, on a proposal
+`get_proposal`'s, and so on. All nine node kinds are covered, fenced against
+`NODE_KINDS` by `get_item_covers_every_node_kind`, so a tenth kind fails the
+build until it has an arm.
+
+`kind` travels *with* the payload rather than being left for the caller to sniff
+from which fields are present. The caller reached for this tool because it did
+not know the kind; handing back a bare typed body would make it reconstruct the
+one fact it came here missing (GP-13 again).
+
+**Prefer the typed read when you know the kind.** `get_work_item`,
+`get_proposal`, `get_program` and the rest document what the caller expected, so
+a wrong id fails where the mistake is rather than quietly returning a different
+kind of thing. `get_item` is for the other case. Its `not_found` is the one
+unambiguous one on this surface: every kind was tried, so the id names no node
+at all.
 
 ## Node addresses (#1467)
 
@@ -1018,6 +1051,7 @@ between its own `report_date`s, or a declared override), a grace window
 | `stale` | overdue | **yes** |
 | `retired` | declared ended (`set_report_source`) | no |
 | `unrated` | no believable cadence, and none declared | no |
+| `on-demand` | declared to have **no cadence at all** (`set_report_source`) | no |
 
 **The rule the feature exists for: anything not `fresh` asserts `unknown`.**
 Never the last known status — there is deliberately no field on the row that
@@ -1051,6 +1085,17 @@ scheduled source nobody declared, silently unwatched. A **declared** cadence
 bypasses the span gate entirely — declaring one is a statement that a cadence is
 *expected*, which is the thing inference can never establish.
 
+**And the span gate has a shelf life — read this before tuning the threshold.**
+It is a *ratio*, span ≥ 7 × median gap, and only one side of it is bounded. On
+2026-09-17 `kyac` — the source the gate was added to exclude — was being served
+`stale`, 3 days overdue, on a 2-day cadence with `cadence_declared: false`. Its
+median gap had stayed at 2 while its history span grew from 5 days to 64, so the
+ratio crossed on its own: no change to kyac, no change to korg. **The guard did
+not fail, it expired**, and every episodic source that keeps filing occasionally
+will eventually cross it the same way. Raising 7 buys time, not correctness.
+`on-demand` below is the actual fix, and #2183 is the bill for not having had
+it.
+
 `unrated` is a fourth value because both available guesses are bad: `fresh`
 rebuilds the July failure, and `stale` cries wolf on every one-off report, which
 trains people to ignore the panel — and a channel nobody looks at is not a
@@ -1061,6 +1106,48 @@ declarations may be written before a source's first report.
 same mechanism silencing a broken one. It is an explicit declaration, so "we
 turned this off" stays distinguishable from "this died", which silence alone
 never can.
+
+#### `on-demand`: a source with no cadence by design (#2183)
+
+`set_report_source(source, on_demand: true)` is the fourth declaration, for a
+source that files on an **event** rather than a schedule — a report-on-change
+scanner like `kfo-soak`, an interactive tool like `kyac`. Its silence does not
+mean anything and never will.
+
+It pins `freshness` to `on-demand`, asserts `unknown` like every non-`fresh`
+value, and never alerts. Critically it also **nulls the cadence**: `cadence_days`,
+`grace_days`, `due_by` and `overdue_days` all come back empty, because pinning
+only the literal would leave the row reading "on-demand, 3 days overdue" — a
+contradiction worse than the plain `stale` it replaced, because it looks
+deliberate. The short-circuit happens before any of the three inference
+constants is consulted, so **no threshold can reach the outcome** and none can
+expire into it the way the span gate did.
+
+The three declarations it is not:
+
+- not a **cadence**, which would make a months-old verdict read `fresh` and
+  assert its last status — #950's original failure, rebuilt by hand;
+- not **`retired`**, which says "deliberately ended" about a source working
+  exactly as contracted;
+- not **`unrated`**, and this is the distinction the fifth literal exists for.
+  `unrated` means *korg cannot judge yet, and more reports will fix that* —
+  `history_span_days` is on the row precisely so a consumer can show progress
+  toward being rated. An on-demand source progresses toward nothing, and no
+  amount of history may promote it.
+
+`on_demand` and `cadence_days` are **contradictory claims, not two settings**:
+a call that would leave a source carrying both is `invalid_input`. The check is
+against the row's resulting state, not against the call's fields, so the
+contradiction cannot be assembled over two calls either — and the message names
+which one to drop (`cadence_days: null`, or `on_demand: false`). A source may
+carry both `retired` and `on_demand`; `retired` wins, because "this ended" is
+the stronger claim and `on_demand` describes how a *live* source files.
+
+**Consumers**: `on_demand` travels on the row as data. Do not reconstruct it
+from `cadence_days IS NULL AND NOT retired` — that is equally true of an
+`unrated` source, and telling the two apart is the entire point (korg+ GP-13).
+A consumer meeting `on-demand` before it has a treatment renders it neutral, per
+GP-13's state half; undecorated is survivable, mis-decorated is not.
 
 Both surfaces ride `get_board`: `sources` sits beside `reports` in Sensor Net,
 uncapped, alert-first. Rendering on korg-dash's Today page is a separate

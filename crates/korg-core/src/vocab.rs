@@ -585,13 +585,28 @@ pub const SCHEDULE_SUBSTITUTIONS: [&str; 5] = ["YEAR", "MONTH", "DAY", "DATE", "
 ///   so not an alert. An explicit declaration is the only thing that keeps "we
 ///   turned this off" distinguishable from "this died"; silence cannot.
 /// * `unrated` — too little history to infer a cadence and none declared.
+/// * `on-demand` — declared to have **no cadence at all**
+///   (`report_source.on_demand`, 0035/#2183). It files on an event, not a
+///   schedule, so its silence means nothing and never will. Not an alert.
 ///
 /// `unrated` exists because both available guesses are bad. Calling an unknown
 /// source `fresh` rebuilds the July 2026 failure this WI is about; calling it
 /// `stale` cries wolf on every one-off report and trains people to ignore the
 /// panel — and a channel nobody looks at is not a channel. Declaring a cadence
 /// is how a real source leaves this state on its first day.
-pub const SOURCE_FRESHNESS: [&str; 4] = ["fresh", "stale", "retired", "unrated"];
+///
+/// **`on-demand` is not a pinned `unrated`, and the distinction is the point.**
+/// `unrated` says *korg cannot judge yet, and more reports will fix that* —
+/// which is why [`SourceHealth::history_span_days`] is carried, so a consumer
+/// can show progress toward being rated. An on-demand source is progressing
+/// toward nothing, and more reports must never promote it. Collapsing the two
+/// would make "korg is still learning this source" and "there is nothing here
+/// to learn" indistinguishable on exactly the axis a reader cares about, and
+/// #2183 is the bill for that ambiguity: `kyac` spent 64 days quietly earning a
+/// cadence it does not have.
+///
+/// [`SourceHealth::history_span_days`]: crate::repo::SourceHealth::history_span_days
+pub const SOURCE_FRESHNESS: [&str; 5] = ["fresh", "stale", "retired", "unrated", "on-demand"];
 
 /// What a report source currently asserts about its subject — [`REPORT_STATUSES`]
 /// plus `unknown`.
@@ -1180,12 +1195,17 @@ mod partition {
     /// `retired` or `unrated` alert too, the panel starts crying wolf and a
     /// channel nobody looks at is not a channel — which is the failure mode the
     /// WI names directly.
+    ///
+    /// The count was 4 until sprint 081 added `on-demand` (#2183), and bumping
+    /// it is the decision this fence exists to force, not a formality: an
+    /// on-demand source has no cadence to be overdue against, so it **does not
+    /// alert**, and `SourceHealth::alerts` stays `freshness == "stale"`.
     #[test]
     fn exactly_one_freshness_is_the_alert() {
         assert!(SOURCE_FRESHNESS.contains(&"stale"));
         assert_eq!(
             SOURCE_FRESHNESS.len(),
-            4,
+            5,
             "adding a freshness value means deciding whether it alerts — see \
              `SourceHealth::alerts` in repo/reports.rs, which this list feeds"
         );

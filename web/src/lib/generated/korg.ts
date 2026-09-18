@@ -1463,6 +1463,18 @@ overdue_days: number, report_count: number,
  */
 history_span_days: number | null, 
 /**
+ * Declared to have **no cadence by design** (0035, #2183) — it files on an
+ * event, not a schedule.
+ *
+ * Carried as data rather than left for a consumer to infer from
+ * `cadence_days IS NULL AND NOT retired`, which is GP-13: a fact korg
+ * knows and the consumer would have to reconstruct is korg's to return.
+ * That particular reconstruction is also wrong — it is equally true of an
+ * `unrated` source, and telling those two apart is the whole point of the
+ * declaration.
+ */
+on_demand: boolean, 
+/**
  * Why this source was retired, or any operator note from `report_source`.
  */
 note: string | null, };
