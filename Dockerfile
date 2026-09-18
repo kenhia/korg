@@ -17,6 +17,13 @@ FROM rust:1-bookworm AS rust
 WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/ ./crates/
+# korg-api embeds the published read-shape contract with `include_str!`, so it is
+# a BUILD input and not just a repo artefact — without it the release build fails
+# at compile time with "couldn't read … contract/read-shapes.json". Nothing else
+# catches that: `just check` and CI compile in the full tree, and only this stage
+# sees a restricted copy set. `embedded_files_are_copied_into_the_image` in
+# korg-mcp's docs_drift suite is the gate that does.
+COPY contract/ ./contract/
 RUN cargo build --release -p korg-api
 
 # --- Stage 3: runtime ---------------------------------------------------------
