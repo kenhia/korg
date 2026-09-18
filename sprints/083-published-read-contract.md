@@ -227,3 +227,47 @@ things:
    third perturbation above is the evidence, and it is worth carrying into the
    plan because it is the case where consistency and honesty came apart.
 
+
+## Deployed
+
+**2026-09-18, to kubsdb** (`:5674`), by the `deploy-kubsdb` skill declared in
+`.sprint-deploy`. Image `1404555d02b5`
+(`sha256:b5dbf797daf3d0fb47564a794b6a284949ac311fa1a84c8a6aee48af0d915e80`),
+built from merged `main` — which is commit `1404555`, sprint **084**, not 083's
+own `fc04947`. That is the whole story of this deploy and it is in the next
+section.
+
+Rollback target: `00f2c2cd92e3` (sprint 082), confirmed present in the registry
+before building.
+
+### The first attempt failed, and 083 caused it
+
+The image build failed at compile time: `couldn't read …
+contract/read-shapes.json`. The Dockerfile's rust stage copies `Cargo.*`,
+`rust-toolchain.toml` and `crates/`, and `contract/` is a new top-level
+directory — so the file this sprint asks `korg-api` to embed was not there.
+
+Nothing in the gate could have caught it. `just check` and CI compile in the
+full tree; only the image's rust stage sees a restricted copy set. Fixed in
+sprint 084 along with a gate for the whole class, merged as PR #89, and this
+deploy carries both sprints.
+
+### Verified live
+
+| Check | Result |
+|---|---|
+| Revision assertion (in-deploy) | running `1404555d02b5…` = the commit built. Catches a `pull` that silently did nothing |
+| `post-deploy-check.sh --compare` | **OK**, exit 0. Every row count unchanged (work_items 1638, proposals 493, cards 30, links 21, projects 59, reports 81); migrations 35 → 35, as expected with no migration this sprint |
+| `GET /api/contract/read-shapes` | **200, `application/json`, 12249 bytes, byte-for-byte identical to the committed file** (same sha256). All 15 reads present |
+| The two damaging facts, over the wire | `list_work_items` is `paginated`; `tags` is in `only_on_full_read`; `list_projects` reports `status` optional |
+| Consumer-position check | the read-only consumer script re-run against the **live endpoint** rather than the local file: every assertion held |
+
+**Before/after is not 404 → 200, and that is worth knowing.** Against the
+previous release the path returned **`200 text/html`** — the SvelteKit fallback
+served the web app. So a consumer pointed at a korg too old to have this
+endpoint does not get a clean 404; it gets HTML with a success status, and
+`resp.json()` raises a parse error rather than anything diagnostic. **A
+consumer's staleness check must look at the content type or the body, not the
+status code.** Recorded here and carried into the consumer adoption items,
+because it is exactly the kind of trap this artifact exists to remove and the
+fetch code is written on the consumer's side.
