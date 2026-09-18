@@ -19,6 +19,8 @@
   import { PROPOSAL_STATUSES, type ProposalStatus } from "$lib/generated/vocab";
   import {
     ID_CLASS,
+    STATUS_CURRENT_CLASS,
+    STATUS_OPTION_CLASS,
     chip,
     docTitle,
     nodePage,
@@ -119,13 +121,22 @@
             · updated {stamp(proposal.updated)}{/if}</span
         >
       </div>
+      <!-- #2710 was filed against the *program* page, but this is the same
+           control with the same failure: `proposed` and `declined` share a
+           neutral ground and differ only in ink, so the current value read as
+           one more option — and a proposal sits at `proposed` for most of its
+           life, which is the case Ken meets most often. Treating only the page
+           he screenshotted would have left korg with two answers to one
+           question; the treatment is shared (`domain.ts`) for the same reason
+           #1603 exists. -->
       <div class="flex flex-wrap items-center gap-1" data-testid="proposal-status-control">
         {#each PROPOSAL_STATUSES as s (s)}
           <button
             class={proposal.status === s
-              ? proposalStatusPill(s)
-              : "rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-muted)] hover:bg-[var(--color-surface-hi)]"}
+              ? `${proposalStatusPill(s)} ${STATUS_CURRENT_CLASS}`
+              : STATUS_OPTION_CLASS}
             aria-pressed={proposal.status === s}
+            data-current={proposal.status === s ? "true" : "false"}
             disabled={saving || proposal.status === s}
             title={proposal.status === s ? `Status is ${s}` : `Set status to ${s}`}
             onclick={() => setStatus(s)}>{s}</button

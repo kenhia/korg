@@ -724,6 +724,53 @@ export function programStatusStyle(status: string): string {
   return PROGRAM_STATUS_STYLE[status as ProgramStatus] ?? UNKNOWN_STATUS_STYLE;
 }
 
+// --- status controls: the value held vs the values you may set (WI #2710) ----
+
+/**
+ * A status control renders one value it **holds** and several it can **set**,
+ * and #2710 is what happens when those two read the same.
+ *
+ * Ken's screenshot is a `done` program: six same-sized chips, one of them
+ * current, and no way to tell which without reading all six. The maps above are
+ * not the bug — they are argued at length and they are right. `done` is hueless
+ * *deliberately* (it must not compete with `active`), `queued` is the coolest
+ * in-flight value on purpose, `soaking` must read as neither `active` nor
+ * `done`. Every one of those arguments is about what a status *means*, and none
+ * of them can also carry "and this is the one you are looking at".
+ *
+ * So the current-value affordance is **independent of hue**, which is the whole
+ * decision here:
+ *
+ * - `ring-current` draws the ring in the button's own ink, so it needs no new
+ *   colour and cannot contradict the hue it rings. Ken suggested a yellow
+ *   border; amber is `holding` on this very control and "awaiting Ken" across
+ *   the app, so a literal amber ring would assert `holding` on a program that
+ *   is `done`.
+ * - `font-semibold` survives a screenshot with no hover and no focus, which is
+ *   the condition #2710 was actually reported from.
+ * - `ring`, not `outline`: `app.css` gives `:focus-visible` a 2px accent
+ *   outline, and a permanent outline here would be indistinguishable from
+ *   keyboard focus.
+ *
+ * It composes onto whichever pill the caller already has, so the hue semantics
+ * are untouched and a status literal this bundle has never heard of still gets
+ * `UNKNOWN_STATUS_STYLE`'s neutral ground plus a ring that says "current"
+ * (GP-19: the consumer meets a new literal in production by design).
+ */
+export const STATUS_CURRENT_CLASS = "font-semibold ring-2 ring-current";
+
+/**
+ * A status a control can set, but is not currently holding: bordered so it
+ * still reads as a control, muted so it does not compete with the value.
+ *
+ * Shared rather than copied. This exact string was pasted into both the
+ * proposal and the program status control, which is how the two came to have
+ * the same bug and would have come to have two different fixes — #1603's
+ * lesson, one register over.
+ */
+export const STATUS_OPTION_CLASS =
+  "rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-muted)] hover:bg-[var(--color-surface-hi)]";
+
 // --- report status ----------------------------------------------------------
 
 /**

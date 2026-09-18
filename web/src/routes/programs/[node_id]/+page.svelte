@@ -14,6 +14,8 @@
     ID_CLASS,
     PROGRESS_VERIFIED_CLASS,
     PROGRESS_WORK_CLASS,
+    STATUS_CURRENT_CLASS,
+    STATUS_OPTION_CLASS,
     chip,
     docTitle,
     nodePage,
@@ -154,7 +156,15 @@
       <p class="text-[var(--color-muted)]">{program.aim}</p>
       <!-- The status control, not a pill (#980's third finding). The current
            status keeps the pill styling so the header still reads at a glance;
-           the other two are plain buttons beside it. -->
+           the others are plain buttons beside it.
+
+           #2710: "keeps the pill styling" was not enough on its own, and the
+           status it failed for was the one it failed for by design. A `done`
+           program's pill is hueless so that it cannot compete with `active`,
+           which left the current value and the five options reading as six
+           interchangeable grey chips. `STATUS_CURRENT_CLASS` is the hue-
+           independent half — see its note in `domain.ts` for why it is a ring
+           in the button's own ink and not the amber Ken suggested. -->
       <div
         class="flex flex-wrap items-center gap-1"
         data-testid="program-status-control"
@@ -162,9 +172,10 @@
         {#each PROGRAM_STATUSES as s (s)}
           <button
             class={program.status === s
-              ? `rounded px-2 py-0.5 text-xs ${programStatusStyle(s)}`
-              : "rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-muted)] hover:bg-[var(--color-surface-hi)]"}
+              ? `rounded px-2 py-0.5 text-xs ${programStatusStyle(s)} ${STATUS_CURRENT_CLASS}`
+              : STATUS_OPTION_CLASS}
             aria-pressed={program.status === s}
+            data-current={program.status === s ? "true" : "false"}
             disabled={saving || program.status === s}
             title={program.status === s
               ? `Status is ${s}`
@@ -203,6 +214,7 @@
         <ol class="space-y-2">
           {#each program.slices as s, i (s.node_id)}
             {@const p = sliceProgress(s)}
+            {@const href = nodePage("sprint_proposal", s.node_id)}
             <li
               class="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
               data-testid={`slice-${s.node_id}`}
@@ -215,7 +227,28 @@
                      korg:<id>` takes, and what an agent names when it reports
                      on a slice (#980). -->
                 <span class={ID_CLASS}>#{s.node_id}</span>
-                <span class="font-medium">{s.title}</span>
+                <!-- #2444 — this page's job is routing to slices, and until now
+                     nothing on the row was clickable.
+
+                     The link is on the TITLE, which is korg's convention and
+                     not this sprint's preference: the programs list, the soaks
+                     and Related lists below, and the proposal page's covered
+                     items all link the title. Reading list and Schedules put
+                     the affordance on the id, and both say why in situ — their
+                     titles are spoken for by another navigation. Ken asked
+                     whether korg had two standards here; it has one, with two
+                     argued exceptions, and `docs/usage.md` now states it.
+
+                     `nodePage` rather than a literal `/planning/{id}`: the
+                     kind -> path table is generated from korg-core and a
+                     consumer keeping its own copy is GP-16's forbidden third
+                     answer — including korg's own web app, which gave its copy
+                     up in #1467. -->
+                {#if href}
+                  <a class="font-medium hover:underline" {href}>{s.title}</a>
+                {:else}
+                  <span class="font-medium">{s.title}</span>
+                {/if}
                 {#if s.project}<span class={chip.project}>{s.project}</span>{/if}
                 <span class="text-xs text-[var(--color-muted)]">{s.status}</span>
                 <span
