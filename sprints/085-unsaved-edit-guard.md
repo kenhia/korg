@@ -92,3 +92,24 @@ that gets a guard switched off); an unsent comment draft counts.
 None filed. Draft autosave/restore stays unbuilt and unfiled — it is a larger
 design with storage questions that GP-1 has an opinion about, and it is not
 wanted until this guard proves insufficient.
+
+## Deployed
+
+kubsdb, 2026-09-19, by the `deploy-kubsdb` skill from merged `main`.
+
+- **Image** `dede8b9f1463` — pushed to the homelab registry as that tag and as
+  `latest`. The in-deploy revision assertion passed: the running container's
+  commit label is the commit this build came from.
+- **Rollback target** `1404555d02b5` (sprint 084), confirmed present in the
+  registry before building.
+- **`post-deploy-check.sh --compare`** OK. Every row count identical to the
+  pre-deploy baseline (cards 30, links 22, projects 59, proposals 495, reports
+  83, work items 1643), 35 migrations before and after — this sprint carried no
+  migration.
+- **Verified live, and specifically this sprint's work**: a real browser against
+  the deployed instance typed into the New Work Item form and clicked away. The
+  prompt appeared ("You have unsaved changes. Leave and discard them?"),
+  dismissing it kept the page *and* the typed text. Read-only — Save was never
+  pressed, so nothing was created in production, and the row counts above
+  confirm it.
+- `/plan` returns 200; the REST work-items read answers.
