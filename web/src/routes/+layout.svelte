@@ -5,8 +5,14 @@
   import { page } from "$app/stores";
   import { api } from "$lib/api";
   import Toaster from "$lib/components/Toaster.svelte";
+  import { installUnsavedGuard } from "$lib/unsavedGuard";
 
   let { children } = $props();
+
+  // The router half of the unsaved-changes guard (WI #2845). Here because it
+  // is one hook for the whole app and `beforeNavigate` has to be registered
+  // during component init; the surfaces that hold the text register themselves.
+  installUnsavedGuard();
 
   // Ordered by how often Ken starts there, not by when each page was built
   // (sprint 029). `Plan` is the dependency graph — a thing you consult, not a

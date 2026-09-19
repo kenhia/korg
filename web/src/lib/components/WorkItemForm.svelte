@@ -3,6 +3,7 @@
   import { api, type WorkItemRow } from "$lib/api";
   import { PasteUploads, pasteImages } from "$lib/imagePaste.svelte";
   import { WI_STATUSES, WI_TSHIRTS, WI_TYPES } from "$lib/generated/vocab";
+  import { okToDiscard, registerUnsaved } from "$lib/unsavedGuard";
 
   let {
     projectId,
@@ -37,6 +38,45 @@
 
   let saving = $state(false);
   let err = $state<string | null>(null);
+
+  // The unsaved-changes guard (WI #2845). The snapshot is taken from the
+  // initialisers above rather than re-derived from `seed` — a second copy of
+  // every `seed?.x ?? ""` is a second place for a default to drift, and a
+  // default that drifts makes a freshly-opened form read as dirty. `untrack`
+  // for the same reason it wraps `seed`: reading the initial value is the
+  // point, so say so rather than let the compiler guess it was a mistake.
+  const pristine = untrack(() => ({ title, content, details, wiType, wiStatus, wiTshirt, area, sprint, parent, tags }));
+
+  // Against the snapshot, not a keystroke flag: typing a word and deleting it
+  // again has cost nothing, and a form that asks anyway teaches people to click
+  // through the prompt. `saving` excludes the moment the work is already on its
+  // way to korg.
+  function isDirty(): boolean {
+    return (
+      !saving &&
+      (title !== pristine.title ||
+        content !== pristine.content ||
+        details !== pristine.details ||
+        wiType !== pristine.wiType ||
+        wiStatus !== pristine.wiStatus ||
+        wiTshirt !== pristine.wiTshirt ||
+        area !== pristine.area ||
+        sprint !== pristine.sprint ||
+        parent !== pristine.parent ||
+        tags !== pristine.tags)
+    );
+  }
+
+  // Registers once and unregisters on destroy: the body reads no reactive
+  // state, so the effect has nothing to re-run on.
+  $effect(() => registerUnsaved(isDirty));
+
+  // Cancel destroys this form and nothing else, so it asks about this form and
+  // nothing else.
+  function cancel() {
+    if (!okToDiscard(isDirty)) return;
+    onCancel();
+  }
 
   // Images pasted into either editor, uploaded as they were pasted and claimed
   // by the item on save (handoff D5). One ledger for both fields: the images
@@ -121,7 +161,7 @@
   <div class="flex items-center justify-between">
     <span class="text-sm font-semibold">{isEdit ? `Edit #${editItem?.wi_number}` : "New work item"}</span>
     <div class="flex gap-2">
-      <button class="rounded px-3 py-1 text-sm hover:bg-[var(--color-surface-hi)]" onclick={onCancel}>Cancel</button>
+      <button class="rounded px-3 py-1 text-sm hover:bg-[var(--color-surface-hi)]" onclick={cancel}>Cancel</button>
       <button class="rounded bg-[var(--color-accent-soft)] px-3 py-1 text-sm hover:bg-[var(--color-accent)] disabled:opacity-40" disabled={saving} onclick={save}>Save</button>
     </div>
   </div>
@@ -180,7 +220,7 @@
   <input class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-xs outline-none" placeholder="tags, comma, separated" bind:value={tags} />
 
   <div class="flex justify-end gap-2">
-    <button class="rounded px-3 py-1.5 text-sm hover:bg-[var(--color-surface-hi)]" onclick={onCancel}>Cancel</button>
+    <button class="rounded px-3 py-1.5 text-sm hover:bg-[var(--color-surface-hi)]" onclick={cancel}>Cancel</button>
     <button class="rounded bg-[var(--color-accent-soft)] px-3 py-1.5 text-sm hover:bg-[var(--color-accent)] disabled:opacity-40" disabled={saving} onclick={save}>Save</button>
   </div>
 </div>
