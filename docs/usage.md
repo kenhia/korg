@@ -185,6 +185,22 @@ two presses — the button arms, then commits, and disarms if you click away.
 Archiving a work item or card *is* reversible, so it happens immediately and
 offers an Undo in the toast instead.
 
+**Typed text is not thrown away without asking** (#2845). Anything you have
+typed and korg has not got yet — a work item in the create or edit form, a
+comment you have not posted, a card's description, an unsent Commander's Call
+answer — is guarded on all three ways it can be lost: leaving the page, closing
+the tab, and the ways that are not navigation at all (Escape, Cancel, ← Back,
+picking another project, clicking another row). The prompt is the browser's
+own, because the unload one is the browser's whatever korg does and a page that
+asked two different ways would be the odder thing.
+
+It asks about *changes*, not about typing: a form you opened and left alone
+does not prompt, neither does one you have just saved, and typing a word and
+deleting it again leaves nothing to ask about. One-line boxes — the card
+quick-add, the reading list's URL and title — are deliberately not guarded, on
+the same reasoning as the two-press buttons above: a confirm that fires for a
+small loss is one people learn to click through.
+
 **Dialogs behave like dialogs.** The node preview, the card editor and the
 image lightbox trap focus, close on Escape, and return focus to whatever opened
 them. While one is open it owns the keyboard: page-level shortcuts stand down,
