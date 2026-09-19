@@ -11,6 +11,7 @@
   // empty state every day is a panel Ken learns to skip, and this one needs to
   // be read on the days it *does* have rows.
   import { api, type AwaitingRow } from "$lib/api";
+  import { okToDiscard, registerUnsaved } from "$lib/unsavedGuard";
   import { attempt } from "$lib/toast.svelte";
   import { ID_CLASS, chip, nodePage } from "$lib/domain";
 
@@ -26,7 +27,14 @@
     if (r) rows = r;
   }
 
+  // A decision Ken has typed and not sent is exactly the text this guard
+  // exists for, and it is the one kind korg holds nowhere else (WI #2845).
+  $effect(() => registerUnsaved(() => draft.trim() !== ""));
+
   function openReply(row: AwaitingRow) {
+    // Toggling the box shut — Cancel, Escape, or opening another row's —
+    // throws the draft away, so it asks first.
+    if (!okToDiscard(() => draft.trim() !== "")) return;
     replyingTo = replyingTo === row.node_id ? null : row.node_id;
     draft = "";
   }

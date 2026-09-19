@@ -16,6 +16,7 @@
   import { attempt, notify, reportError } from "$lib/toast.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
   import Dialog from "$lib/components/Dialog.svelte";
+  import { registerUnsaved } from "$lib/unsavedGuard";
   import Comments from "$lib/components/Comments.svelte";
   import { extractUrls } from "$lib/urls";
 
@@ -193,6 +194,12 @@
     extractUrls(form.description, ...comments.map((c) => c.body)),
   );
   const dirty = $derived(editing !== null && JSON.stringify(form) !== original);
+
+  // This editor already asks on its own close path (`requestClose` below, and
+  // the Discard prompt in the modal). What it could not see was the other two
+  // exits — a nav link, a closed tab — so it lends its existing `dirty` to the
+  // app-wide guard (WI #2845) rather than growing a second notion of dirty.
+  $effect(() => registerUnsaved(() => dirty));
 
   function openEdit(card: CardRow) {
     editing = card;

@@ -5,6 +5,7 @@
   import ErrorNotice from "./ErrorNotice.svelte";
   import ConfirmButton from "./ConfirmButton.svelte";
   import MarkdownView from "./MarkdownView.svelte";
+  import { okToDiscard, registerUnsaved } from "$lib/unsavedGuard";
 
   // `comments` is bindable so a parent can read the loaded bodies (e.g. to
   // extract launch URLs) without owning the fetch/add/delete logic.
@@ -112,10 +113,28 @@
   // WI #232 — edit in place ("saved, then realized I should include a WI #").
   let editingId = $state<number | null>(null);
   let editBuf = $state("");
+  /** What the comment said when the editor opened — the pristine side of the
+   *  dirty check, so re-typing what was already there is not "unsaved". */
+  let editPristine = $state("");
 
   function startEdit(c: Comment) {
     editingId = c.id;
     editBuf = c.body;
+    editPristine = c.body;
+  }
+
+  // Both drafts are unsaved work (WI #2845), and a comment is the one korg
+  // holds nowhere until Add is pressed: there is no row to go back to.
+  function draftDirty(): boolean {
+    return newComment.trim() !== "" || (editingId != null && editBuf !== editPristine);
+  }
+
+  $effect(() => registerUnsaved(draftDirty));
+
+  /** Leave the in-place editor, asking first if the body has been changed. */
+  function cancelEdit() {
+    if (!okToDiscard(() => editingId != null && editBuf !== editPristine)) return;
+    editingId = null;
   }
 
   async function saveEdit() {
@@ -179,9 +198,9 @@
             <!-- Inset, not raised: the row itself is now `--color-surface-hi`, so
                  the editor takes the darker tone to keep an edge against the
                  card it sits in. -->
-            <textarea id={`comment-edit-${c.id}`} class="min-h-[3rem] flex-1 rounded bg-[var(--color-bg)] px-2 py-1 text-sm outline-none" bind:value={editBuf} use:pasteImages={uploads} onkeydown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveEdit(); if (e.key === "Escape") editingId = null; }}></textarea>
+            <textarea id={`comment-edit-${c.id}`} class="min-h-[3rem] flex-1 rounded bg-[var(--color-bg)] px-2 py-1 text-sm outline-none" bind:value={editBuf} use:pasteImages={uploads} onkeydown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveEdit(); if (e.key === "Escape") cancelEdit(); }}></textarea>
             <button class="text-xs text-[var(--color-accent)] hover:underline" onclick={saveEdit}>Save</button>
-            <button class="text-xs text-[var(--color-muted)] hover:underline" onclick={() => (editingId = null)}>Cancel</button>
+            <button class="text-xs text-[var(--color-muted)] hover:underline" onclick={cancelEdit}>Cancel</button>
           {:else}
             <!-- #1625 reverses #1120/#1121's "comments render as literal text
                  and keep doing so". That rule was written to protect two things

@@ -35,6 +35,7 @@
   import MarkdownView from "$lib/components/MarkdownView.svelte";
   import MultiSelectFilter from "$lib/components/MultiSelectFilter.svelte";
   import WorkItemForm from "$lib/components/WorkItemForm.svelte";
+  import { okToDiscard } from "$lib/unsavedGuard";
   import NodePreview from "$lib/components/NodePreview.svelte";
   import Comments from "$lib/components/Comments.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
@@ -566,6 +567,9 @@
   }
 
   async function pick(name: string) {
+    // Every exit from this page's state destroys a form the router never sees
+    // (WI #2845): switching project, opening an item, Escape, ← Back.
+    if (!okToDiscard()) return;
     current = name;
     writeProjectScope(name);
     detail = null;
@@ -574,6 +578,9 @@
   }
 
   async function open(item: WorkItemRow) {
+    // The create form stays mounted in `creating` but the detail view replaces
+    // it on screen, so its text is gone with no click that looked destructive.
+    if (!okToDiscard()) return;
     detail = item;
     cursor = item.wi_number;
     editing = false;
@@ -716,11 +723,11 @@
     const tag = (e.target as HTMLElement)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if (creating) {
-      if (e.key === "Escape") creating = false;
+      if (e.key === "Escape" && okToDiscard()) creating = false;
       return;
     }
     if (detail) {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && okToDiscard()) {
         if (editing) editing = false;
         else detail = null;
       }
@@ -1395,7 +1402,7 @@
   <!-- The route is wide for the list table; cap the single-item view so long prose stays readable. -->
   <article class="max-w-5xl space-y-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
     <div class="flex items-center justify-between">
-      <button class="rounded border border-[var(--color-border)] px-3 py-1 text-sm hover:bg-[var(--color-surface-hi)]" onclick={() => (detail = null)}>← Back</button>
+      <button class="rounded border border-[var(--color-border)] px-3 py-1 text-sm hover:bg-[var(--color-surface-hi)]" onclick={() => okToDiscard() && (detail = null)}>← Back</button>
       {#if !editing}
         <div class="flex gap-2">
           <button class="rounded bg-[var(--color-accent-soft)] px-3 py-1 text-sm hover:bg-[var(--color-accent)]" onclick={() => (editing = true)}>Edit</button>
