@@ -123,6 +123,14 @@ parentheses) shared by the new form rather than waived for it.
 
 ## Repaired in passing
 
+- **Four cleo projects' `notes` asserted the opposite of what now ships.**
+  Exposed by the backfill itself: `kctrldeck` said "src_path stays null",
+  `kbrickshoot` "src_path can't hold a Windows path", `kpidashclient-win` and
+  `krcmd` "the `src_path` field takes only `~/`-relative POSIX paths, so it is
+  recorded here". Each now names its drive-root value and the migration that
+  allows it. Not cosmetic — an agent reading the old line would conclude the
+  field must be NULL and undo the backfill. Proved by re-reading all five cleo
+  rows off the deployed instance: `src_path` set, no stale claim left.
 - **`project_src_path_canonical` promoted from `NOT VALID` to validated.** 0019
   added it unvalidated for one row — `kcard`, holding a sentence of archive
   history — and said to promote it "when the pass that owns it lands". That
@@ -171,3 +179,48 @@ production would refuse the values.
 That makes the backfill this sprint's **acceptance trigger**, not a soak: the
 evidence is not elapsed time, it is a deploy that happens in this same session.
 Fired at ship, recorded under `## Deployed`.
+
+## Deployed
+
+kubsdb, 2026-09-20, by the `deploy-kubsdb` skill from merged `main`.
+
+- **Image** `b9fc57808926` — pushed to the homelab registry as that tag and as
+  `latest`. The in-deploy revision assertion passed: the running container's
+  commit label is the commit this build came from.
+- **Rollback target** `dede8b9f1463` (sprint 085), confirmed present in the
+  registry before building.
+- **`post-deploy-check.sh --compare`** OK. Every row count identical to the
+  pre-deploy baseline (cards 30, links 22, projects 62, proposals 513, reports
+  84, work items 1679); **35 migrations before, 36 after** — this sprint's
+  0036.
+- **The constraint promotion held.** 0036's precheck found no offending row and
+  `ADD CONSTRAINT … CHECK` validated against all 62 live rows, so
+  `project_src_path_canonical` is a real invariant for the first time since
+  0019 deferred it. This was the one part of the sprint whose deploy depended
+  on production data rather than on the build; it is now settled, not merely
+  measured.
+
+### The acceptance trigger, fired
+
+Not a soak — the evidence was the deploy, and the deploy happened in this
+session.
+
+1. **Backfill.** `update_project` × 4: `kbrickshoot`, `kctrldeck`,
+   `kpidashclient-win`, `krcmd` → `/d/ClaudeWorks/<name>`. All accepted; before
+   the deploy production would have refused every one of them.
+2. **Live read** of `GET /api/connectors/projects` on the deployed instance:
+
+   - envelope `{connector: "korg", version: 1, generated: <live>}`, **40
+     projects**;
+   - all four cleo rows as `D:\ClaudeWorks\<name>` with `kind: "windows"` —
+     the round trip this whole sprint exists for;
+   - POSIX rows expanded, e.g. `korg` → `kai` `/home/ken/src/tools/korg`
+     `posix`;
+   - `agent-skills` emitted as its **kubs0** location, as v1 is designed to;
+   - host split kai 29, kubs0 7, cleo 4.
+
+**Count correction.** The pre-ship handoff said ~39 emitted rows; it is **40**,
+and the proposal's own note had it right. The four-not-five correction is about
+the *backfill* — `agent-skills` needed none — but it was already inside the 36
+baseline, so 36 + 4 = 40. The backfill figure stands; the emitted figure I
+derived from it did not.
