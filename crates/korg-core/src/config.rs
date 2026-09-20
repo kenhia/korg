@@ -85,9 +85,20 @@ impl KorgConfig {
         }
     }
 
+    /// The current instant — the pinned one under [`KorgConfig::fixed`],
+    /// otherwise the wall clock.
+    ///
+    /// Public because a *timestamp* can be a response field and not only an
+    /// input to a date calculation: the connector listing stamps `generated`,
+    /// and a surface that read `OffsetDateTime::now_utc` directly would be one
+    /// the test harness's pinned clock could not reach.
+    pub fn now(&self) -> OffsetDateTime {
+        self.fixed_now.unwrap_or_else(OffsetDateTime::now_utc)
+    }
+
     /// The current calendar date in the configured timezone.
     pub fn local_today(&self) -> Result<Date> {
-        self.local_today_at(self.fixed_now.unwrap_or_else(OffsetDateTime::now_utc))
+        self.local_today_at(self.now())
     }
 
     pub fn local_today_at(&self, now: OffsetDateTime) -> Result<Date> {

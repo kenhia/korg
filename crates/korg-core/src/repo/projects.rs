@@ -25,9 +25,12 @@ pub struct ProjectRow {
     pub name: String,
     pub gh_repo: Option<String>,
     /// Where the working copy lives on this project's *development* machine —
-    /// the `machines` entry, never `deploy_to` (WI #675). Canonical form is
-    /// `~/`-relative, no trailing slash, no whitespace or parentheses; the
-    /// `project_src_path_canonical` constraint (migration 0019) enforces it.
+    /// the `machines` entry, never `deploy_to` (WI #675). Two canonical forms,
+    /// both enforced by the `project_src_path_canonical` constraint (0019,
+    /// widened by 0036): `~/`-relative for a POSIX host (`~/src/tools/korg`),
+    /// and a lowercase drive root for a Windows clone
+    /// (`/d/ClaudeWorks/kctrldeck` for `D:\ClaudeWorks\kctrldeck`). Neither
+    /// takes a trailing slash, whitespace or parentheses.
     pub src_path: Option<String>,
     /// The routing contract: one line, ≤160 chars, saying what work belongs
     /// here and — where a sibling plausibly claims the same work — what does
@@ -100,8 +103,9 @@ pub fn canonical_src_path(raw: &str) -> String {
     p
 }
 
-/// Reject a `src_path` that migration 0019's `project_src_path_canonical`
-/// constraint would reject, before it reaches the constraint (WI #887).
+/// Reject a `src_path` that the `project_src_path_canonical` constraint would
+/// reject, before it reaches the constraint (WI #887; the constraint is 0019's,
+/// widened by 0036 to admit the drive-root form for Windows clones).
 ///
 /// The CHECK works — nothing bad was ever stored — but it surfaced as
 /// `{code: "internal", message: "… violates check constraint
@@ -120,21 +124,37 @@ pub fn canonical_src_path(raw: &str) -> String {
 fn check_src_path(value: &str) -> Result<()> {
     // The remedy, quoted identically whichever rule broke: one form to learn.
     const FORM: &str = "`src_path` is the working copy on the project's development machine and \
-                        must be a path and nothing else — `~/`-relative, no trailing slash, no \
-                        whitespace or parentheses, e.g. `~/src/tools/korg`. Host notes and \
-                        history belong in `notes`.";
-    let fault = if !value.starts_with("~/") {
-        Some(if value.starts_with('/') {
-            "it is absolute; write it relative to home"
-        } else {
-            "it does not start with `~/`"
+                        must be a path and nothing else — either `~/`-relative \
+                        (`~/src/tools/korg`) or, for a Windows clone, a lowercase drive root \
+                        (`/d/ClaudeWorks/kctrldeck` means `D:\\ClaudeWorks\\kctrldeck`). No \
+                        trailing slash, no whitespace and no parentheses in either form. Host \
+                        notes and history belong in `notes`.";
+
+    // Computed rather than quoted, because the value the caller sent is the
+    // one they can act on: "write `/d/ClaudeWorks/kctrldeck`" ends the
+    // question, where a generic example restarts it as "which drive? which
+    // case? do the backslashes stay?".
+    let windows_remedy = windows_drive_path_as_drive_root(value);
+    let fault: Option<String> = if !has_canonical_root(value) {
+        Some(match (&windows_remedy, value.starts_with('/')) {
+            (Some(suggestion), _) => format!(
+                "it is a native Windows path; korg stores the drive-root spelling — write \
+                 `{suggestion}`"
+            ),
+            // Deliberately not the Windows remedy: `/home/ken/…` and
+            // `/usr/local/…` are POSIX paths that simply forgot the `~`, and
+            // 0019's rule is the right one for them.
+            (None, true) => "it is absolute; write it relative to home with `~/`, or as \
+                             `/<drive>/…` for a Windows clone"
+                .to_string(),
+            (None, false) => "it does not start with `~/`".to_string(),
         })
     } else if value.chars().any(|c| c.is_whitespace()) {
-        Some("it contains whitespace")
+        Some("it contains whitespace".to_string())
     } else if value.contains('(') || value.contains(')') {
-        Some("it contains parentheses")
+        Some("it contains parentheses".to_string())
     } else if value.ends_with('/') {
-        Some("it has a trailing slash")
+        Some("it has a trailing slash".to_string())
     } else {
         None
     };
@@ -147,6 +167,48 @@ fn check_src_path(value: &str) -> Result<()> {
     }
 }
 
+/// Does `value` open with a root migration 0036's `project_src_path_canonical`
+/// CHECK accepts — `~/`, or a single lowercase drive letter as `/<letter>/`?
+///
+/// Mirrors the constraint's `^(~|/[a-z])/` exactly, and the separator after the
+/// drive letter is the load-bearing character: without it `/home/ken/x` would
+/// parse as drive `h`, silently readmitting the absolute POSIX paths 0019
+/// normalised away. `is_ascii_lowercase` rather than a locale-dependent range,
+/// so the app-side check can only ever refuse MORE than the constraint — the
+/// safe direction for a validator whose job is to reach the caller first.
+fn has_canonical_root(value: &str) -> bool {
+    if value.starts_with("~/") {
+        return true;
+    }
+    let b = value.as_bytes();
+    b.len() >= 3 && b[0] == b'/' && b[1].is_ascii_lowercase() && b[2] == b'/'
+}
+
+/// Rewrite a native Windows path into the drive-root form, or `None` if it is
+/// not one.
+///
+/// Only for the error message: korg stores the drive-root spelling and never
+/// converts on the way in (see [`canonical_src_path`] on why this field
+/// validates rather than canonicalises). A caller holding a cleo checkout will
+/// reach for `D:\ClaudeWorks\kctrldeck` first, and the one thing that turns
+/// that into a one-try correction is being shown its own value rewritten.
+fn windows_drive_path_as_drive_root(value: &str) -> Option<String> {
+    let mut chars = value.chars();
+    let drive = chars.next().filter(char::is_ascii_alphabetic)?;
+    if chars.next() != Some(':') {
+        return None;
+    }
+    let rest = chars.as_str();
+    if !rest.starts_with('\\') && !rest.starts_with('/') {
+        return None;
+    }
+    Some(format!(
+        "/{}{}",
+        drive.to_ascii_lowercase(),
+        rest.replace('\\', "/")
+    ))
+}
+
 /// Everything but `name` is editable (WI #246). `None` = leave unchanged;
 /// inner `None` on the nullable fields clears them.
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
@@ -154,10 +216,14 @@ pub struct ProjectPatch {
     #[serde(default, deserialize_with = "ops::double_option")]
     pub gh_repo: Option<Option<String>>,
     /// Path to the working copy on the project's DEVELOPMENT machine (its
-    /// `machines` entry), not the deploy target. Canonical form: `~/`-relative,
-    /// no trailing slash, no whitespace, no parentheses — a path and nothing
-    /// else, e.g. `~/src/tools/korg`. Enforced by a CHECK constraint, so a
-    /// value carrying prose or history is rejected rather than stored.
+    /// `machines` entry), not the deploy target. A path and nothing else — no
+    /// trailing slash, no whitespace, no parentheses — in one of two forms:
+    /// `~/`-relative on a POSIX host, e.g. `~/src/tools/korg`; or, for a
+    /// Windows clone, a **lowercase drive root**, e.g.
+    /// `/d/ClaudeWorks/kctrldeck`, which spells `D:\ClaudeWorks\kctrldeck`.
+    /// Write the drive-root form, never the native one: korg stores this
+    /// spelling and consumers convert back. Enforced by a CHECK constraint, so
+    /// a value carrying prose or history is rejected rather than stored.
     #[serde(default, deserialize_with = "ops::double_option")]
     pub src_path: Option<Option<String>>,
     /// The routing contract. One line, **≤160 characters** (rejected above

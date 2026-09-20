@@ -2269,7 +2269,7 @@
           ]
         },
         "src_path": {
-          "description": "Path to the working copy on the project's DEVELOPMENT machine (its\n`machines` entry), not the deploy target. Canonical form: `~/`-relative,\nno trailing slash, no whitespace, no parentheses — a path and nothing\nelse, e.g. `~/src/tools/korg`. Enforced by a CHECK constraint, so a\nvalue carrying prose or history is rejected rather than stored.",
+          "description": "Path to the working copy on the project's DEVELOPMENT machine (its\n`machines` entry), not the deploy target. A path and nothing else — no\ntrailing slash, no whitespace, no parentheses — in one of two forms:\n`~/`-relative on a POSIX host, e.g. `~/src/tools/korg`; or, for a\nWindows clone, a **lowercase drive root**, e.g.\n`/d/ClaudeWorks/kctrldeck`, which spells `D:\\ClaudeWorks\\kctrldeck`.\nWrite the drive-root form, never the native one: korg stores this\nspelling and consumers convert back. Enforced by a CHECK constraint, so\na value carrying prose or history is rejected rather than stored.",
           "type": [
             "string",
             "null"

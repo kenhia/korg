@@ -888,9 +888,12 @@ rank: string | null, };
 export type ProjectDetail = { areas: Array<AreaRow>, id: number, name: string, gh_repo: string | null, 
 /**
  * Where the working copy lives on this project's *development* machine —
- * the `machines` entry, never `deploy_to` (WI #675). Canonical form is
- * `~/`-relative, no trailing slash, no whitespace or parentheses; the
- * `project_src_path_canonical` constraint (migration 0019) enforces it.
+ * the `machines` entry, never `deploy_to` (WI #675). Two canonical forms,
+ * both enforced by the `project_src_path_canonical` constraint (0019,
+ * widened by 0036): `~/`-relative for a POSIX host (`~/src/tools/korg`),
+ * and a lowercase drive root for a Windows clone
+ * (`/d/ClaudeWorks/kctrldeck` for `D:\ClaudeWorks\kctrldeck`). Neither
+ * takes a trailing slash, whitespace or parentheses.
  */
 src_path: string | null, 
 /**
@@ -974,9 +977,12 @@ export type ProjectOmitted = { archived: number, };
 export type ProjectRow = { id: number, name: string, gh_repo: string | null, 
 /**
  * Where the working copy lives on this project's *development* machine —
- * the `machines` entry, never `deploy_to` (WI #675). Canonical form is
- * `~/`-relative, no trailing slash, no whitespace or parentheses; the
- * `project_src_path_canonical` constraint (migration 0019) enforces it.
+ * the `machines` entry, never `deploy_to` (WI #675). Two canonical forms,
+ * both enforced by the `project_src_path_canonical` constraint (0019,
+ * widened by 0036): `~/`-relative for a POSIX host (`~/src/tools/korg`),
+ * and a lowercase drive root for a Windows clone
+ * (`/d/ClaudeWorks/kctrldeck` for `D:\ClaudeWorks\kctrldeck`). Neither
+ * takes a trailing slash, whitespace or parentheses.
  */
 src_path: string | null, 
 /**
