@@ -83,11 +83,32 @@ project's development machine** — its `machines` entry, never its deploy targe
 korg's own row is the worked example: `machines: ["kai"]`, `deploy_to:
 ["kubsdb"]`, and `src_path` is the kai checkout.
 
-Its canonical form is `~`-relative, no trailing slash, no whitespace and no
-parentheses — a path and nothing else. Migration 0019 enforces that with the
-`project_src_path_canonical` CHECK constraint, added `NOT VALID` so that one
-legacy row holding a sentence of archive history is tolerated until the pass
-that owns it resolves the prose; every write from sprint 031 on is checked.
+It has **two** canonical forms, and both are a path and nothing else — no
+trailing slash, no whitespace, no parentheses. On a POSIX host it is
+`~/`-relative (`~/src/tools/korg`); for a Windows clone it is a lowercase
+**drive root** (`/d/ClaudeWorks/kctrldeck`, meaning `D:\ClaudeWorks\kctrldeck`).
+
+Migration 0019 enforced the first with the `project_src_path_canonical` CHECK
+constraint; 0036 (sprint 086, WI 2874) widened it to `^(~|/[a-z])/…` and
+promoted it from `NOT VALID` to validated, the legacy row that needed the
+tolerance having since been resolved.
+
+The drive root is the MSYS/git-bash spelling, chosen over storing
+`D:\ClaudeWorks\kctrldeck` for three reasons: an agent meeting it in a field
+recognises it; it cannot collide with anything a previous write could have
+stored, because a POSIX absolute path was never valid here; and the conversion
+is mechanical in both directions, which is what lets the connector endpoint
+below emit a host-native path without korg storing one. **Write the drive-root
+form, never the native one** — `update_project` refuses the native spelling and
+its error names the conversion of the value you sent.
+
+`^(~|/[a-z])/` requires a separator immediately after the drive letter, so
+`/home/ken/src/tools/korg` is still refused rather than read as drive `h`: the
+"write it relative to home" rule still binds every POSIX path.
+
+Until 0036, cleo's clones had no spelling at all and four projects carried NULL
+for that reason alone (`kbrickshoot`, `kctrldeck`, `kpidashclient-win`,
+`krcmd`).
 
 ## Where the contract lives
 
@@ -300,6 +321,68 @@ schemas' job (`initialize`, or `crates/korg-mcp/tests/tools_schema.json`).
 
 **For korg.** Regenerating is announcing a contract change. Read the diff:
 every line may be one a consumer is already asserting on.
+
+### The project-listing connector (2874)
+
+A **connector** is a URL that emits a source-neutral list of projects and where
+their code lives. kctrldeck's Code tab (korg WI 2853) consumes it so that a
+project added to korg appears on the panel and an archived one disappears, with
+no hand-kept favorites; korg is the first source, and the consumer holds no
+korg-specific code. That is why the envelope names itself.
+
+| | |
+|---|---|
+| **Endpoint** | `GET /api/connectors/projects` |
+| **Implemented by** | `crates/korg-api/src/connectors.rs` |
+| **Contract** | the `version` field — see below |
+
+```json
+{ "connector": "korg", "version": 1, "generated": "2026-09-20T04:00:00Z",
+  "projects": [
+    { "name": "korg", "category": "Infrastructure", "starred": true,
+      "locations": [ { "host": "kai", "path": "/home/ken/src/tools/korg", "kind": "posix" } ] },
+    { "name": "kctrldeck", "category": "Tools", "starred": true,
+      "locations": [ { "host": "cleo", "path": "D:\\ClaudeWorks\\kctrldeck", "kind": "windows" } ] } ] }
+```
+
+**No new data.** Every field is a projection of what `GET /api/projects`
+already returns. What the endpoint adds is the one thing a consumer should not
+have to learn korg's storage conventions for: `path` is **absolute and native
+to its host**. korg expands `~/` and converts the drive-root form back to
+`D:\…`, so nothing downstream needs korg's `~/` convention, a home directory,
+or the drive-root mapping.
+
+**Which rows.** Every `active` project that has a `src_path` **and** at least
+one `machines` entry. Both filters are the shape's own preconditions rather
+than policy — without a path there is nothing to emit, and without a host there
+is nothing to attach a path to — and both are silent omissions: a project korg
+cannot locate is one whose metadata nobody filled in, and failing the listing
+over a blank field would take the panel down.
+
+**Which host.** `machines[0]`. `machines` is a list and `src_path` is singular,
+documented since #675 as the working copy on the *development* machine, so
+`machines[0]` is the one host `src_path` is defined against. `locations` is
+nonetheless a list, because the protocol allows several clones and a v1
+consumer must not need a shape change when korg learns to describe more than
+one — korg v1 emits exactly one.
+
+`category` is **omitted**, not null, when korg does not know it: a consumer
+grouping by category wants no group rather than a group called `null`.
+`starred` is always present. Both ride along so a consumer can sort and group
+without a second call.
+
+**Versioning is the contract mechanism here, and deliberately not
+[`contract/read-shapes.json`](#the-published-read-shape-contract-2041).** That
+document is generated from korg's advertised *MCP collection reads* and asserts
+it describes those and nothing else, so a REST-only projection does not belong
+in it — adding one would fail that suite's `phantom` check. Branch on
+`version`; within a version, changes are additive only.
+
+**Expanding `~/` needs a home directory, and korg has nowhere to record one.**
+`machines` is a `TEXT[]` of names (0011), not rows, so `POSIX_HOME` is a
+documented constant — correct for the fleet as it stands, and a wrong value
+fails loudly at the consumer rather than silently. Whether korg should model
+machines at all is WI 2919.
 
 ### Disposal semantics (WI #855)
 

@@ -27,6 +27,7 @@ use korg_mcp::tools::KorgServer;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 
+pub mod connectors;
 pub mod error;
 pub mod img;
 use error::ApiError;
@@ -51,6 +52,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/contract/read-shapes", get(read_shapes_contract))
         .route("/api/projects", get(list_projects).post(create_project))
         .route("/api/projects/recent", get(recent_project))
+        // The project-listing connector (WI 2874). Under `/api/connectors/`
+        // rather than `/api/projects/…` because the shape belongs to the
+        // connector protocol, not to korg's project surface — a second source
+        // emitting it would serve the same document from its own namespace.
+        .route("/api/connectors/projects", get(connectors::projects))
         .route(
             "/api/work-items",
             get(list_work_items).post(create_work_item),
