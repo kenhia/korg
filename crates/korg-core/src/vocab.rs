@@ -645,6 +645,12 @@ pub const PROJECT_STATUSES: [&str; 2] = ["active", "archived"];
 /// line forcing the "which side?" decision.
 pub const PROJECT_STATUS_ACTIVE: &str = PROJECT_STATUSES[0];
 
+/// The other answer, named for the same reason (WI #3003). `update_project`
+/// clears a project's `src_path`, `machines` and `deploy_to` when a patch sets
+/// this status, so the transition is now load-bearing on the write side and not
+/// only on the read side's filters.
+pub const PROJECT_STATUS_ARCHIVED: &str = PROJECT_STATUSES[1];
+
 /// Project categories (WI #678). `project.category` has existed since 0011 but
 /// as free text, and it drifted the way free text does — the live corpus held
 /// `ai` x8, `AI` x1, `tooling` x3, `infra` x2, `fun` x2 and NULL x15. This

@@ -12,7 +12,7 @@ use ts_rs::TS;
 
 use crate::error::RepoError;
 use crate::ops::{self, schema};
-use crate::vocab::{PROJECT_CATEGORIES, PROJECT_STATUSES};
+use crate::vocab::{PROJECT_CATEGORIES, PROJECT_STATUSES, PROJECT_STATUS_ARCHIVED};
 
 use super::areas::{list_areas, AreaRow};
 use super::common::validate_status;
@@ -369,10 +369,132 @@ pub async fn update_project(pool: &PgPool, id: i64, patch: &ProjectPatch) -> Res
             .execute(&mut *tx)
             .await?;
     }
+    // Last, and inside the same transaction — see `clear_location_metadata`.
+    if patch.status.as_deref() == Some(PROJECT_STATUS_ARCHIVED) {
+        clear_location_metadata(&mut tx, id).await?;
+    }
     tx.commit().await?;
     get_project(pool, id)
         .await?
         .ok_or_else(|| RepoError::NotFound(format!("no project with id {id}")).into())
+}
+
+/// Clear an archived project's location metadata, recording what was cleared
+/// in `notes` first (WI #3003).
+///
+/// `src_path`, `machines` and `deploy_to` all answer the same question —
+/// *where is the source?* — and for an archived project the answer is
+/// "nowhere". Ken ruled that on 2026-09-11 (korg:2250), settling the opposite
+/// reading `kwi`'s row had been kept under: that `src_path` records where a
+/// tree *used to be*. It records where it **is**, so it is true or absent and
+/// never stale.
+///
+/// Until this, nothing enforced the convention at the moment it became true.
+/// The eleven rows carrying stale values were cleared by hand, and kmuster's
+/// weekly `check-projects` reported `archived_metadata_retained` up to a week
+/// after an archival. Doing it here makes that assertion a backstop rather than
+/// the mechanism — which is what kmuster WI 2382 asked for, from the side of
+/// the boundary allowed to write prose. kmuster's `ProjectPatch` deliberately
+/// excludes `machines` (korg's declaration of record) and `notes` (prose, not a
+/// mechanical checker's business), so the auto-fix could only ever live here.
+///
+/// **Inside the caller's transaction, and last.** Two reasons, and the second
+/// is the one worth stating because a plausible-sounding third is wrong:
+///
+/// - Atomicity. No reader — kmuster's check included — can observe a row that
+///   is archived and still carries a path, because that state never commits.
+/// - Last, so a patch that sets a path *and* archives in the same call comes
+///   out archived and unlocated: archiving is the later intent. It also means
+///   the `notes` read below sees a `notes` written by the same patch, so the
+///   record appends to what the caller just wrote rather than to what it
+///   replaced.
+///
+/// It is **not** true that a follow-up write would be refused. #884's refusal
+/// (`selectors.rs`) stops new *work* being targeted at an archived project;
+/// `update_project` is deliberately outside it, since setting `status` is how a
+/// project comes back. Correctness here rests on atomicity, not on a rule korg
+/// does not have.
+///
+/// The guard is "is there anything to clear", not "is this a transition", so
+/// re-archiving is a no-op and a row that went stale by some other route gets
+/// swept the next time somebody archives it. A patch that does not mention
+/// `status` never reaches here: korg clears on archive, and is not a sweeper.
+async fn clear_location_metadata(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: i64,
+) -> Result<()> {
+    let Some((src_path, machines, deploy_to, notes)) =
+        sqlx::query_as::<_, (Option<String>, Vec<String>, Vec<String>, Option<String>)>(
+            "SELECT src_path, machines, deploy_to, notes FROM project WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&mut **tx)
+        .await?
+    else {
+        return Ok(());
+    };
+    if src_path.is_none() && machines.is_empty() && deploy_to.is_empty() {
+        return Ok(());
+    }
+    let notes = match archived_clear_note(
+        OffsetDateTime::now_utc().date(),
+        src_path.as_deref(),
+        &machines,
+        &deploy_to,
+    ) {
+        Some(record) => Some(match notes {
+            Some(prior) if !prior.trim().is_empty() => format!("{}\n\n{record}", prior.trim_end()),
+            _ => record,
+        }),
+        // Nothing nameable — an empty-string `src_path`, say. Clear it anyway;
+        // a record naming no values would be noise, not history.
+        None => notes,
+    };
+    sqlx::query(
+        "UPDATE project SET src_path = NULL, machines = '{}', deploy_to = '{}', notes = $2 \
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(&notes)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// The paragraph [`clear_location_metadata`] appends, or `None` when there is
+/// nothing worth naming.
+///
+/// Deliberately the wording the 2026-09-11 hand sweep used on eleven rows, so
+/// the corpus reads as one convention rather than two — a reader diffing an
+/// archived project written by korg against one written by hand should find no
+/// seam. One deviation: fields are separated by `;` rather than `,`, because
+/// the sweep only ever had a single machine to render and `machines kai, kubs0`
+/// would otherwise read as two fields.
+fn archived_clear_note(
+    today: time::Date,
+    src_path: Option<&str>,
+    machines: &[String],
+    deploy_to: &[String],
+) -> Option<String> {
+    let mut cleared: Vec<String> = Vec::new();
+    if let Some(p) = src_path.map(str::trim).filter(|p| !p.is_empty()) {
+        cleared.push(format!("`src_path` `{p}`"));
+    }
+    for (label, values) in [("machines", machines), ("deploy_to", deploy_to)] {
+        if !values.is_empty() {
+            cleared.push(format!("`{label}` {}", values.join(", ")));
+        }
+    }
+    if cleared.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "**Archived-project metadata cleared {today}** (korg WI #3003, at archive time). An \
+         archived project carries no `src_path`, `machines` or `deploy_to`: those fields answer \
+         \"where is the source\", and for an archived project the answer is \"nowhere\" \
+         (korg:2250). History lives here in `notes` instead. Cleared values: {}.",
+        cleared.join("; ")
+    ))
 }
 
 /// Name-keyed wrapper (the REST/MCP surfaces key projects by name; the

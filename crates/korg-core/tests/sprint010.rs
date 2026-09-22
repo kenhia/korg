@@ -97,7 +97,13 @@ async fn project_metadata_roundtrip() {
         &pool,
         "meta",
         &ProjectPatch {
-            status: Some("archived".into()),
+            // Was `archived`, which is no longer a neutral value to carry in a
+            // roundtrip patch: since WI #3003 archiving *clears* machines,
+            // deploy_to and src_path in the same transaction. The status
+            // roundtrip moved below so this one keeps testing what it always
+            // tested — that the patch surface stores what it is given — and
+            // sprint087 owns the archiving behaviour.
+            status: Some("active".into()),
             machines: Some(vec!["kai".into(), "kubs0".into()]),
             deploy_to: Some(vec!["kubsdb".into()]),
             // Was "tooling" — free text until WI #678 closed the vocabulary.
@@ -110,10 +116,33 @@ async fn project_metadata_roundtrip() {
     .unwrap();
 
     let p = list_projects(&pool).await.unwrap().remove(0);
-    assert_eq!(p.status, "archived");
+    assert_eq!(p.status, "active");
     assert_eq!(p.machines, vec!["kai", "kubs0"]);
     assert_eq!(p.deploy_to, vec!["kubsdb"]);
     assert_eq!(p.category.as_deref(), Some("Infrastructure"));
+
+    // `status` still roundtrips; it just gets its own patch now.
+    update_project_by_name(
+        &pool,
+        "meta",
+        &ProjectPatch {
+            status: Some("archived".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let p = list_projects(&pool).await.unwrap().remove(0);
+    assert_eq!(p.status, "archived");
+    assert_eq!(
+        p.category.as_deref(),
+        Some("Infrastructure"),
+        "not location"
+    );
+    assert!(
+        p.machines.is_empty() && p.deploy_to.is_empty(),
+        "#3003: archiving clears the location fields — see tests/sprint087.rs"
+    );
 
     // Invalid project status rejected; unknown project errors; name immutable
     // by construction (no field for it).

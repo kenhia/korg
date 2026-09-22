@@ -64,6 +64,33 @@ alias's argument type.
 name. `src_path` is load-bearing: it is how an agent finds a project's working
 copy on disk.
 
+**Archiving is not just a status** (WI #3003). A patch that sets `status` to
+`archived` also clears `src_path`, `machines` and `deploy_to`, in the same
+transaction, appending the cleared values to `notes` first so nothing is lost.
+All three answer *where is the source?*, and for an archived project the answer
+is "nowhere" — Ken's ruling of 2026-09-11 (korg:2250), which settled the
+opposite reading `kwi`'s row had been kept under: `src_path` records where a
+tree **is**, so it is true or absent and never stale.
+
+Three consequences worth knowing before you call it:
+
+- Setting a location field and archiving **in the same call** comes out
+  archived and unlocated. Archiving is the later intent, and the clear runs
+  last.
+- The trigger is the patch setting `archived`, not the row being archived, so
+  editing an archived project without restating `status` clears nothing. korg
+  clears on archive; it is not a sweeper. That gap is deliberate — it is what
+  kmuster's weekly `check-projects` assertion remains the backstop for.
+- **Coming back is unaffected.** `update_project` is deliberately outside the
+  #884 refusal (see below), so setting `status` to `active` and re-locating the
+  row in one call works and clears nothing.
+
+The correctness argument is atomicity, not a refusal: no reader can observe a
+row that is archived and still carries a path, because that state never
+commits. #884 stops new *work* being targeted at an archived project; it does
+not stop `update_project`, and it must not, since setting `status` is how a
+project comes back.
+
 `starred` (WI #1629, migration 0032) marks a project hot for the week, which is
 what lifts it into the band at the top of korg's project rails. It orders
 nothing and gates nothing, and it is **not** the `pinned` that sprint proposals
