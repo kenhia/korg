@@ -192,8 +192,12 @@ async fn update_project_patches_metadata_by_name() {
             .call(
                 "update_project",
                 args(json!({
+                    // Deliberately not `archived`: since WI #3003 that status
+                    // clears `machines` in the same call, so it cannot also
+                    // serve as a neutral value for a store-what-you-are-given
+                    // assertion. The clear gets its own coverage below.
                     "name": "korg",
-                    "status": "archived",
+                    "status": "active",
                     "gh_repo": "kenhiatt/korg",
                     "machines": ["kai", "kubs0"],
                 })),
@@ -202,7 +206,7 @@ async fn update_project_patches_metadata_by_name() {
             .unwrap(),
     );
     assert_eq!(patched["name"], "korg");
-    assert_eq!(patched["status"], "archived");
+    assert_eq!(patched["status"], "active");
     assert_eq!(patched["gh_repo"], "kenhiatt/korg");
     assert_eq!(patched["machines"], json!(["kai", "kubs0"]));
 
@@ -211,15 +215,29 @@ async fn update_project_patches_metadata_by_name() {
         &server
             .call(
                 "update_project",
-                args(json!({"name": "korg", "status": "active"})),
+                args(json!({"name": "korg", "status": "archived"})),
             )
             .await
             .unwrap(),
     );
-    assert_eq!(again["status"], "active");
+    assert_eq!(again["status"], "archived");
     assert_eq!(
         again["gh_repo"], "kenhiatt/korg",
         "an unmentioned field must survive the patch"
+    );
+    // …except the three #3003 clears, which are the point of archiving and
+    // reach through the MCP surface, not only through korg-core.
+    assert_eq!(
+        again["machines"],
+        json!([]),
+        "archiving clears the location metadata"
+    );
+    assert!(
+        again["notes"]
+            .as_str()
+            .is_some_and(|n| n.contains("`machines` kai, kubs0")),
+        "and records what it cleared: {}",
+        again["notes"]
     );
 }
 
