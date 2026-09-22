@@ -139,3 +139,41 @@ None filed. The kmuster side needs nothing: the whole point of going korg-side
 is that `ProjectPatch` stays narrow and both stated boundaries hold. kmuster
 WI 2382 is `closed` (terminal, Ken's) and got a comment recording that its
 auto-fix half is now answered here rather than left pending in kmuster.
+
+## Deployed
+
+**2026-09-21 22:50 PDT** (2026-09-22 05:50 UTC) to **kubsdb**, by the
+`deploy-kubsdb` skill declared in `.sprint-deploy`, from merged `main`.
+
+- **Image** `kubsdb.encke-wahoo.ts.net:5000/korg:57528c0a655d`, also pushed as
+  `latest` (same digest `sha256:fd140b53…`). SHA tag pushed first, so a failed
+  second push would have left `latest` on the previous good build.
+- **Revision assertion passed** inside the deploy: the running container's
+  `org.opencontainers.image.revision` is `57528c0a655dc2df131b0079cd540b21c5056369`,
+  the merge commit. That is the check that catches a `compose pull` which
+  silently did nothing.
+- **Rollback target** is `korg:b9fc57808926` (sprint 086), confirmed present in
+  the registry *before* building rather than assumed.
+
+### Verified live
+
+- `scripts/post-deploy-check.sh --compare` — **OK**. Every row count identical
+  to the pre-deploy baseline (work_items 1718, proposals 553, reports 86, nodes
+  3002); no count fell. Schema unchanged at migration 36 → 36, which is correct:
+  this sprint carried no migration.
+- Deep link `GET /plan` → 200.
+- **The sprint's own change, on the agent surface it ships to.** This change has
+  no UI and alters no read path — it is invisible until somebody archives a
+  project — so the thing to verify is the contract agents read. Against the
+  deployed MCP endpoint's `tools/list`:
+  - the new `ARCHIVING IS NOT JUST A STATUS (korg #3003)` paragraph is present
+    on `update_project` (1 occurrence);
+  - the repaired status list `active|archived — those are the only two` is
+    present (1 occurrence), and the stale `maintenance|inactive` spelling is
+    **gone** (0 occurrences).
+
+Deliberately **not** verified by archiving a live project: the behaviour is
+proved by ten tests against a real Postgres, and exercising it in production
+would mean destroying a real project's metadata to watch it work.
+
+Probed and deployed from **kai**, which is the build host.
