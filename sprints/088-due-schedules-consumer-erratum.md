@@ -70,3 +70,28 @@ true, so it is left as is.
 
 Whether kfdc or korg-dash *should* render due schedules is a product question
 nobody has asked. Per the proposal notes it is not filed.
+
+## Shipped
+
+- korg PR #93, squash-merged as `5cf255d`. CI green on the PR (rust 10m6s,
+  web 22s).
+- kenhia/kfdc PR #30, squash-merged as `438ad99`, cleared by the overseer in
+  the same ship turn (korg:3235 comment 3113). It changes the tense of
+  `docs/design.md` and the `StandingOrders.svelte` comment, since the four
+  records are now corrected. kfdc's `just check` was green (404 tests); kfdc
+  has no GitHub CI. There was no kfdc deploy, since the change is docs and a
+  comment only.
+- cross-project-planning `02495ee`: the korg+ PLAN.md erratum, pushed during
+  the sprint.
+
+## Deployed
+
+2026-09-25 12:30 PDT, by `deploy-kubsdb`, to kubsdb `:5674`. Image
+`kubsdb.encke-wahoo.ts.net:5000/korg:5cf255d09773` (and `latest`). The
+running container's revision label matched the built commit `5cf255d`. The
+previous release, and the rollback target, was `57528c0a655d`, confirmed
+present in the registry. `scripts/post-deploy-check.sh --compare` returned OK:
+no count went down, and `seq_last` rose 3276 → 3278 from live writes during
+the build. `/plan` returns 200. The sprint changed only docs text, plus a doc
+comment carried into the generated TypeScript, so a matching revision is the
+whole behavioural check.
