@@ -453,11 +453,13 @@ due_schedules: Array<ScheduleRow>,
  *
  * **A sibling field, not a `state` discriminator folded into
  * `due_schedules`** (Ken, 2026-09-06). Both shapes were on the table in
- * #1644. One list with `state: due | in_flight` is tidier on paper and is a
- * breaking change to a shipped contract: kfdc and korg-dash already render
- * `due_schedules`, and every one of them would have to change to keep
- * showing what it already shows. Additive costs them nothing and lets
- * kfdc #1645 opt in. The two blocks also answer different questions — due
+ * #1644. One list with `state: due | in_flight` is tidier on paper and
+ * changes the shape of a shipped block; a sibling field is additive and
+ * costs any consumer nothing, and it let kfdc #1645 opt in to in-flight
+ * alone. (The decision once also claimed kfdc and korg-dash render
+ * `due_schedules`. Neither does, nor ever has, and korg's own Today page
+ * reads `list_schedules(due_only)` rather than the board, so no consumer
+ * of this block is known — korg #3085.) The two blocks also answer different questions — due
  * is a nag, in-flight is a tracker — which is why `due_schedules`'
  * uncapped-because-the-row-a-cap-drops-waited-longest reasoning does not
  * transfer, though this is uncapped too, bounded by construction: a

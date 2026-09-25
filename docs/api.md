@@ -981,10 +981,12 @@ Four properties, each a decision:
 
 - **A sibling field, not a `state` discriminator on one `schedules` list**
   (Ken, 2026-09-06). Folding due and in-flight into a single list with
-  `state: due | in_flight` is tidier on paper and breaks a shipped contract:
-  kfdc and korg-dash already render `due_schedules`, and both would have to
-  change to keep showing what they already show. Additive costs them nothing,
-  and kfdc #1645 opts in. The blocks also answer different questions — due is a
+  `state: due | in_flight` is tidier on paper and changes the shape of a
+  shipped block; a sibling field is additive, costs any consumer nothing, and
+  let kfdc #1645 opt in to in-flight alone. (The decision once also claimed
+  kfdc and korg-dash render `due_schedules`. Neither does, nor ever has — and
+  korg's own Today page reads `list_schedules(due_only)`, not the board — so
+  no consumer of `due_schedules` is known; see #3085.) The blocks also answer different questions — due is a
   nag, in-flight is a tracker.
 - **Not filtered to active schedules**, which is where it parts company with
   `due_schedules`' predicate. A `once` schedule marks itself `done` as it fires,
@@ -1006,8 +1008,10 @@ Four properties, each a decision:
 
 Every consumer of the board inherits it (GP-1 in the korg+ guiding plan: agents
 curate korg, the board renders korg — a panel that needs data korg cannot hold
-is a korg work item, never a side store). korg's own Today page shows the count
-as a pill; kfdc and korg-dash get the block for free.
+is a korg work item, never a side store). kfdc renders it as its Standing
+Orders panel (kfdc #1645). korg's own UI does not read it: `/schedules` marks
+each such schedule with an "in flight" pill from `list_schedules`' own
+`outstanding` field.
 
 ### Deconfliction (#978)
 
