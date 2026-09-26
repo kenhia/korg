@@ -105,6 +105,27 @@ korg:3310.
   awaiting overseer clearance, since the ship clearance covered `33f82ef` and
   not new code.
 
+## PR #95 — long tokens wrap (korg:3340)
+
+Landed by a second leg (proposal korg:3340, program korg:3314), on the same
+branch. As written, `4a4a49a` wrapped the report body on both pages. That
+fixed the 35px, but #3202 **still overflowed 23px**. The live smoke test's
+35px was the larger of two overflows: the other was comment 3152 on #3202,
+quoting `systemctl --user status 'app-nvidia\x2dsettings\x2d…'` in the page's
+comment thread. Only the body was wrapped.
+
+- `daily-reports/[node_id]/+page.svelte`: the `Comments` call site is wrapped
+  in a `[overflow-wrap:anywhere]` div. The class inherits, so the shared
+  `Comments` and `MarkdownView` stay untouched. Whether every korg surface
+  should wrap long words is left to Ken, per the overseer's ruling.
+- `report-detail.spec.ts`: the phone-width spec now posts a comment carrying
+  that command. Before the fix it failed at 28px, and with the fix it passes.
+- Evidence, on kai against the 2026-09-26 nightly (`korg-20260926-031737`,
+  restored into a throwaway `postgres:18-alpine`): at 375px, all 92 real
+  reports' pages show 0px of sideways scroll, and so does the list with all
+  30 rows open. The full Playwright suite passed, 117/117. The daily-reports
+  specs passed 36/36, run twice each with retries off. `just check` is green.
+
 ## Deployed
 
 2026-09-25 20:20 PDT: `deploy-kubsdb` (the skill `.sprint-deploy` declares),

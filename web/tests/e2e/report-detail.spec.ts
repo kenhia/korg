@@ -114,10 +114,20 @@ test("at phone width the lead is readable without scrolling sideways", async ({
   request,
 }) => {
   const id = await fixture(request, Date.now());
+  // The page's comment thread carries the same tokens: on kubsdb, a comment
+  // on #3202 quoting this command still pushed the page 23px wide once the
+  // body wrapped.
+  const res = await request.post(`/api/nodes/${id}/comments`, {
+    data: {
+      body: "Checked with `systemctl --user status 'app-nvidia\\x2dsettings\\x2dautostart@autostart.service'`.",
+    },
+  });
+  expect(res.ok()).toBeTruthy();
 
   await page.setViewportSize({ width: 375, height: 800 });
   await page.goto(`/daily-reports/${id}`);
   await expect(page.getByTestId("report-body")).toContainText("END-OF-LEAD");
+  await expect(page.getByText(/systemctl --user status/)).toBeVisible();
   const overflow = await page.evaluate(
     () =>
       document.documentElement.scrollWidth -

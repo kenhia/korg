@@ -181,7 +181,12 @@
       </div>
     {/if}
 
-    <Comments node_id={report.node_id} />
+    <!-- Comments on a report quote the same tokens (#3202's pushed the page
+         23px wide once the body wrapped). Wrapped here, not in the shared
+         Comments, so only Daily Reports changes. -->
+    <div class="[overflow-wrap:anywhere]">
+      <Comments node_id={report.node_id} />
+    </div>
   {/if}
 </section>
 
