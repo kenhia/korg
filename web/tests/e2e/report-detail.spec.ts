@@ -4,7 +4,8 @@ import { test, expect, type APIRequestContext } from "@playwright/test";
 // read the rest. Two causes, and the spec pins both answers. The list row
 // clips with CSS (`truncate`), and the stored summary is itself capped at 200
 // characters by the writer, so un-clipping the field would still stop
-// mid-word. The report's own page takes the whole lead from the BODY.
+// mid-word. The report's own page shows the BODY, whose first paragraph is
+// the whole sentence — once, not repeated as a standfirst (korg:3310 ruling).
 
 /** Reports are written over MCP, not REST — one stateless POST. */
 async function createReport(
@@ -64,11 +65,12 @@ test("the #id opens the report's page, which shows the whole lead", async ({
   await expect(page).toHaveURL(new RegExp(`/daily-reports/${id}$`));
 
   await expect(page.getByTestId("report-detail-id")).toHaveText(`#${id}`);
-  const lead = page.getByTestId("report-lead");
-  await expect(lead).toContainText("END-OF-LEAD");
-  await expect(lead).toContainText("ATTENTION");
-  // The heading is layout, not lead.
-  await expect(lead).not.toContainText("status");
+  const body = page.getByTestId("report-body");
+  await expect(body).toContainText("END-OF-LEAD");
+  await expect(body).toContainText("ATTENTION");
+  // Exactly once on the page: the lead is the body's first paragraph, and a
+  // standfirst repeating it was ruled noise.
+  await expect(page.getByText(/END-OF-LEAD/)).toHaveCount(1);
   await expect(page.getByTestId("report-body")).toContainText(
     `the rest of the report ${stamp}`,
   );
@@ -115,7 +117,7 @@ test("at phone width the lead is readable without scrolling sideways", async ({
 
   await page.setViewportSize({ width: 375, height: 800 });
   await page.goto(`/daily-reports/${id}`);
-  await expect(page.getByTestId("report-lead")).toContainText("END-OF-LEAD");
+  await expect(page.getByTestId("report-body")).toContainText("END-OF-LEAD");
   const overflow = await page.evaluate(
     () =>
       document.documentElement.scrollWidth -

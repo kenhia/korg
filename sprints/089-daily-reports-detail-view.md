@@ -31,18 +31,14 @@ from the body, the 200-character cap is untouched (so kmon's writer and the
 schema do not change), and the layout follows the proposal/program detail
 pages.
 
-- **The lead is the first prose block of the body** (`reportLead` in
-  `domain.ts`). Leading heading lines are dropped, because kmon writes
-  `## status` followed by the status line, sometimes with no blank line
-  between. Rules and code fences are skipped. A body with no prose falls back
-  to the summary. It was checked against the three body shapes in production:
-  kmon's `## status` block, k-homelab-drift's bare three-line opener, and
-  kfo-soak's prose-first body.
+- **The whole sentence is the body's first paragraph**, for all three body
+  shapes in production: kmon's `## status` block, k-homelab-drift's bare
+  three-line opener, and kfo-soak's prose-first body. So the page shows the
+  body and puts nothing in front of it (see the ruling below).
 - **Layout is the proposal page's.** Id + title (`{source} — {date}`, the
   preview's title, so nothing changes for a reader who knew the old page),
   status pill, and then the one control the kind has, *reviewed*, where a
-  proposal has its status row. Then the lead as the standfirst, the body under
-  a `Report` heading, findings as a list with preview + "open work item ↗",
+  proposal has its status row. Then the body under a `Report` heading, findings as a list with preview + "open work item ↗",
   and comments. The toggle reconciles from the response rather than being
   optimistic: the list page's reason for optimism is a list that wants to get
   shorter, and this page has one row.
@@ -55,26 +51,29 @@ pages.
   reason the reviewed toggle already sat outside it). An **open row wraps its
   summary**; a shut one still clips, so the list stays a list. On a phone the
   wrapped summary takes the full width under the date and pill.
-- **The lead repeats the body's first paragraph**, a few lines apart. That is
-  what "the full lead, then the body" means once the lead *is* the body's
-  first paragraph. Stripping it out of the body would mean editing the
-  report's text on the way to the screen, which is worse.
+- **No standfirst: overseer ruling, round 2.** The first cut put a lead
+  standfirst above the body (a `reportLead` helper took the first prose block
+  of the body), as the brief asked. For every writer, that lead *is* the
+  body's first paragraph, so the page showed it twice a few lines apart. The
+  overseer ruled the duplicate noise (handoff korg:3326, reply on korg:3310):
+  the standfirst was dropped, and `reportLead` with it, since nothing else
+  called it. The spec asserts that the paragraph appears exactly once.
 
 ## What shipped
 
 - `web/src/routes/daily-reports/[node_id]/+page.svelte`: the bespoke page.
 - `web/src/routes/daily-reports/+page.svelte`: `#id` links to it, and an
   open row wraps.
-- `web/src/lib/domain.ts`: `reportLead`. `web/src/lib/api.ts`:
-  `reportMaybe`.
+- `web/src/lib/api.ts`: `reportMaybe`.
 - `web/tests/e2e/report-detail.spec.ts`: four specs. The `#id` opens the page
-  and it shows the whole lead (past the 200-char cap) with the heading
-  excluded, and the reviewed toggle persists across a reload. An open row
+  and it shows the whole lead sentence (past the 200-char cap) exactly once,
+  and the reviewed toggle persists across a reload. An open row
   wraps and a shut one clips. At 375 px there is no sideways scroll. A
   non-report id says what it is. Written first: against the unchanged code,
   3 failed and 1 passed (the wrong-kind spec, which the generic view already
   satisfied, and which now guards against a regression).
-- `docs/node-shapes.md`: the report section names both routes and the lead.
+- `docs/node-shapes.md`: the report section names both routes and says why the
+  page shows `body`, not `summary`.
 
 ## Verification
 
@@ -86,6 +85,10 @@ pages.
   spec ran 12/12 with `--repeat-each 3 --retries 0`.
 - Screenshots at 375 px and 1280 px of both the list and the page, checked by
   eye.
+
+Round 2, after the standfirst was dropped: `just check` and the
+daily-reports e2e spec were re-run; results are in the round-2 handoff on
+korg:3310.
 
 ## Repaired in passing
 

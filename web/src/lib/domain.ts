@@ -799,28 +799,6 @@ export function reportStatusPill(status: string): string {
 }
 
 /**
- * A report's lead paragraph, taken from its body (#3294).
- *
- * The stored `summary` is capped at 200 characters by the writer (kmon's
- * `summarize`), so it stops mid-word — #3202's ends "The collector's `fa".
- * Un-truncating that field on screen would still show a clipped sentence; the
- * whole one is in the body. The lead is the first block of prose: leading
- * heading lines are dropped (kmon writes `## status` then the status line,
- * sometimes with no blank line between), and rules and code fences are
- * skipped. Falls back to the summary for a body with no prose at all.
- */
-export function reportLead(body: string, summary: string): string {
-  for (const block of body.split(/\n\s*\n/)) {
-    const lines = block.split("\n");
-    while (lines.length > 0 && /^\s*(#{1,6}\s|$)/.test(lines[0])) lines.shift();
-    const text = lines.join("\n").trim();
-    if (text === "" || /^(```|~~~|(-{3,}|\*{3,}|_{3,})$)/.test(text)) continue;
-    return text;
-  }
-  return summary;
-}
-
-/**
  * Source-freshness colours (#950).
  *
  * `stale` is the only alarming one, and it is deliberately the *same* red a

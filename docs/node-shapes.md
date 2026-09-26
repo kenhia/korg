@@ -177,17 +177,16 @@ is part of reading it.
 |---|---|---|
 | `source`, `report_date`, `status`, `body` | ✓ | list + page |
 | `summary` | ✓ | list row (clipped shut, wrapped open) |
-| lead (derived from `body`) | ✓ | page standfirst |
 | `model`, `escalated` | ✓ | list + page |
 | `reviewed` | ✓ | list + page, a toggle |
 | `findings[]` | ✓ | list + page, linked to work items |
 | comments | ✓ | list + page |
 | `tags`, `category` | ✗ | — |
 
-The page shows the report's **lead** — the first prose block of `body` —
-rather than `summary`, because the writer caps `summary` at 200 characters and
-it stops mid-word (#3294). The cap stays where kmon put it; the list row's `#id`
-links to the page for the whole sentence.
+The page shows `body` and not `summary`: the writer caps `summary` at 200
+characters, so it stops mid-word (#3294), and the whole sentence is the body's
+own first paragraph. The cap stays where kmon put it. The list row's `#id`
+links to the page.
 
 Report **sources** (`SourceHealth`: `freshness`, `asserts`, `cadence_days`) are
 rendered on the board rollup, not here. Note the deliberate absence of

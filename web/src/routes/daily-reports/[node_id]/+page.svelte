@@ -5,14 +5,16 @@
   //
   // What outgrew it was Ken reading #3202: the list row's blurb is the stored
   // `summary`, which the writer caps at 200 characters, so it stops mid-word
-  // and nothing on screen had the rest. The lead here comes from the BODY
-  // (`reportLead`) rather than un-truncating that field — the cap stays where
-  // kmon put it. The layout is the proposal page's: the id and title, the one
-  // control the kind has (reviewed, where a proposal has status), a standfirst,
-  // then the long text at a width you can read prose in, then the linked work.
+  // and nothing on screen had the rest. The whole sentence is the body's own
+  // first paragraph, so the page shows the body and nothing in front of it —
+  // the cap stays where kmon put it. A standfirst repeating that paragraph was
+  // tried and ruled out as noise (overseer, korg:3310). The layout is the
+  // proposal page's: the id and title, the one control the kind has (reviewed,
+  // where a proposal has status), then the long text at a width you can read
+  // prose in, then the linked work.
   import { page } from "$app/stores";
   import { api, type NodePreview as NodePreviewT, type ReportFull } from "$lib/api";
-  import { ID_CLASS, docTitle, nodePage, reportLead, reportStatusPill } from "$lib/domain";
+  import { ID_CLASS, docTitle, nodePage, reportStatusPill } from "$lib/domain";
   import BackTo from "$lib/components/BackTo.svelte";
   import Comments from "$lib/components/Comments.svelte";
   import ErrorNotice from "$lib/components/ErrorNotice.svelte";
@@ -34,8 +36,6 @@
   // Findings are work items, whose node id equals their wi_number — the same
   // peek-without-leaving gesture as the list page and the proposal page.
   let previewNode = $state<number | null>(null);
-
-  const lead = $derived(report ? reportLead(report.body, report.summary) : "");
 
   function load(id: number) {
     report = null;
@@ -141,12 +141,6 @@
         {/if}
       </div>
     </header>
-
-    <!-- The standfirst: the whole lead sentence the list row could only clip.
-         Markdown because a kmon status line opens `**ATTENTION** —`. -->
-    <div class="max-w-3xl text-[var(--color-muted)]" data-testid="report-lead">
-      <MarkdownView src={lead} />
-    </div>
 
     <div class="max-w-3xl" data-testid="report-body">
       <h2 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Report</h2>
