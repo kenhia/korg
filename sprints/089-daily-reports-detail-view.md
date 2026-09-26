@@ -156,7 +156,7 @@ from merged `main` at `7050091`.
 
 ### PR #95 (korg:3340)
 
-2026-09-25 20:58 PDT: `deploy-kubsdb`, from merged `main` at `b23797c`.
+2026-09-25 20:55 PDT: `deploy-kubsdb`, from merged `main` at `b23797c`.
 
 - The image is `kubsdb.encke-wahoo.ts.net:5000/korg:b23797c93c20` (and
   `latest`), and the SHA tag was pushed first. The revision gate reported
