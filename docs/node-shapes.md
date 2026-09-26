@@ -171,15 +171,22 @@ rows: `/programs` is a routing surface — pick one and go — where the detail 
 is the reading one, and a program is long-lived enough that how recently it moved
 is part of reading it.
 
-### report — `/daily-reports`
+### report — `/daily-reports`, `/daily-reports/[node_id]`
 
 | Field | | Where |
 |---|---|---|
-| `source`, `report_date`, `status`, `summary`, `body` | ✓ | page |
-| `model`, `escalated` | ✓ | page |
-| `findings[]` | ✓ | page, linked to work items |
-| comments | ✓ | page |
+| `source`, `report_date`, `status`, `body` | ✓ | list + page |
+| `summary` | ✓ | list row (clipped shut, wrapped open) |
+| `model`, `escalated` | ✓ | list + page |
+| `reviewed` | ✓ | list + page, a toggle |
+| `findings[]` | ✓ | list + page, linked to work items |
+| comments | ✓ | list + page |
 | `tags`, `category` | ✗ | — |
+
+The page shows `body` and not `summary`: the writer caps `summary` at 200
+characters, so it stops mid-word (#3294), and the whole sentence is the body's
+own first paragraph. The cap stays where kmon put it. The list row's `#id`
+links to the page.
 
 Report **sources** (`SourceHealth`: `freshness`, `asserts`, `cadence_days`) are
 rendered on the board rollup, not here. Note the deliberate absence of

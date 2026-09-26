@@ -201,25 +201,44 @@
 
 <ul class="space-y-2">
   {#each rows as r (r.node_id)}
+    {@const open = expanded.has(r.node_id)}
     <li class="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
-      <button
-        class="flex w-full items-center gap-3 px-4 py-3 text-left"
-        onclick={() => toggle(r.node_id)}
-        aria-expanded={expanded.has(r.node_id)}
-      >
-        <span class="text-[var(--color-muted)]">{expanded.has(r.node_id) ? "▾" : "▸"}</span>
+      <!-- #3294 — the id is the way to the report's own page, which shows the
+           whole lead the summary below can only clip. It sits beside the expand
+           button rather than inside it: an <a> inside a <button> is not valid
+           HTML, the same reason the reviewed toggle lives outside it. -->
+      <div class="flex items-start gap-3 px-4 py-3">
         <!-- #980 — a report is addressed by node_id (get_report, and it is what
              a finding's `related` block cites). -->
-        <span class={`shrink-0 ${ID_CLASS}`}>#{r.node_id}</span>
-        <span class="font-mono text-sm tabular-nums">{r.report_date}</span>
-        <span class={reportStatusPill(r.status)}>
-          {r.status}
-        </span>
-        <span class="min-w-0 flex-1 truncate text-sm">{r.summary}</span>
-        <span class="hidden shrink-0 text-xs text-[var(--color-muted)] sm:inline">
-          {r.source}{r.model ? ` · ${r.model}` : ""}{r.escalated ? " · ESCALATED" : ""}
-        </span>
-      </button>
+        <a
+          class={`shrink-0 py-0.5 ${ID_CLASS} hover:text-[var(--color-accent)] hover:underline`}
+          href={`/daily-reports/${r.node_id}`}
+          title={`Open report #${r.node_id}`}
+          data-testid={`report-link-${r.node_id}`}>#{r.node_id}</a
+        >
+        <button
+          class={`flex min-w-0 flex-1 gap-3 text-left ${open ? "flex-wrap items-baseline" : "items-center"}`}
+          onclick={() => toggle(r.node_id)}
+          aria-expanded={open}
+        >
+          <span class="text-[var(--color-muted)]">{open ? "▾" : "▸"}</span>
+          <span class="font-mono text-sm tabular-nums">{r.report_date}</span>
+          <span class={reportStatusPill(r.status)}>
+            {r.status}
+          </span>
+          <!-- Clipped to one line while shut, so the list stays a list; wrapped
+               once open (#3294), when the row is the thing being read. The
+               stored summary is itself capped at 200 characters by the writer,
+               which is why the whole lead lives on the report's page. -->
+          <span
+            class={`min-w-0 flex-1 text-sm ${open ? "basis-full whitespace-normal break-words sm:basis-0" : "truncate"}`}
+            data-testid={`report-summary-${r.node_id}`}>{r.summary}</span
+          >
+          <span class="hidden shrink-0 text-xs text-[var(--color-muted)] sm:inline">
+            {r.source}{r.model ? ` · ${r.model}` : ""}{r.escalated ? " · ESCALATED" : ""}
+          </span>
+        </button>
+      </div>
 
       <!-- Outside the expand button, because a button inside a button is not
            valid HTML and the browser would hoist it out anyway. -->
@@ -242,7 +261,7 @@
         </button>
       </div>
 
-      {#if expanded.has(r.node_id)}
+      {#if open}
         <div class="border-t border-[var(--color-border)] px-4 py-4">
           {#if full[r.node_id]}
             {@const f = full[r.node_id]}

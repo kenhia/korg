@@ -247,6 +247,10 @@ export const api = {
     http<ReportRow[]>("GET", `/api/reports${listQuery({ source })}`),
   report: (node_id: number) =>
     http<ReportFull>("GET", `/api/reports/${node_id}`),
+  /** The detail page's read (#3294): a missing report is `null`, not a throw,
+   *  so the page can say which kind the id actually is. */
+  reportMaybe: (node_id: number) =>
+    httpMaybe<ReportFull>("GET", `/api/reports/${node_id}`),
   /**
    * Mark a report reviewed, or put it back (#2154).
    *
