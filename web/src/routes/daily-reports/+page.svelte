@@ -262,7 +262,8 @@
       </div>
 
       {#if open}
-        <div class="border-t border-[var(--color-border)] px-4 py-4">
+        <!-- Same wrap rule as the report's own page, for the same tokens. -->
+        <div class="border-t border-[var(--color-border)] px-4 py-4 [overflow-wrap:anywhere]">
           {#if full[r.node_id]}
             {@const f = full[r.node_id]}
             <MarkdownView src={f.body} class="prose prose-invert prose-sm max-w-none" />
