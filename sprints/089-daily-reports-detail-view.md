@@ -100,4 +100,35 @@ korg:3310.
 
 ## Follow-ups
 
-None.
+- **Phone-width overflow on real report bodies**, found by the post-deploy
+  smoke test below. It is fixed on branch `089-report-body-wrap` (PR #95),
+  awaiting overseer clearance, since the ship clearance covered `33f82ef` and
+  not new code.
+
+## Deployed
+
+2026-09-25 20:20 PDT: `deploy-kubsdb` (the skill `.sprint-deploy` declares),
+from merged `main` at `7050091`.
+
+- Image `kubsdb.encke-wahoo.ts.net:5000/korg:70500912b644` (and `latest`),
+  pushed SHA tag first. The in-deploy revision gate reported `running
+  revision 70500912b644536c1f158ad7af3b46c71723b649`. The rollback target is
+  `5cf255d0977`, confirmed present in the registry tags list.
+- Preflight: tree clean, kubsdb reachable, registry `200`, and tonight's dump
+  `korg-20260926-031737` (5.99 MB) is larger than the one before it.
+- `scripts/post-deploy-check.sh --compare`: `OK`, every count unchanged
+  (reports 92, work items 1781, proposals 598, nodes 3234), migrations 36 →
+  36.
+- Live, in a headless browser against `https://kubsdb.encke-wahoo.ts.net:5674`,
+  read-only: `/daily-reports/3202` renders `#3202`, and the body is present
+  with no `report-lead` standfirst. The reviewed toggle reads pressed,
+  matching the stored `reviewed: true`. Findings list the two
+  xdg-desktop-portal items. `/daily-reports` links `#3202` to
+  `/daily-reports/3202`.
+- **One check failed.** At 375px, #3202's page scrolls 35px sideways, from
+  inline code carrying `app-nvidia\x2dsettings\x2dautostart@autostart.service`.
+  The list's expanded row overflows too (6px, from a release path). The old
+  generic page used the same body rendering, so this is not a regression, but
+  it does break WI 3294's phone-width acceptance on real data. The e2e fixture
+  had no unbreakable tokens, which is why the gate missed it. The fix (and a
+  spec that reproduces the 35px) is PR #95 above.
