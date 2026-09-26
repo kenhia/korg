@@ -153,3 +153,22 @@ from merged `main` at `7050091`.
   it does break WI 3294's phone-width acceptance on real data. The e2e fixture
   had no unbreakable tokens, which is why the gate missed it. The fix (and a
   spec that reproduces the 35px) is PR #95 above.
+
+### PR #95 (korg:3340)
+
+2026-09-25 20:58 PDT: `deploy-kubsdb`, from merged `main` at `b23797c`.
+
+- The image is `kubsdb.encke-wahoo.ts.net:5000/korg:b23797c93c20` (and
+  `latest`), and the SHA tag was pushed first. The revision gate reported
+  `running revision b23797c93c201c8b5a37dd08f55cf8f37faea499`. The rollback
+  target is `70500912b644`, confirmed present in the registry.
+- Preflight: the tree was clean, kubsdb answered from kai, and the registry
+  returned `200`. The newest dump, `korg-20260926-031737`, is larger than the
+  one before it.
+- `scripts/post-deploy-check.sh --compare`: `OK`, every count unchanged
+  (reports 92, work items 1781, nodes 3239), migrations 36 → 36.
+- Live at 375px against `https://kubsdb.encke-wahoo.ts.net:5674` (headless
+  Chromium from kai; read-only, only expanding list rows):
+  `/daily-reports/3202` scrolls **0px** sideways, down from 35px. Its body
+  computes `overflow-wrap: anywhere`, and comment 3152's `systemctl` line is
+  visible. `/daily-reports` with all 30 rows expanded also reads 0px.
