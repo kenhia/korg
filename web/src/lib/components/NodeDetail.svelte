@@ -2,10 +2,10 @@
   // One node, full width, for every kind that has no bespoke page of its own
   // (WI #1467, sprint 070).
   //
-  // The six pages this backs — cards, links, reports, schedules, attachments
-  // and work items — are each four lines: a `<BackTo>` destination and this.
-  // That is deliberate, and it is what made #1467 an M rather than six separate
-  // page builds. `get_node_preview` has been a uniform, kind-agnostic payload
+  // The pages this backs — cards, links, schedules, attachments and work
+  // items; reports were a sixth until they graduated (#3294) — are each four
+  // lines: a `<BackTo>` destination and this. That is deliberate, and it is
+  // what made #1467 an M rather than six separate page builds. `get_node_preview` has been a uniform, kind-agnostic payload
   // since #260 and has had an arm for every kind since #870's audit; what korg
   // was missing was never the *rendering*, only a URL to render it at.
   //
