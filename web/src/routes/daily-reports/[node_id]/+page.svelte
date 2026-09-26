@@ -142,7 +142,10 @@
       </div>
     </header>
 
-    <div class="max-w-3xl" data-testid="report-body">
+    <!-- `overflow-wrap: anywhere` because report bodies carry long unbreakable
+         tokens — systemd unit names like `app-nvidia\x2dsettings\x2d…`,
+         release paths — which pushed #3202 35px past a phone's width. -->
+    <div class="max-w-3xl [overflow-wrap:anywhere]" data-testid="report-body">
       <h2 class="mb-1 border-b border-[var(--color-border)] pb-1 text-sm font-semibold">Report</h2>
       <MarkdownView src={report.body} />
     </div>

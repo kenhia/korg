@@ -49,7 +49,7 @@ async function fixture(
     report_date: DATE,
     status: "attention",
     summary: LEAD.slice(0, 200),
-    body: `## status\n\n**ATTENTION** — ${LEAD}\n\n## findings\n\n- the rest of the report ${stamp}`,
+    body: `## status\n\n**ATTENTION** — ${LEAD}\n\n## findings\n\n- the rest of the report ${stamp}\n\n- unit \`app-nvidia\\x2dsettings\\x2dautostart@autostart.service\` and \`~/.local/share/kmon/releases/20260924T060646-7cac4cb\``,
   });
 }
 
@@ -124,6 +124,21 @@ test("at phone width the lead is readable without scrolling sideways", async ({
       document.documentElement.clientWidth,
   );
   expect(overflow).toBeLessThanOrEqual(0);
+
+  // The same body, opened in the list. The fixture's unit name and release
+  // path are unbreakable tokens; #3202's pushed the page 35px wide on kubsdb.
+  await page.goto("/daily-reports");
+  const summary = page.getByTestId(`report-summary-${id}`);
+  const toggle = page.locator("button[aria-expanded]", { has: summary });
+  if ((await toggle.getAttribute("aria-expanded")) !== "true")
+    await summary.click();
+  await expect(page.getByText(/20260924T060646-7cac4cb/)).toBeVisible();
+  const listOverflow = await page.evaluate(
+    () =>
+      document.documentElement.scrollWidth -
+      document.documentElement.clientWidth,
+  );
+  expect(listOverflow).toBeLessThanOrEqual(0);
 });
 
 test("an id that is not a report says what it is", async ({
