@@ -83,9 +83,6 @@ covers:
   the list, moving beside it once the window is wide enough.
 - **Cards** — kanban cards with status, rank, tags, comments, and clickable
   launch links for URL fields.
-- **Link Up** — relate any node to any other across kinds via the generalized
-  `relationship` edge. **Not on the top nav** as of sprint 029 — linking is
-  an agent request in practice — but `/link-up` still serves.
 - **Planning** (`/planning`, `/planning/:node_id`) — the agent-planning queue:
   `sprint_proposal` nodes (a title + summary bundled with the work items they
   cover), drag-orderable by rank, with pin-to-top. Start/Decline/Done buttons
@@ -210,7 +207,7 @@ so closing a lightbox no longer also closes the work item behind it (#1121).
 Agents name things by id — `korg:979`, `#846` — and Ken reads agent output
 constantly, so matching a number against a screen is a scanning task. Rows and
 detail headers across programs, cards, the reading list, daily reports,
-the awaiting lane, Today's trays, and both Link Up pickers carry
+the awaiting lane and Today's trays carry
 their id in one shared mono-and-muted style. The reverse direction holds too:
 find-by-ID on Work Items resolves **every** node kind to its real title (a work
 item navigates; anything else previews), and `crates/korg-core/tests/sprint049.rs`
@@ -293,7 +290,7 @@ describing a route that no longer exists.
 | `GET` | `/api/connectors/projects` | The v1 **project-listing connector** (WI 2874): every active project that has a `src_path` and at least one machine, as `{connector, version, generated, projects:[{name, category?, starred, locations:[{host, path, kind}]}]}`. A projection of `/api/projects` with one thing added — `path` is absolute and native to its host, so a consumer never learns korg's `~/` convention or the drive-root mapping. `version` is the contract, not `contract/read-shapes.json`; within a version changes are additive only. See [api.md](api.md#the-project-listing-connector-2874). |
 | `PATCH` | `/api/projects/:name` | Update project metadata (everything but the name). |
 | `GET` | `/api/projects/:name/plan` | A project's work items plus their `depends_on` edges, for plan/frontier views — `{items, edges, total}`. **Every** item, archived included: the handler walks the pages rather than taking the first 500 (#1391), and `total` is there so a consumer can check the payload against itself. Archived rows ride along on purpose — an archived item is still a dependency others were satisfied by, and dropping it from the graph turns a met dependency into a missing node; filtering for display is the consumer's call. |
-| `GET`, `POST` | `/api/work-items` | List (`{items,total,limit,offset}`; filters `project`, `archived`, `limit`, `offset`) or create. |
+| `GET`, `POST` | `/api/work-items` | List (`{items,total,limit,offset}`; filters `project`, `archived`, `limit`, `offset`, and `order` — `asc` by `wi_number`, the default, or `desc`, which the Work Items page walks so its 2000-row bound trims the oldest rows (WI 3763)) or create. |
 | `GET` | `/api/work-items/survey` | Slim, paginated work-item projection (no content/details); filters `project`, `wi_status` (+ `all`), `archived` (tri-state since #851, excluding archived by default). Since #861 it shares the MCP `list_work_items` read, so omitting `wi_status` means everything **not terminal** rather than every status, and the response carries `omitted: {closed, archived}`. |
 | `GET` | `/api/work-items/flow` | Daily work-item flow (#1318): one row per day in the board's timezone — added, closed, backlog, each with its durable split, plus `backlog_before` (the open count the day before the window — the delta's baseline; null at the horizon). `days` defaults to 10; a window reaching past the transition horizon is clamped to it, and the response names the horizon — see [api.md](api.md#the-flow-series-1318). |
 | `GET`, `PATCH` | `/api/work-items/:wi_number` | Fetch with inlined comments (same shape as the MCP tool), or update. |

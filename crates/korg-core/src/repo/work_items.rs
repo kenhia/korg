@@ -299,6 +299,9 @@ pub(super) const WORKITEM_SELECT: &str = concat!(
 pub struct WorkItemQuery {
     pub project: Option<String>,
     pub archived: ArchivedFilter,
+    /// Descending `wi_number` (WI 3763): a bounded walk then keeps the newest
+    /// rows and leaves the oldest — almost all closed — behind its bound.
+    pub newest_first: bool,
     pub page: PageQuery,
 }
 
@@ -307,6 +310,7 @@ impl Default for WorkItemQuery {
         Self {
             project: None,
             archived: archived_default(),
+            newest_first: false,
             page: PageQuery::default(),
         }
     }
@@ -320,11 +324,12 @@ impl Default for WorkItemQuery {
 /// `get_work_item`, one row at a time.
 pub async fn list_work_items(pool: &PgPool, query: WorkItemQuery) -> Result<Page<WorkItemRow>> {
     let (limit, offset) = query.page.resolve();
+    let dir = if query.newest_first { "DESC" } else { "ASC" };
     let sql = format!(
         "{WORKITEM_SELECT} \
          WHERE ($1::text IS NULL OR pj.name = $1) \
            AND ($2::bool IS NULL OR n.archived = $2) \
-         ORDER BY w.wi_number \
+         ORDER BY w.wi_number {dir} \
          LIMIT $3 OFFSET $4"
     );
     let items = sqlx::query_as::<_, WorkItemRow>(&sql)

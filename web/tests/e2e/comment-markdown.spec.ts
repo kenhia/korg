@@ -58,4 +58,10 @@ test("comment markdown renders without eating korg's own notation", async ({ pag
   const rendered = comments.locator(".prose");
   await expect(rendered.locator("li")).toHaveCount(2);
   await expect(rendered.locator("br")).not.toHaveCount(0);
+
+  // A code block can scroll sideways, so it has to take focus or a keyboard
+  // cannot scroll it (axe `scrollable-region-focusable`, sprint 090).
+  await page.getByTestId("comment-input").fill("```\n" + "x".repeat(400) + "\n```");
+  await page.getByTestId("comment-input").press("Control+Enter");
+  await expect(rendered.locator("pre")).toHaveAttribute("tabindex", "0");
 });

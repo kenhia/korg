@@ -8,10 +8,10 @@ import { test, expect } from "@playwright/test";
 // the client swallows leaves no trace anywhere else to assert on.
 
 test("a failed load renders an error, not an empty page", async ({ page }) => {
-  // link-up is the regression this guards. It loaded four collections with
-  // `.catch(() => [])`, so an outage rendered a page that confidently said
-  // there was nothing to link — indistinguishable from a genuinely empty
-  // instance.
+  // The regression this guards was on link-up (removed in sprint 090): it
+  // loaded four collections with `.catch(() => [])`, so an outage rendered a
+  // page that confidently said there was nothing to link — indistinguishable
+  // from a genuinely empty instance. The board is the same shape of page.
   await page.route("**/api/cards*", (r) =>
     r.fulfill({
       status: 500,
@@ -20,7 +20,7 @@ test("a failed load renders an error, not an empty page", async ({ page }) => {
     }),
   );
 
-  await page.goto("/link-up");
+  await page.goto("/cards");
 
   const notice = page.getByTestId("error-notice");
   await expect(notice).toBeVisible();

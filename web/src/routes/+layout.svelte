@@ -44,12 +44,9 @@
     return path === href || path.startsWith(href + "/");
   }
 
-  // Kanban and Link Up need the full width; other detail/list pages stay
-  // narrow — including Today, since sprint 050 slimmed it to lanes and trays.
-  const wide = $derived(
-    $page.url.pathname.startsWith("/cards") ||
-      $page.url.pathname.startsWith("/link-up"),
-  );
+  // Kanban needs the full width; other detail/list pages stay narrow —
+  // including Today, since sprint 050 slimmed it to lanes and trays.
+  const wide = $derived($page.url.pathname.startsWith("/cards"));
 
   // Work Items wants room for its table but not edge-to-edge — ~10% gutters
   // each side (80% width), keeping a little breathing space.

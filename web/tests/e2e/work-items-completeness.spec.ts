@@ -7,8 +7,10 @@ import { test, expect, type Page } from "@playwright/test";
 // read from that truncated array, so they were wrong together and silently.
 //
 // The first spec is the regression test on real data; the rest drive the
-// bounded case through mocks, because the page bound (2000 rows) is well past
-// anything the database holds.
+// bounded case through mocks. The page bound (2000 rows) was well past the
+// database when this was written and is not any more (2014 on 2026-10-12), so
+// since WI 3763 the walk runs newest first: on a production-sized database the
+// bound trims the oldest rows, and the newest is always loaded.
 
 const ISO = "2026-01-01T00:00:00Z";
 
@@ -81,10 +83,7 @@ test("the list holds every work item, not the first page", async ({
 
   await openAllProjects(page);
   await expect(page.getByRole("row", { name: new RegExp(title) })).toBeVisible();
-
-  // And the footer is quiet, because nothing is hidden.
   await expect(page.getByTestId("list-count")).toHaveText(/^\d+ items$/);
-  await expect(page.getByTestId("list-truncated")).toHaveCount(0);
 
   // The row is reachable by id as well as by scrolling to it.
   await page.getByPlaceholder("find by ID…").fill(String(wi));

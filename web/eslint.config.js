@@ -15,7 +15,7 @@ export default [
       // Ban the swallow (WI #547).
       //
       // `.catch(() => [])` and friends turn a failed request into a successful
-      // empty result. The review found this across the app, worst on link-up,
+      // empty result. The review found this across the app, worst on link-up (since removed),
       // where four collections did it at once — an API outage rendered a page
       // that confidently said there was nothing to link. Nothing was broken on
       // screen; the page simply asserted something false.

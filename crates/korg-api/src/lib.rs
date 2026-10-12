@@ -339,6 +339,8 @@ async fn recent_project(State(s): State<AppState>) -> ApiResult {
 struct WorkItemsQuery {
     project: Option<String>,
     archived: Option<String>,
+    /// `asc` (the default) or `desc` by `wi_number` (WI 3763).
+    order: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -349,6 +351,15 @@ async fn list_work_items(State(s): State<AppState>, Query(q): Query<WorkItemsQue
         repo::WorkItemQuery {
             project: q.project,
             archived: parse_archived(q.archived.as_deref())?,
+            newest_first: match q.order.as_deref() {
+                None | Some("asc") => false,
+                Some("desc") => true,
+                Some(other) => {
+                    return Err(ApiError::invalid(format!(
+                        "invalid order '{other}' — expected one of: asc, desc"
+                    )))
+                }
+            },
             page: repo::PageQuery {
                 limit: q.limit,
                 offset: q.offset,
@@ -714,6 +725,7 @@ async fn project_plan(State(s): State<AppState>, Path(name): Path<String>) -> Ap
             repo::WorkItemQuery {
                 project: Some(name.clone()),
                 archived: None,
+                newest_first: false,
                 page: repo::PageQuery {
                     limit: Some(repo::LIST_LIMIT_MAX),
                     offset: Some(items.len() as i64),
