@@ -213,7 +213,7 @@ so that it cannot be rendered.
 
 Fully covered.
 
-### link — `/reading-list`, `/link-up`
+### link — `/reading-list`
 
 | Field | | Where |
 |---|---|---|

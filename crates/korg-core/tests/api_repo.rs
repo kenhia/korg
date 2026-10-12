@@ -96,8 +96,8 @@ async fn api_repo_links_cards_projects() {
     assert_eq!(a_items[0].project.as_deref(), Some("alpha"));
 }
 
-/// WI #84 + LB-2 (D-11 / L-10): `relate` dedups within a label so the Link Up
-/// page can re-link freely. For a registry-*undirected* label the reverse
+/// WI #84 + LB-2 (D-11 / L-10): `relate` dedups within a label so a caller can
+/// re-link freely. For a registry-*undirected* label the reverse
 /// orientation dedups to the same edge too (LB-2's L-10 nicety); a *directed*
 /// label keeps both orientations, because A depends_on B and B depends_on A is
 /// a cycle, not a duplicate.

@@ -1,10 +1,11 @@
 <script lang="ts">
   // "This failed to load", as distinct from "there is nothing here" (WI #547).
   //
-  // The failure this fixes, in its purest form, was link-up: four collections
-  // each loaded with `.catch(() => [])`, so an API outage rendered a page that
-  // confidently said there was nothing to link. The page did not merely lose
-  // data — it asserted something false, and looked completely normal doing it.
+  // The failure this fixes, in its purest form, was link-up (since removed):
+  // four collections each loaded with `.catch(() => [])`, so an API outage
+  // rendered a page that confidently said there was nothing to link. The page
+  // did not merely lose data — it asserted something false, and looked
+  // completely normal doing it.
   //
   // Empty and failed must never render the same. This component is the "failed"
   // half, and it always offers the retry, because the most common cause is

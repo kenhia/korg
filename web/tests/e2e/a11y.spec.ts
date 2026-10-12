@@ -27,7 +27,6 @@ const ROUTES = [
   "/daily-reports",
   "/schedules",
   "/reading-list",
-  "/link-up",
   // Search joined the header in sprint 066 (#1177).
   "/search",
 ];

@@ -36,6 +36,8 @@
   }
 
   let newComment = $state("");
+  // #3761 — the new-comment box's Expand toggle (5 ↔ 50 lines).
+  let expanded = $state(false);
   let loadError = $state<unknown>(null);
   let loading = $state(true);
 
@@ -101,6 +103,7 @@
     if (c) {
       comments = [...comments, c];
       newComment = "";
+      expanded = false;
       await claimUploads();
     }
   }
@@ -266,9 +269,16 @@
       {/each}
     </ul>
   {/if}
+  <!-- #3761 — 5 lines by default, 50 expanded. Only `rows` changes: the
+       element is never re-keyed or re-created, because that would drop the
+       bound value, the caret and any paste-ledger entries still pending. With
+       5 lines the Add + Expand column fits inside the box's own height. -->
   <div class="mt-2 flex gap-2">
     <label class="sr-only" for={`comment-new-${node_id}`}>Add a comment</label>
-    <textarea id={`comment-new-${node_id}`} class="min-h-[3rem] flex-1 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" placeholder="Add a comment… (Ctrl/⌘-Enter to post, Ctrl-V an image)" data-testid="comment-input" bind:value={newComment} use:pasteImages={uploads} onkeydown={(e) => (e.key === "Enter" && (e.ctrlKey || e.metaKey)) && addComment()}></textarea>
-    <button class="self-start rounded bg-[var(--color-surface-hi)] px-3 py-1 text-sm hover:bg-[var(--color-accent-soft)]" onclick={addComment}>Add</button>
+    <textarea id={`comment-new-${node_id}`} rows={expanded ? 50 : 5} class="flex-1 rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none" placeholder="Add a comment… (Ctrl/⌘-Enter to post, Ctrl-V an image)" data-testid="comment-input" bind:value={newComment} use:pasteImages={uploads} onkeydown={(e) => (e.key === "Enter" && (e.ctrlKey || e.metaKey)) && addComment()}></textarea>
+    <div class="flex flex-col gap-1 self-start">
+      <button class="rounded bg-[var(--color-surface-hi)] px-3 py-1 text-sm hover:bg-[var(--color-accent-soft)]" onclick={addComment}>Add</button>
+      <button class="rounded px-3 py-1 text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]" aria-label={expanded ? "Collapse comment box" : "Expand comment box"} aria-expanded={expanded} onclick={() => (expanded = !expanded)}>{expanded ? "Collapse" : "Expand"}</button>
+    </div>
   </div>
 </div>

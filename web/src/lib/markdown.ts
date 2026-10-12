@@ -34,6 +34,19 @@ marked.use({
   },
 });
 
+// A code block too wide for its column scrolls sideways, and a scroll region
+// nobody can focus is one a keyboard user cannot scroll (axe
+// `scrollable-region-focusable`, which the Daily Reports page tripped as soon
+// as its pre-expanded latest report carried a long line). Code content is
+// escaped by then, so a literal `<pre>` here is only ever the block's own tag.
+marked.use({
+  hooks: {
+    postprocess(html: string): string {
+      return html.replace(/<pre>/g, '<pre tabindex="0">');
+    },
+  },
+});
+
 function escapeAttr(s: string): string {
   return s
     .replace(/&/g, "&amp;")

@@ -127,6 +127,11 @@ export interface ListParams {
   offset?: number;
 }
 
+/** `GET /api/work-items` alone also takes an order (WI 3763). */
+export interface WorkItemListParams extends ListParams {
+  order?: "asc" | "desc";
+}
+
 
 /** `korg_core::repo::LIST_LIMIT_MAX` — the largest page any collection read
  *  will serve, whatever you ask for. Not generated: it is a repo constant, not
@@ -134,9 +139,11 @@ export interface ListParams {
 export const LIST_LIMIT_MAX = 500;
 
 /** How many pages `allWorkItems` fetches before it gives up and says so.
- *  2000 rows at `LIST_LIMIT_MAX` — far above the corpus (572 on 2026-08-01) and
- *  low enough that a runaway collection cannot turn "load everything" into a
- *  page that is merely slow, with no signal (WI #762, D-2). */
+ *  2000 rows at `LIST_LIMIT_MAX` — low enough that a runaway collection cannot
+ *  turn "load everything" into a page that is merely slow, with no signal
+ *  (WI #762, D-2). It was "far above the corpus" (572 on 2026-08-01) and no
+ *  longer is (2014 on 2026-10-12), which is why the walk is newest first: the
+ *  bound now trims the oldest rows, nearly all closed, never the newest. */
 export const AUTO_PAGE_LIMIT = 4;
 
 /** A collection read walked to completion — or as far as the page bound allowed.
@@ -288,7 +295,7 @@ export const api = {
     ),
 
   // work items
-  workItems: (project?: string, params: ListParams = {}) =>
+  workItems: (project?: string, params: WorkItemListParams = {}) =>
     http<Page<WorkItemRow>>(
       "GET",
       `/api/work-items${listQuery({ project, ...params, limit: params.limit ?? LIST_LIMIT_MAX })}`,
@@ -296,13 +303,14 @@ export const api = {
   /** Every work item matching the query, not the first `LIST_LIMIT_MAX` of them
    *  (WI #762). Both list views hold their whole collection and filter it in
    *  memory, so a page that silently ends at 500 is a page whose filters,
-   *  counts and tag chips are all quietly wrong — and on the ascending
-   *  `wi_number` order it drops the *newest* rows.
+   *  counts and tag chips are all quietly wrong.
    *
-   *  Walks by offset rather than re-reading from 0, which is stable here: the
-   *  order is `wi_number` ascending and new rows take higher numbers, so a
-   *  concurrent create appends past the walk instead of shifting it. Rows are
-   *  archived, never deleted, and `archived: "all"` keeps even those in place.
+   *  Walks newest first (WI 3763), so a walk the bound stops short drops the
+   *  *oldest* rows, and returns them ascending, the order the pages display.
+   *  Walking by offset from the top means a concurrent create shifts the walk
+   *  down one row: that can repeat a row across a page boundary but never skip
+   *  one, so rows are de-duplicated by `wi_number`. Rows are archived, never
+   *  deleted, and `archived: "all"` keeps even those in place.
    *
    *  Stops after `maxPages` and reports `complete: false` — see AUTO_PAGE_LIMIT.
    */
@@ -313,18 +321,24 @@ export const api = {
   ): Promise<WalkedPage<WorkItemRow>> => {
     const limit = params.limit ?? LIST_LIMIT_MAX;
     let offset = params.offset ?? 0;
-    const items: WorkItemRow[] = [];
+    const byNumber = new Map<number, WorkItemRow>();
     let total = 0;
     for (let fetched = 0; fetched < maxPages; fetched++) {
-      const page = await api.workItems(project, { ...params, limit, offset });
+      const page = await api.workItems(project, {
+        ...params,
+        order: "desc",
+        limit,
+        offset,
+      });
       total = page.total;
-      items.push(...page.items);
+      for (const it of page.items) byNumber.set(it.wi_number, it);
       offset += page.items.length;
       // An empty page means the server has nothing more to give, whatever
       // `total` claims — without this a disagreement between the two would
       // spin until maxPages.
-      if (page.items.length === 0 || items.length >= total) break;
+      if (page.items.length === 0 || byNumber.size >= total) break;
     }
+    const items = [...byNumber.values()].sort((a, b) => a.wi_number - b.wi_number);
     return { items, total, complete: items.length >= total };
   },
   /** The slim projection, and the only work-item read with a *server-side*
