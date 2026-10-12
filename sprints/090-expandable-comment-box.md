@@ -107,3 +107,18 @@ newest-first, over skipping closed rows or raising the bound.
   (`korg-20261012-032537`, restored into a throwaway `postgres:18-alpine`):
   **112/112, twice in a row, `--retries 0`**. Before this sprint it was 109
   passed, 2 flaky, 7 failed.
+
+## Deployed
+
+2026-10-12 22:41Z, by `deploy-kubsdb` (the `.sprint-deploy` skill), from merged
+`main` `37b7af1` (PR #96). The image is `kubsdb.encke-wahoo.ts.net:5000/korg:37b7af1136eb`
+(also `latest`). The rollback target is `korg:b23797c93c20`, confirmed present in the
+registry. There was no migration.
+
+- The revision assertion passed: kubsdb runs `37b7af1136eb8b2606e847254dda7b332782657a`.
+- `post-deploy-check.sh --compare`: **OK**. Every row count is unchanged
+  (node_count 3673, seq_last 3775).
+- Live: `GET /api/work-items?order=desc&limit=1` returns #3773 (newest),
+  ascending returns #1, and `order=sideways` returns 400 `invalid_input`. In a
+  browser, `/work-items/3761`'s comment box has `rows=5` and an Expand button,
+  and `/link-up` renders korg's 404.
