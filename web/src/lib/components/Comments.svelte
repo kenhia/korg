@@ -120,8 +120,13 @@
    *  dirty check, so re-typing what was already there is not "unsaved". */
   let editPristine = $state("");
 
+  // #3793 — the edit box gets the same 5 ↔ 50 toggle as the new-comment box.
+  // Every open starts collapsed, whichever comment was expanded last.
+  let editExpanded = $state(false);
+
   function startEdit(c: Comment) {
     editingId = c.id;
+    editExpanded = false;
     editBuf = c.body;
     editPristine = c.body;
   }
@@ -201,9 +206,14 @@
             <!-- Inset, not raised: the row itself is now `--color-surface-hi`, so
                  the editor takes the darker tone to keep an edge against the
                  card it sits in. -->
-            <textarea id={`comment-edit-${c.id}`} class="min-h-[3rem] flex-1 rounded bg-[var(--color-bg)] px-2 py-1 text-sm outline-none" bind:value={editBuf} use:pasteImages={uploads} onkeydown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveEdit(); if (e.key === "Escape") cancelEdit(); }}></textarea>
-            <button class="text-xs text-[var(--color-accent)] hover:underline" onclick={saveEdit}>Save</button>
-            <button class="text-xs text-[var(--color-muted)] hover:underline" onclick={cancelEdit}>Cancel</button>
+            <!-- #3793 — as with the new-comment box below, only `rows` changes,
+                 so the buffer, caret and pending pastes survive the toggle. -->
+            <textarea id={`comment-edit-${c.id}`} rows={editExpanded ? 50 : 5} class="flex-1 rounded bg-[var(--color-bg)] px-2 py-1 text-sm outline-none" data-testid="comment-edit-input" bind:value={editBuf} use:pasteImages={uploads} onkeydown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveEdit(); if (e.key === "Escape") cancelEdit(); }}></textarea>
+            <div class="flex flex-col items-start gap-1">
+              <button class="text-xs text-[var(--color-accent)] hover:underline" onclick={saveEdit}>Save</button>
+              <button class="text-xs text-[var(--color-muted)] hover:underline" onclick={cancelEdit}>Cancel</button>
+              <button class="text-xs text-[var(--color-muted)] hover:text-[var(--color-accent)]" aria-label={editExpanded ? "Collapse edit box" : "Expand edit box"} aria-expanded={editExpanded} onclick={() => (editExpanded = !editExpanded)}>{editExpanded ? "Collapse" : "Expand"}</button>
+            </div>
           {:else}
             <!-- #1625 reverses #1120/#1121's "comments render as literal text
                  and keep doing so". That rule was written to protect two things
