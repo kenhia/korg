@@ -47,3 +47,16 @@ gives the edit box the same treatment.
 - Full Playwright suite against the 2026-10-14 nightly
   (`korg-20261014-032052`, restored into a throwaway `postgres:18-alpine`):
   **113/113, `--retries 0`**.
+
+## Deployed
+
+2026-10-14 04:42Z, by `deploy-kubsdb` (the `.sprint-deploy` skill), from merged
+`main` `30dbcf3` (PR #97). The image is `kubsdb.encke-wahoo.ts.net:5000/korg:30dbcf3554d6`
+(also `latest`). The rollback target is `korg:37b7af1136eb`, confirmed present in the
+registry. There was no migration.
+
+- The revision assertion passed: kubsdb runs `30dbcf3554d6919fa656f1d2fc3ab8b1ae85af66`.
+- `post-deploy-check.sh --compare`: **OK**. Every row count is unchanged
+  (node_count 3697, seq_last 3799).
+- Live in a browser: on `/work-items/3761`, Edit opens a box with `rows=5`, and
+  "Expand edit box" takes it to `rows=50`. Cancelled without saving.
