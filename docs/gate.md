@@ -76,7 +76,7 @@ Set in `/etc/korg-gate/env` (template: `deploy/korg-gate/env.example`).
 | `KORG_GATE_LISTEN` | no (`127.0.0.1:8475`) | Bind address. Keep it on loopback; Funnel terminates TLS |
 | `KORG_GATE_PUBLIC_URL` | yes | The connector URL exactly as entered in claude.ai, ending in `/mcp`. It is the OAuth `resource`; its origin is the issuer |
 | `KORG_GATE_UPSTREAM` | yes | korg-api's MCP URL, e.g. `https://kubsdb.encke-wahoo.ts.net:5674/mcp` |
-| `KORG_GATE_PASSPHRASE` | yes | The owner passphrase, 20+ characters. Held in krot, never in the repo |
+| `KORG_GATE_PASSPHRASE` | yes | The owner passphrase, 20+ characters. Registered in krot; on the Pi it is rendered into `/etc/khomelab/secrets.env` by k-homelab and reaches the unit through the `korg-gate.service.d/khomelab-secrets.conf` drop-in, so it is **not** in `/etc/korg-gate/env` (see below) |
 | `KORG_GATE_STATE_DIR` | yes | Where clients and refresh tokens persist: `/var/lib/korg-gate` under the unit |
 | `KORG_GATE_CLIENT_IP_HEADER` | no (`x-forwarded-for`) | Header carrying the caller's address. The *last* entry is used, because that is the one tailscaled appended |
 | `KORG_GATE_LOG` | no (`info`) | `tracing` filter |
@@ -110,12 +110,28 @@ scp deploy/korg-gate/korg-gate.service deploy/korg-gate/env.example <pi>:/tmp/
 sudo install -m 0755 /tmp/korg-gate /usr/local/bin/korg-gate
 sudo install -d -m 0700 /etc/korg-gate
 sudo install -m 0600 /tmp/env.example /etc/korg-gate/env
-sudoedit /etc/korg-gate/env       # set KORG_GATE_PUBLIC_URL and the passphrase (from krot)
+sudoedit /etc/korg-gate/env       # set KORG_GATE_PUBLIC_URL; leave KORG_GATE_PASSPHRASE out (next step)
 sudo install -m 0644 /tmp/korg-gate.service /etc/systemd/system/korg-gate.service
+sudo install -d /etc/systemd/system/korg-gate.service.d
+sudo install -m 0600 /tmp/khomelab-secrets.conf /etc/systemd/system/korg-gate.service.d/
 sudo systemctl daemon-reload
-sudo systemctl enable --now korg-gate
-curl -fsS http://127.0.0.1:8475/healthz       # ok
+sudo systemctl enable korg-gate     # not started yet: it refuses to start without the passphrase
+
+# on kubs0 (the k-homelab control node): render the passphrase, then start
+bin/apply krgate khomelab-secrets --create
+ssh krgate sudo systemctl start korg-gate
+ssh krgate curl -fsS http://127.0.0.1:8475/healthz       # ok
 ```
+
+**Where the passphrase lives.** The Pi is a k-homelab host, and krot's rule for
+the fleet is one copy of a secret per host, at `/etc/khomelab/secrets.env`,
+rendered from k-homelab's age store (`korg-gate-passphrase`). A value in
+`/etc/korg-gate/env` would be a second copy outside that file, which the
+registration rule treats as a defect. So `/etc/korg-gate/env` carries only the
+non-secret variables, and `deploy/korg-gate/korg-gate.service.d/khomelab-secrets.conf`
+adds `EnvironmentFile=/etc/khomelab/secrets.env` to the unit. systemd reads
+both files as root before dropping to the dynamic user. Decided in sprint 093
+(k-homelab sprint 121 carries the manifest half).
 
 The unit runs as a `DynamicUser` with `ProtectSystem=strict`, no capabilities,
 and a system-call filter. Its only writable path is `/var/lib/korg-gate`.
@@ -168,7 +184,9 @@ problem rather than a homelab problem.
 
 ## Rotating the passphrase
 
-Change it in krot, update `/etc/korg-gate/env`, then run
-`sudo systemctl restart korg-gate`. Connected clients keep working, because a
+It is a k-homelab secret: `bin/secret set korg-gate-passphrase` on kubs0, then
+`bin/apply krgate khomelab-secrets` and `sudo systemctl restart korg-gate` on
+the Pi (the `krot-rotate` skill walks it; krot's entry is
+`korg-gate-passphrase`). Connected clients keep working, because a
 refresh never asks for the passphrase. To disconnect every client as well, stop
 the unit, delete `/var/lib/korg-gate/state.json`, and start it again.
