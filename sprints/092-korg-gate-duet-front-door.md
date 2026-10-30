@@ -112,3 +112,14 @@ ingress.
   it needs the Pi, which 4234 already holds.
 - korg+ GP-17 now records the gate as one scoped exception to "the tailnet
   is the perimeter" (cross-project-planning `7e83eed`). Nothing is pending.
+
+## Deployed
+
+On 2026-10-30 at about 05:42Z, `deploy-kubsdb` (the `.sprint-deploy` skill) deployed merged `main` `b73c141` (PR #98). It ran from the karc leg's ship turn on kai. The image is `kubsdb.encke-wahoo.ts.net:5000/korg:b73c14155380`, also tagged `latest`. The rollback target is `korg:30dbcf3554d6`, which is confirmed present in the registry. There was no migration.
+
+This deploy changed nothing in korg-api. The kubsdb redeploy only rebuilds the image from the new `main`.
+
+- **Revision assertion:** passed. kubsdb runs `b73c1415538041ecf608659b7cc1f897f515d47b`.
+- **`post-deploy-check.sh --compare`:** OK. Every row count is unchanged (node_count 4135, seq_last 4237, migrations 36).
+- **Live checks:** `/plan` returns 200, and MCP `tools/list` serves 57 tools.
+- **The gate itself is not deployed.** Its stand-up on the Pi is WI 4234. As this sprint's live check, the release `korg-gate` built from merged `main` ran on kai loopback against the newly deployed korg, all from kai. It completed 401 → DCR → sign-in → token → `initialize` → `tools/list` (26 reads) → `get_work_item` (real data). `add_comment` was refused with -32602 before it reached korg. The gate process was stopped afterwards.
