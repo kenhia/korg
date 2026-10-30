@@ -7,6 +7,7 @@ members = [
     "crates/korg-mcp",
     "crates/korg-api",
     "crates/korg-test-support",
+    "crates/korg-gate",
 ]
 
 [workspace.package]

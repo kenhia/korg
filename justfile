@@ -65,6 +65,15 @@ gen-check:
         exit 1
     fi
 
+# Cross-build korg-gate for the Pi (aarch64, Raspberry Pi OS Lite 64-bit). The
+# binary lands in target/aarch64-unknown-linux-gnu/release/korg-gate; installing
+# it is docs/gate.md's job, not a deploy recipe's — the gate is not part of the
+# kubsdb image. Needs `gcc-aarch64-linux-gnu` and the rustup target.
+gate-pi:
+    rustup target add aarch64-unknown-linux-gnu
+    cargo build --release -p korg-gate --target aarch64-unknown-linux-gnu
+    file target/aarch64-unknown-linux-gnu/release/korg-gate
+
 # Snapshot the frozen kwi + kcard source databases (read-only). [S3]
 # Requires KCARD_DATABASE_URL (and optionally KWI_DATABASE_URL) in the env.
 snapshot:

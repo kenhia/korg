@@ -1,0 +1,38 @@
+[package]
+name = "korg-gate"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Read-only, OAuth-gated public front door to korg's MCP endpoint (Claude Duet)"
+
+# Deliberately no korg-core: the gate is an HTTP proxy plus an OAuth server and
+# nothing else, so it carries no sqlx/Postgres and cross-builds for the Pi
+# cheaply (`just gate-pi`). It knows korg only as an upstream URL.
+
+[[bin]]
+name = "korg-gate"
+path = "src/main.rs"
+
+[dependencies]
+axum = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+# rustls only — the Pi has no OpenSSL dev headers, and nothing here needs them.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+futures-util = "0.3"
+bytes = "1"
+base64 = "0.22"
+getrandom = "0.2"
+subtle = "2"
+url = "2"
+
+[dev-dependencies]
+http-body-util = { workspace = true }

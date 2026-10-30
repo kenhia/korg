@@ -1,0 +1,58 @@
+# korg-gate — read-only, OAuth-gated public front door to korg's MCP (WI 4147).
+#
+# Installed on the gate Pi as /etc/systemd/system/korg-gate.service; see
+# docs/gate.md. Listens on loopback only: Tailscale Funnel terminates TLS on the
+# Pi and is the only thing that talks to it.
+#
+# Sandboxing is the point of this file, not decoration. The gate is the one
+# korg process the public internet can reach, so a compromise of it should find
+# no writable filesystem but its own state, no privileges, no devices, and no
+# address families beyond IP and a Unix socket for logging.
+
+[Unit]
+Description=korg-gate (OAuth front door to korg MCP, read-only)
+Documentation=https://github.com/kenhia/korg/blob/main/docs/gate.md
+Wants=network-online.target tailscaled.service
+After=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/korg-gate
+EnvironmentFile=/etc/korg-gate/env
+# The state dir is /var/lib/korg-gate, owned by the dynamic user and kept
+# across restarts. Point KORG_GATE_STATE_DIR at it.
+DynamicUser=yes
+StateDirectory=korg-gate
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+
+[Install]
+WantedBy=multi-user.target
