@@ -284,3 +284,18 @@ claude.ai.
   in k-homelab `dr/krgate.md` become one policy pair.
 - Known limit, unchanged from the proposal: Duet's scheduled tasks reportedly
   cannot use custom connectors, so this is chat-only use.
+
+## Deployed
+
+Nothing to deploy from this sprint, deliberately. The declared step is
+`deploy-kubsdb`, a rebuild of the korg-api image from `main`; this sprints
+
+## Deployed
+
+Nothing to deploy from this sprint, deliberately. The declared step is
+`deploy-kubsdb`, a rebuild of the korg-api image from `main`; this sprint's
+squash (`37519db`) changed only `docs/gate.md`, `deploy/korg-gate/` and this
+record (`git diff --stat d295ed8..37519db`), none of which is in the image, so
+a rebuild would have published an identical korg-api under a new tag. kubsdb
+stays on `korg:b73c14155380` from sprint 092. The gate itself was deployed by
+hand to krgate during the sprint, per `docs/gate.md`, and is live behind Funnel.
