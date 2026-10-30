@@ -12,3 +12,9 @@ TS_RS_EXPORT_DIR = { value = "web/src/lib/generated", relative = true }
 # korg serializes i64 as a JSON number, so `number` is what the client actually
 # receives. ts-rs would default these to `bigint`.
 TS_RS_LARGE_INT = "number"
+
+# `just gate-pi` cross-builds korg-gate for the Raspberry Pi it runs on (WI
+# 4147). kai has the GNU cross toolchain (`gcc-aarch64-linux-gnu`); ring's C
+# parts find `aarch64-linux-gnu-gcc` by the cc crate's own target-prefix rule.
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"

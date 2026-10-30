@@ -513,6 +513,30 @@ fn the_migration_env_table_covers_every_importer_variable() {
     );
 }
 
+#[test]
+fn the_gate_env_table_covers_every_gate_variable() {
+    // korg-gate (WI 4147) runs on its own host with its own environment file,
+    // so its variables live in docs/gate.md, not setup.md.
+    let read_by_code = env_vars_read_by(&["korg-gate"]);
+    let documented: BTreeSet<String> = section(&read("docs/gate.md"), "## Environment variables")
+        .into_iter()
+        .filter(|l| l.starts_with('|'))
+        .flat_map(backticked)
+        .filter(|s| s.starts_with("KORG_"))
+        .collect();
+
+    let undocumented: Vec<_> = read_by_code.difference(&documented).collect();
+    assert!(
+        undocumented.is_empty(),
+        "docs/gate.md's environment table is missing {undocumented:?}",
+    );
+    let stale: Vec<_> = documented.difference(&read_by_code).collect();
+    assert!(
+        stale.is_empty(),
+        "docs/gate.md documents {stale:?}, which korg-gate never reads",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Vocabularies in prose (WI #862)
 // ---------------------------------------------------------------------------
