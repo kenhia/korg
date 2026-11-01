@@ -204,10 +204,7 @@ touched. This sprint ran as a karc leg on kai (`korg-131184`), under oversight.
 
 ## Follow-ups
 
-- WI 4294 (ops half), open. The tailnet grant `tag:korg-gate` → kubs0:7777,
-  `KORG_GATE_UPSTREAM_KLAMS` in krgate's `/etc/korg-gate/env`, deploy, the
-  second connector at `<origin>/klams/mcp`, and the phone test. The program's
-  claude-duet repo steps (connectors, rulings, test prompts) belong there too.
+- WI 4294 (ops half): done the same evening, see **Deployed, ops half** below.
 
 ## Deployed
 
@@ -222,3 +219,57 @@ and the `Dockerfile`. A rebuild would have published an identical korg-api under
 a new tag, so kubsdb stays on the release recorded in sprints 092 and 093. The
 gate itself goes to krgate by hand in the ops half (WI 4294), per
 `docs/gate.md`. Until then, krgate runs the sprint-093 gate with one door.
+
+## Deployed, ops half (WI 4294, 2026-10-31 18:43–19:09 PDT)
+
+Interactive: Ken (tailnet policy, connector, prompts) and the overseer session
+on cleo (binary, env, restart, checks). The Duet-side account is
+claude-duet `sprints/001-klams-door-open.md`; this is the korg-gate side.
+
+1. **Binary first, door shut.** `just gate-pi` on kai from main `c2b0937`
+   (sha256 `ed79f33f06af2aaa…`), `scp` to the Pi, `install -m 0755`, restart.
+   With `KORG_GATE_UPSTREAM_KLAMS` unset: `/klams/mcp` and its metadata 404,
+   `/mcp` 401 and metadata byte-identical to the 093 binary's. Safe to install
+   before the grant, as the unset default was designed to be.
+2. **Tailnet grant** (Ken, admin console): `hosts.kubs0 = 100.91.170.122`;
+   grant `src [tag:korg-gate] → dst [kubs0], ip [tcp:7777]`; the gate's test
+   accepts `kubs0:7777`, denies `kubs0:22` and `kubs0:4870`. Probed from the
+   Pi: `kubs0:7777/healthz` 200; 22 and 4870 blocked.
+3. **Env and restart.** `KORG_GATE_UPSTREAM_KLAMS=https://kubs0.encke-wahoo.ts.net:7777/mcp`
+   appended to `/etc/korg-gate/env` (root 0600, md5 `3692b6db79e4…`),
+   `systemctl restart korg-gate`. Operator checks per `docs/gate.md`: klams
+   door 401 with `scope="klams:read"` pointing at
+   `/.well-known/oauth-protected-resource/klams/mcp`, metadata `resource` =
+   `<origin>/klams/mcp`; korg door unchanged; AS metadata unchanged. Same
+   answers from cleo and through the Funnel relay (`--resolve` to
+   208.111.34.11). Funnel itself needed no change: `/` already proxies the
+   whole origin.
+4. **Connector.** Added in claude.ai by Ken, 18:59 PDT. Journal: `client
+   registered client=x5udszus name=Some("Claude")`, `sign-in succeeded
+   ip=100.94.70.96 client=x5udszus door="klams"` (cleo's tailnet address,
+   desktop browser, as in 093).
+5. **Live use.** `tools/call client=x5udszus door="klams" tool="memory_search"`
+   then `memory_get`; klams on kubs0 logged `agent_name="claude-duet"
+   tailnet_node="krgate"` on each. A write prompt was declined by the model
+   (the filtered `tools/list` shows it no write tool), so the gate logged no
+   refusal; the gate's own refusal is pinned in `tests/allowlist.rs` and was
+   proven on loopback above. The korg connector then made three
+   `tools/call`s from its pre-094 client `OfRs2Juj` with no sign-in: the old
+   refresh token survived the two-door binary in production, as the
+   `state.json` test said it would.
+
+**WI 4243, answered in production.** No `method refused … server/discover`
+lines since the deploy (last one 17:41 PDT on the 093 binary). The klams
+connector, connected after the deploy, spoke MCP 2026-07-28 end to end:
+klams-mcp logged `protocol_version 2026-07-28`, per-request handshake,
+`tools/list tools=4 protocol=2026-07-28`. So claude.ai sent `Mcp-Method` on
+the probe and `Mcp-Name` on tool calls, and the routing-header rule above held.
+The korg connector, registered on 2026-10-30 while the gate still refused the
+probe, stayed on 2025-11-25 (`initialize` and all, per korg-api's log).
+Reading: claude.ai pins the era per connector at connect time. Both eras work;
+nothing to do.
+
+**Nits, recorded not filed** (one-liners for the next korg-gate sprint,
+korg:4298): the startup log line names only the korg upstream; and only
+`tools/call` is logged at INFO, so a forwarded `server/discover` leaves no
+trace at the gate — the era has to be read from the upstream's log.
