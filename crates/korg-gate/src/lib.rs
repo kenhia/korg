@@ -1,8 +1,9 @@
-//! korg-gate: a read-only, OAuth-gated public front door to korg's MCP
-//! endpoint, so Claude Duet (which reaches tools only through public HTTPS
-//! connectors) can read korg. WI 4147; the decision to allow it is WI 4146.
-//! Sprint 094 (WI 4293) added a second door, klams, behind the same
-//! authorization server; see `door`.
+//! korg-gate: an OAuth-gated public front door to korg's MCP endpoint, so
+//! Claude Duet (which reaches tools only through public HTTPS connectors) can
+//! read korg. WI 4147; the decision to allow it is WI 4146. Sprint 094
+//! (WI 4293) added a second door, klams, read-only behind the same
+//! authorization server; see `door`. Sprint 095 (WI 4244) opened the korg door
+//! to a ruled set of writes, `origin` stamped by the gate.
 //!
 //! Three jobs in one small process:
 //!
@@ -14,9 +15,8 @@
 //!    `/klams/mcp` for klams when it is configured (sprint 094) — answers 401
 //!    without a live access token *for that door*, and with one forwards to
 //!    its upstream.
-//! 3. **Read-only filter** (`allowlist`): deny by default — only allowlisted
-//!    JSON-RPC methods and the door's read tools pass, and `tools/list` is
-//!    filtered.
+//! 3. **Filter** (`allowlist`): deny by default — only allowlisted JSON-RPC
+//!    methods and the door's ruled tools pass, and `tools/list` is filtered.
 //!
 //! korg itself is unchanged and still unauthenticated behind this; the gate is
 //! the only thing between the public internet and korg, which is why it is

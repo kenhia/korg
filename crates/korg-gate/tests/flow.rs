@@ -64,6 +64,10 @@ async fn full_oauth_flow_then_a_proxied_read_reaches_korg_stamped() {
         .json_value()
         .await;
     assert_eq!(prm["resource"], format!("{}/mcp", h.base));
+    assert_eq!(
+        prm["resource_name"], "korg",
+        "sprint 095: no longer read-only"
+    );
     let issuer = prm["authorization_servers"][0]
         .as_str()
         .unwrap()
@@ -113,7 +117,11 @@ async fn full_oauth_flow_then_a_proxied_read_reaches_korg_stamped() {
         html.contains("claude.ai"),
         "the page must name the redirect host"
     );
-    assert!(html.contains("read-only"));
+    // Sprint 095: korg's door takes writes, so its page no longer says
+    // read-only.
+    assert!(html.contains("wants access to korg's reads and the ruled write set."));
+    assert!(html.contains(">Allow access</button>"));
+    assert!(!html.contains("read-only"));
 
     // 4. Passphrase → code (redirected to Claude, with state).
     let code = code_from(&h.sign_in(&client_id, &challenge, PASSPHRASE).await);
@@ -506,7 +514,8 @@ async fn klams_door_full_flow_then_a_read_reaches_klams_stamped() {
         .text()
         .await
         .unwrap();
-    assert!(html.contains("read-only</strong> access to klams."));
+    assert!(html.contains("wants <strong>read-only</strong> access to klams."));
+    assert!(html.contains(">Allow read access</button>"));
     assert!(html.contains(&format!(
         "<input type=\"hidden\" name=\"resource\" value=\"{resource}\">"
     )));
@@ -736,7 +745,7 @@ async fn a_refresh_token_from_the_pre_094_gate_keeps_working_at_the_korg_door() 
     let listed = h.rpc(access, list.clone()).await.json_value().await;
     assert_eq!(
         listed["result"]["tools"].as_array().unwrap().len(),
-        korg_gate::allowlist::READ_TOOLS.len()
+        korg_gate::allowlist::READ_TOOLS.len() + korg_gate::allowlist::WRITE_TOOLS.len()
     );
     assert_eq!(h.rpc_at("/klams/mcp", access, list).await.status(), 401);
 }

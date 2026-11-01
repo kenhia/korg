@@ -13,7 +13,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::allowlist::{KLAMS_READ_TOOLS, READ_TOOLS};
+use crate::allowlist::{tool_allowed, KLAMS_READ_TOOLS};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -53,16 +53,48 @@ impl Door {
         }
     }
 
-    /// The tools this door lets through, sorted.
-    pub fn tools(self) -> &'static [&'static str] {
+    /// Whether this door lets `tool` through. korg's door takes its ruled reads
+    /// and writes (sprint 095); klams's, its four reads.
+    pub fn allows(self, tool: &str) -> bool {
         match self {
-            Door::Korg => READ_TOOLS,
-            Door::Klams => KLAMS_READ_TOOLS,
+            Door::Korg => tool_allowed(tool),
+            Door::Klams => KLAMS_READ_TOOLS.binary_search(&tool).is_ok(),
         }
     }
 
-    pub fn allows(self, tool: &str) -> bool {
-        self.tools().binary_search(&tool).is_ok()
+    /// What a refusal says this door exposes. klams's wording is unchanged
+    /// from sprint 094.
+    pub fn exposes(self) -> &'static str {
+        match self {
+            Door::Korg => "korg's reads and the ruled write set",
+            Door::Klams => "klams read-only",
+        }
+    }
+
+    /// RFC 9728 `resource_name`, a display string. korg's lost "(read-only)"
+    /// when its door gained writes (sprint 095); klams's is still true.
+    pub fn resource_name(self) -> &'static str {
+        match self {
+            Door::Korg => "korg",
+            Door::Klams => "klams (read-only)",
+        }
+    }
+
+    /// What the sign-in page says the client wants, as HTML. klams's is the
+    /// sprint 094 wording, byte for byte.
+    pub fn sign_in_ask(self) -> &'static str {
+        match self {
+            Door::Korg => "access to korg's reads and the ruled write set",
+            Door::Klams => "<strong>read-only</strong> access to klams",
+        }
+    }
+
+    /// The sign-in page's submit button.
+    pub fn sign_in_button(self) -> &'static str {
+        match self {
+            Door::Korg => "Allow access",
+            Door::Klams => "Allow read access",
+        }
     }
 
     /// RFC 9728 §3.1's path-inserted metadata URL for this door's resource.

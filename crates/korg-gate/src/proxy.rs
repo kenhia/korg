@@ -23,7 +23,7 @@ use axum::Extension;
 use axum::Json;
 use serde_json::{json, Value};
 
-use crate::allowlist::method_allowed;
+use crate::allowlist::{method_allowed, DUET_ORIGIN, ORIGIN_TOOLS};
 use crate::config::{AGENT_HEADER, AGENT_NAME};
 use crate::door::Door;
 use crate::AppState;
@@ -134,7 +134,7 @@ pub async fn post_mcp(
         Ok(c) => c,
         Err(r) => return *r,
     };
-    let message: Value = match serde_json::from_slice(&body) {
+    let mut message: Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(_) => return refuse(None, -32700, "parse error".into()),
     };
@@ -174,12 +174,15 @@ pub async fn post_mcp(
                 id,
                 -32602,
                 format!(
-                    "tool `{tool}` is not available through korg-gate, which exposes {} read-only",
-                    door.name()
+                    "tool `{tool}` is not available through korg-gate, which exposes {}",
+                    door.exposes()
                 ),
             );
         }
         tracing::info!(client = %&client[..8.min(client.len())], door = door.name(), tool, "tools/call");
+    } else if method == "server/discover" {
+        // The probe a dual-era client opens with: worth one line, as a call is.
+        tracing::info!(client = %&client[..8.min(client.len())], door = door.name(), method, "forwarded");
     }
     let routing = match routing_headers(&headers, method, obj.get("params")) {
         Ok(r) => r,
@@ -197,6 +200,11 @@ pub async fn post_mcp(
         }
     };
     let filter_tools = method == "tools/list" && id.is_some();
+    if door == Door::Korg && method == "tools/call" {
+        if let Err(r) = stamp_origin(&mut message) {
+            return refuse(id, -32602, r);
+        }
+    }
     let forwarded = serde_json::to_vec(&message).expect("a parsed Value re-serialises");
 
     let upstream = match send(
@@ -244,6 +252,31 @@ pub async fn delete_mcp(
         Ok(up) => stream_back(up),
         Err(r) => *r,
     }
+}
+
+/// Overwrite `origin` on a korg write that carries it (`ORIGIN_TOOLS`) with
+/// the gate's own, whatever the caller sent: korg records `origin` unverified,
+/// so the gate is the only place it can be made true. Arguments that are not an
+/// object are refused rather than forwarded unstamped.
+fn stamp_origin(message: &mut Value) -> Result<(), String> {
+    let Some(params) = message.get_mut("params").and_then(Value::as_object_mut) else {
+        return Ok(());
+    };
+    let tool = params.get("name").and_then(Value::as_str).unwrap_or("");
+    if !ORIGIN_TOOLS.contains(&tool) {
+        return Ok(());
+    }
+    let arguments = params
+        .entry("arguments")
+        .or_insert_with(|| Value::Object(Default::default()));
+    if arguments.is_null() {
+        *arguments = Value::Object(Default::default());
+    }
+    let Some(arguments) = arguments.as_object_mut() else {
+        return Err("tools/call arguments must be an object".into());
+    };
+    arguments.insert("origin".into(), Value::String(DUET_ORIGIN.into()));
+    Ok(())
 }
 
 /// The 2026-07-28 routing headers to forward for a checked message: for each
@@ -469,7 +502,7 @@ mod tests {
 
     #[test]
     fn json_tool_list_keeps_only_allowlisted_tools() {
-        let body = r#"{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"get_item"},{"name":"create_work_item"}]}}"#;
+        let body = r#"{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"get_item"},{"name":"create_work_item"},{"name":"update_proposal"}]}}"#;
         let v = filter_json(body, Door::Korg).unwrap();
         let names: Vec<_> = v["result"]["tools"]
             .as_array()
@@ -477,7 +510,7 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["get_item"]);
+        assert_eq!(names, ["get_item", "create_work_item"]);
     }
 
     #[test]

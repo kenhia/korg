@@ -19,10 +19,23 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::from_env()?;
     let listen = config.listen;
+    // Every open door's upstream, not only korg's: a klams door whose
+    // `KORG_GATE_UPSTREAM_KLAMS` did not take is visible on the first line.
+    let upstreams = config
+        .doors()
+        .map(|d| {
+            format!(
+                "{}={}",
+                d.name(),
+                config.upstream_for(d).expect("open door")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
     tracing::info!(
         %listen,
         resource = %config.resource(),
-        upstream = %config.upstream,
+        upstreams,
         "korg-gate starting"
     );
     let app = router(Arc::new(Gate::new(config)?));
