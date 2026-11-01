@@ -8,6 +8,12 @@
 //! when a new read-shaped tool appears that this list has not ruled on — so the
 //! decision is forced, not forgotten.
 //!
+//! klams's door (sprint 094) has its own list, and since klams has no naming
+//! rule to lean on, its forcing test is stricter: every tool in klams's
+//! committed catalogue (`tests/klams_tools.json`) must be in
+//! [`KLAMS_READ_TOOLS`] or [`KLAMS_REFUSED_TOOLS`], so a tool klams adds fails
+//! the build until somebody rules on it.
+//!
 //! **JSON-RPC methods** are the MCP lifecycle and the two tool methods. Nothing
 //! else — resources, prompts, completion, logging, sampling responses — passes.
 
@@ -42,11 +48,40 @@ pub const READ_TOOLS: &[&str] = &[
     "work_item_flow",
 ];
 
-/// JSON-RPC methods the gate forwards.
+/// Read-only klams tools exposed through the gate's klams door (WI 4293).
+/// Sorted; keep it that way.
+pub const KLAMS_READ_TOOLS: &[&str] = &[
+    "event_search",
+    "memory_get",
+    "memory_related",
+    "memory_search",
+];
+
+/// klams tools ruled *out* of the klams door: every write, and identity
+/// registration. Not consulted at runtime — anything not in
+/// [`KLAMS_READ_TOOLS`] is refused — but the catalogue test needs it to tell a
+/// tool somebody ruled on from one nobody has seen yet. Sorted.
+pub const KLAMS_REFUSED_TOOLS: &[&str] = &[
+    "dissent_propose",
+    "memory_add",
+    "memory_append_event",
+    "memory_delete",
+    "memory_supersede",
+    "memory_update",
+    "register_author",
+];
+
+/// JSON-RPC methods the gate forwards, on every door.
+///
+/// `server/discover` is MCP 2026-07-28's mandatory server method, which a
+/// dual-era client probes before falling back to `initialize`. It is forwarded
+/// and the upstream's own answer stands (WI 4243, option a), so the gate
+/// tracks each upstream's MCP era instead of claiming one for it.
 pub const METHODS: &[&str] = &[
     "initialize",
     "notifications/initialized",
     "ping",
+    "server/discover",
     "tools/list",
     "tools/call",
 ];
@@ -77,6 +112,19 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted, READ_TOOLS);
+    }
+
+    #[test]
+    fn klams_lists_are_sorted_and_disjoint() {
+        for list in [KLAMS_READ_TOOLS, KLAMS_REFUSED_TOOLS] {
+            let mut sorted = list.to_vec();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(sorted, list);
+        }
+        for name in KLAMS_READ_TOOLS {
+            assert!(!KLAMS_REFUSED_TOOLS.contains(name), "{name} is in both");
+        }
     }
 
     #[test]
