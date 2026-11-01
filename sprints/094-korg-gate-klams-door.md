@@ -208,3 +208,17 @@ touched. This sprint ran as a karc leg on kai (`korg-131184`), under oversight.
   `KORG_GATE_UPSTREAM_KLAMS` in krgate's `/etc/korg-gate/env`, deploy, the
   second connector at `<origin>/klams/mcp`, and the phone test. The program's
   claude-duet repo steps (connectors, rulings, test prompts) belong there too.
+
+## Deployed
+
+Nothing deployed from this ship, deliberately, as the overseer's clearance
+said (korg:4297 comment 4261). The declared step is `deploy-kubsdb`, which
+rebuilds the korg-api image (`cargo build --release -p korg-api`, plus the web
+bundle) from `main`. The squash `194d7f2` (PR #100) changed only
+`crates/korg-gate/`, `docs/gate.md`, `deploy/korg-gate/env.example`, the README
+and this record. `git diff d9e1667..194d7f2` is empty for `Cargo.lock`, the root
+`Cargo.toml`, `crates/korg-api`, `korg-core`, `korg-mcp`, `web/`, `contract/`
+and the `Dockerfile`. A rebuild would have published an identical korg-api under
+a new tag, so kubsdb stays on the release recorded in sprints 092 and 093. The
+gate itself goes to krgate by hand in the ops half (WI 4294), per
+`docs/gate.md`. Until then, krgate runs the sprint-093 gate with one door.
