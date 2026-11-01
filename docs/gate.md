@@ -1,7 +1,7 @@
-# korg-gate — the read-only public front door
+# korg-gate — the public front door
 
 `korg-gate` lets **Claude Duet** (and claude.ai on the web, Desktop and mobile)
-read korg, and klams. Those clients reach tools only through *custom
+read korg and klams, and make a ruled set of korg writes. Those clients reach tools only through *custom
 connectors*, which must be public HTTPS. korg and klams are tailnet-only, so
 something has to stand between the two. That is this crate (`crates/korg-gate`,
 one binary).
@@ -10,6 +10,9 @@ one binary).
   public internet" decision. **Build:** WI 4147. **Stand-up:** WI 4234.
 - **The klams door:** Ken's decision of 2026-10-31, recorded in korg+ GP-17.
   **Build:** WI 4293 (sprint 094). **Stand-up:** WI 4294.
+- **korg writes:** Ken's ruling of 2026-10-31 (WI 4244, comment 4264), recorded
+  in korg+ GP-17. **Build:** sprint 095 (proposal korg:4298, code half). The ops
+  half is below, under [Turning the writes on](#turning-the-writes-on).
 - **korg-api and klams do not change.** The gate is a client of each one's
   `/mcp`, the same as any fleet agent.
 - **It does not ship with the kubsdb image.** It runs on its own Pi, on an
@@ -39,7 +42,7 @@ scope, and its tool allowlist:
 
 | Door | Path | Upstream | `resource` | Scope | Tools |
 |---|---|---|---|---|---|
-| korg | `/mcp` | `KORG_GATE_UPSTREAM` | `KORG_GATE_PUBLIC_URL`, byte for byte | `korg:read` | `READ_TOOLS` (26) |
+| korg | `/mcp` | `KORG_GATE_UPSTREAM` | `KORG_GATE_PUBLIC_URL`, byte for byte | `korg:read` | `READ_TOOLS` (26) + `WRITE_TOOLS` (8) |
 | klams | `/klams/mcp` | `KORG_GATE_UPSTREAM_KLAMS` | `<origin>/klams/mcp` | `klams:read` | `KLAMS_READ_TOOLS` (4) |
 
 **Every token is bound to its door** (RFC 8707). A sign-in names its door by
@@ -52,13 +55,14 @@ exception is a request for `klams:read` alone, which is klams's: that is the
 scope its metadata advertises, so a client that skips RFC 8707 still lands at
 the right door.
 
-**The korg door is unchanged.** Its URL, metadata, 401, sign-in page, token
-responses and tool list are what they were before klams existed. The
+**The korg door is unchanged apart from its tools.** Its URL, metadata, 401,
+sign-in page and token responses are what they were before klams existed; its
+tool list gained the write set in sprint 095, and nothing else did. The
 authorization-server metadata still lists only `korg:read`. That document is
 shared by both doors, RFC 8414 lets a server leave scopes unadvertised, and a
 client takes each door's scope from that door's own metadata. Refresh tokens
 issued before sprint 094 carry no door in `state.json` and read as korg's.
-Sprint 094 proved all of this against the previous binary on one state
+Sprints 094 and 095 each proved this against the previous binary on one state
 directory.
 
 **Adding a door** is a code change on purpose, because each door publishes
@@ -71,11 +75,11 @@ the decision in GP-17. The deploy is an ops item: a tailnet grant from
 restart, and a second connector.
 
 **Rolling back** to a one-door binary: it ignores the `door` field, so a
-klams refresh token would mint korg tokens. Both are read-only and behind the
-same passphrase, but to keep the doors apart, stop the unit, delete
+klams refresh token would mint korg tokens. Both are behind the same
+passphrase, but to keep the doors apart, stop the unit, delete
 `/var/lib/korg-gate/state.json`, and reconnect.
 
-**Read-only, deny by default.** Only the MCP lifecycle methods (`initialize`,
+**Deny by default.** Only the MCP lifecycle methods (`initialize`,
 `notifications/initialized`, `ping`, `server/discover`, `tools/list`,
 `tools/call`) pass, on either door. A `tools/call` passes only for a tool on
 that door's list (`crates/korg-gate/src/allowlist.rs`), and `tools/list` is
@@ -87,7 +91,8 @@ klams's empty priming event. Batches are refused.
 **`server/discover`** is MCP 2026-07-28's mandatory server method. A dual-era
 client (claude.ai's connector) probes with it before falling back to
 `initialize`. The gate forwards it and the upstream's own answer stands
-(WI 4243). Both upstreams run rmcp 3.1.2, which implements 2026-07-28, so a
+(WI 4243), and leaves an INFO `forwarded … method="server/discover"` line in the
+journal, as a `tools/call` does. Both upstreams run rmcp 3.1.2, which implements 2026-07-28, so a
 well-formed probe gets the real version list back. 2026-07-28 also routes by
 the `Mcp-Method` and `Mcp-Name` request headers. The gate never forwards the
 caller's copies. If the caller sends one, it must agree with the body the gate
@@ -96,12 +101,68 @@ at the gate with `-32020` on an HTTP 400, and an agreeing header is forwarded as
 the gate's own value. A caller that sends neither (every 2025-era client) is
 forwarded exactly as before.
 
-The allowlist is explicit names, not a prefix rule. The `allowlist` test suite
-reads korg's real catalogue (`crates/korg-mcp/tests/tools_schema.json`). It fails
-when korg adds a read-shaped tool (`get_*`, `list_*`) the list has not ruled on,
-and when the list names a tool korg no longer serves. **Adding a tool to
-`READ_TOOLS` publishes it to the internet.** Do that on purpose. Write access is
-a separate, later decision.
+The allowlist is explicit names, and the korg ruling is total (sprint 095):
+every tool in korg's real catalogue (`crates/korg-mcp/tests/tools_schema.json`)
+must be in `READ_TOOLS`, `WRITE_TOOLS` or `REFUSED_TOOLS`. A tool korg adds fails
+the build until somebody says which, and so does a ruling naming a tool korg no
+longer serves. A read-shaped name (`get_*`, `list_*`) must be a read. **Adding a
+tool to `READ_TOOLS` or `WRITE_TOOLS` publishes it to the internet.** Do that on
+purpose.
+
+### korg writes (sprint 095)
+
+`WRITE_TOOLS`, exactly as Ken ruled (WI 4244, comment 4264), and pinned by a
+test that says widening it is a decision:
+
+| Tool | Why Duet has it |
+|---|---|
+| `add_comment` | Notes on the thread. `origin` is overwritten (below) |
+| `set_awaiting` | Raise and clear the Awaiting Ken lane |
+| `create_work_item`, `update_work_item` | The whole tool, status included |
+| `create_link` | The reading list, from the phone |
+| `relate` | Wire `depends_on`/`covers` while scheduling. `origin` is overwritten |
+| `propose_sprint`, `create_program` | Duet's charter: scheduling the work its scans find |
+
+**Refused by name** (`REFUSED_TOOLS`): `update_proposal` and `update_program`
+(status transitions start and finish sprints, and stay with Ken and the sprint
+skills); `create_handoff`, `update_handoff`; `update_comment`, `delete_comment`;
+`update_link`, `delete_link`, `mark_link_read`; `unrelate`; cards
+(`create_card`, `update_card`); areas and projects (`create_area`,
+`update_area`, `delete_area`, `create_project`, `update_project`); reports
+(`create_report`, `review_report`, `set_report_source`); and schedules
+(`create_schedule`, `update_schedule`, `materialize_schedule`). A refused call is
+a JSON-RPC error and never reaches korg. Widening the set is one allowlist line,
+one test, a GP-17 amendment, and a line in claude-duet's `docs/rulings.md`.
+
+**`origin` is the gate's, not the caller's.** korg records `origin` unverified
+(#1879), so the gate is the only place it can be made true. On the two korg
+tools that carry it, `add_comment` and `relate`, the gate sets
+`arguments.origin` to `claude-duet` before forwarding, whatever the caller sent
+(a missing or `null` `arguments` gets an object; arguments that are not an
+object are refused). It touches no other field and no other tool. For the
+writes without an `origin` field, attribution is the gate's journal, which logs
+every `tools/call` with its tool name, and the `X-Homelab-Agent: claude-duet`
+header on every forwarded request (korg-api does not log it yet: WI 4242).
+
+**The second control is claude.ai's per-tool approval.** The ruling's
+condition is that every write tool stays on **Needs approval** in the
+connector's settings, so each write is Ken's tap on the phone; reads may be
+**Always allow**. That is a client setting Ken owns, not something the gate can
+see or enforce, so it is re-checked in the ops half and after any reconnect.
+
+**OAuth scope: still `korg:read` (option A).** The korg door's one scope keeps
+its name, and the allowlist plus per-tool approval are the controls on writes.
+The name is now inaccurate, and so are the korg metadata's `resource_name`
+(`korg (read-only)`) and the sign-in page's "wants **read-only** access to
+korg". All three are kept byte for byte on purpose: the alternative, a
+`korg:write` scope, would leave every existing token without it, and claude.ai's
+connector flow has no scope picker, so the phone would have to be disconnected
+and signed in again to gain anything a scope check could add. With one owner,
+one passphrase and no second client to tell apart, a scope would separate
+nobody. The existing connector gains the write tools on its next `tools/list`,
+with no re-sign-in.
+
+### klams
 
 klams has no naming rule to lean on, so its test is total. Every tool in
 klams's catalogue, committed at `crates/korg-gate/tests/klams_tools.json`, must
@@ -264,6 +325,22 @@ whatever header it does send.
 From the Pi, `curl -s --max-time 3 http://<any LAN host>` should **fail**. That
 is the UDM network's isolation, and it is what makes a compromised gate a korg
 problem rather than a homelab problem.
+
+## Turning the writes on
+
+The ops half of sprint 095, interactive with Ken (proposal korg:4298):
+
+1. `just gate-pi` on kai; `scp` the binary to krgate, `sudo install -m 0755`
+   it over `/usr/local/bin/korg-gate`, `sudo systemctl restart korg-gate`.
+   The journal's first line names both upstreams
+   (`upstreams="korg=… klams=…"`).
+2. Operator checks above: korg door, klams door and AS metadata unchanged.
+3. In claude.ai → Settings → Connectors → the korg connector, confirm every
+   write tool is **Needs approval**. The existing connector picks the tools up
+   on its next `tools/list`; no reconnect.
+4. From the phone: one real `add_comment` on a work item and one
+   `propose_sprint`. Read both back from the tailnet; the comment's `origin` is
+   `claude-duet`. `journalctl -u korg-gate` shows a `tools/call` line for each.
 
 ## Rotating the passphrase
 

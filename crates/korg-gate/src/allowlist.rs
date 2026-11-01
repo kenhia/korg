@@ -5,8 +5,11 @@
 //! *starts* like a read, and a tool reaching the public internet is a decision
 //! somebody should make on purpose. The `allowlist` test suite reads korg's
 //! real tool catalogue (`crates/korg-mcp/tests/tools_schema.json`) and fails
-//! when a new read-shaped tool appears that this list has not ruled on — so the
-//! decision is forced, not forgotten.
+//! when korg serves a tool that is in none of [`READ_TOOLS`], [`WRITE_TOOLS`]
+//! and [`REFUSED_TOOLS`] — so the decision is forced, not forgotten.
+//!
+//! Sprint 095 (WI 4244) opened the korg door to a ruled set of writes, the
+//! scheduling set Claude Duet needs. Every other korg write is refused by name.
 //!
 //! klams's door (sprint 094) has its own list, and since klams has no naming
 //! rule to lean on, its forcing test is stricter: every tool in klams's
@@ -48,6 +51,61 @@ pub const READ_TOOLS: &[&str] = &[
     "work_item_flow",
 ];
 
+/// korg writes exposed through the gate (WI 4244, ruled by Ken 2026-10-31):
+/// the scheduling set — comment, raise Awaiting Ken, file and update work
+/// items, save a link, wire edges, propose sprints and programs. Widening it is
+/// a decision (korg+ GP-17), not an edit. Sorted; keep it that way.
+pub const WRITE_TOOLS: &[&str] = &[
+    "add_comment",
+    "create_link",
+    "create_program",
+    "create_work_item",
+    "propose_sprint",
+    "relate",
+    "set_awaiting",
+    "update_work_item",
+];
+
+/// korg tools ruled *out* of the korg door (WI 4244's ruling): proposal and
+/// program status changes, handoffs, comment and link edits and deletes,
+/// `unrelate`, cards, areas, projects, reports and schedules. Not consulted at
+/// runtime — anything in neither [`READ_TOOLS`] nor [`WRITE_TOOLS`] is refused
+/// — but the catalogue test needs it to tell a tool somebody ruled on from one
+/// nobody has seen yet. Sorted.
+pub const REFUSED_TOOLS: &[&str] = &[
+    "create_area",
+    "create_card",
+    "create_handoff",
+    "create_project",
+    "create_report",
+    "create_schedule",
+    "delete_area",
+    "delete_comment",
+    "delete_link",
+    "mark_link_read",
+    "materialize_schedule",
+    "review_report",
+    "set_report_source",
+    "unrelate",
+    "update_area",
+    "update_card",
+    "update_comment",
+    "update_handoff",
+    "update_link",
+    "update_program",
+    "update_project",
+    "update_proposal",
+    "update_schedule",
+];
+
+/// The korg write tools that carry korg's self-reported `origin` field
+/// (#1879). The gate overwrites it with [`DUET_ORIGIN`] whatever the caller
+/// sent, so every Duet-written comment and edge says who wrote it.
+pub const ORIGIN_TOOLS: &[&str] = &["add_comment", "relate"];
+
+/// The `origin` the gate stamps on [`ORIGIN_TOOLS`] calls.
+pub const DUET_ORIGIN: &str = "claude-duet";
+
 /// Read-only klams tools exposed through the gate's klams door (WI 4293).
 /// Sorted; keep it that way.
 pub const KLAMS_READ_TOOLS: &[&str] = &[
@@ -86,8 +144,9 @@ pub const METHODS: &[&str] = &[
     "tools/call",
 ];
 
+/// Whether the korg door lets `name` through: a ruled read or a ruled write.
 pub fn tool_allowed(name: &str) -> bool {
-    READ_TOOLS.binary_search(&name).is_ok()
+    READ_TOOLS.binary_search(&name).is_ok() || WRITE_TOOLS.binary_search(&name).is_ok()
 }
 
 pub fn method_allowed(method: &str) -> bool {
@@ -115,6 +174,31 @@ mod tests {
     }
 
     #[test]
+    fn korg_lists_are_sorted_and_disjoint() {
+        for list in [READ_TOOLS, WRITE_TOOLS, REFUSED_TOOLS] {
+            let mut sorted = list.to_vec();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(sorted, list);
+        }
+        for name in READ_TOOLS.iter().chain(WRITE_TOOLS) {
+            assert!(
+                !REFUSED_TOOLS.contains(name),
+                "{name} is allowed and refused"
+            );
+        }
+        for name in WRITE_TOOLS {
+            assert!(!READ_TOOLS.contains(name), "{name} is a read and a write");
+        }
+        for name in ORIGIN_TOOLS {
+            assert!(
+                WRITE_TOOLS.contains(name),
+                "{name} stamps origin but is not a write"
+            );
+        }
+    }
+
+    #[test]
     fn klams_lists_are_sorted_and_disjoint() {
         for list in [KLAMS_READ_TOOLS, KLAMS_REFUSED_TOOLS] {
             let mut sorted = list.to_vec();
@@ -138,7 +222,9 @@ mod tests {
     fn unknown_methods_and_tools_are_refused() {
         assert!(!method_allowed("resources/read"));
         assert!(!method_allowed("tools/Call"));
-        assert!(!tool_allowed("create_work_item"));
+        assert!(tool_allowed("create_work_item"));
+        assert!(!tool_allowed("update_proposal"));
+        assert!(!tool_allowed("create_work_item "));
         assert!(!tool_allowed(""));
         assert!(!tool_allowed("get_work_item "));
     }

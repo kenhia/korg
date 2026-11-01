@@ -736,7 +736,7 @@ async fn a_refresh_token_from_the_pre_094_gate_keeps_working_at_the_korg_door() 
     let listed = h.rpc(access, list.clone()).await.json_value().await;
     assert_eq!(
         listed["result"]["tools"].as_array().unwrap().len(),
-        korg_gate::allowlist::READ_TOOLS.len()
+        korg_gate::allowlist::READ_TOOLS.len() + korg_gate::allowlist::WRITE_TOOLS.len()
     );
     assert_eq!(h.rpc_at("/klams/mcp", access, list).await.status(), 401);
 }
