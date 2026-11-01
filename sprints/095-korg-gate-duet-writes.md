@@ -190,3 +190,42 @@ recorded release.
 The gate itself goes to krgate by hand in the ops half, following
 `docs/gate.md` under "Turning the writes on". Until then, krgate runs the
 sprint-094 gate: two doors, korg reads only.
+
+## Deployed, ops half (korg:4298, 2026-10-31 20:14–20:30 PDT)
+
+Interactive: the overseer session on cleo (deploy, checks, read-back) and Ken
+(approval setting, the prompts). Duet-side account: claude-duet
+`sprints/002-korg-writes-on.md`.
+
+1. **Deploy.** `just gate-pi` on kai from main `32c72f7` (sha256
+   `c92eba4047715f1e…`), scp, `install -m 0755`, `systemctl restart
+   korg-gate`. No env change. First journal line:
+   `upstreams="korg=… klams=…"`. Operator checks: korg metadata
+   `resource_name: "korg"`, klams `"klams (read-only)"`, both doors 401, AS
+   metadata unchanged.
+2. **Approval setting (Ken).** `propose_sprint` set to Requires approval in
+   the korg connector's tool permissions.
+3. **First writes from Duet**, all logged by the gate as `tools/call …
+   door="korg"`: `add_comment` 03:22:25Z → comment 4272 on WI 4244, read back
+   with `origin: "claude-duet"` (the overwrite works in production);
+   `create_work_item` 03:26:03Z → WI 4307 in project claude-duet;
+   `propose_sprint` 03:26:12Z → korg:4308 "Claude Duet writes klams" (Ken's
+   own ask through Duet; a real proposal, stays open for his ruling on the
+   klams write set, outside program korg:4299).
+
+**Finding, filed (claude-duet WI 4309).** `propose_sprint` went through with
+no approval prompt despite the setting. Nothing on this side explains it:
+korg's catalogue (`tools_schema.json`) carries no tool annotations, the gate
+forwards names unchanged, and the gate cannot see a tap. It is a decision
+item for Ken: understand claude.ai's enforcement, then decide whether the
+gate needs a write control of its own. Until ruled, the allowlist and the
+audit trail (gate journal, `origin`) are the controls that hold.
+
+**Era, corrected (WI 4243 comment 4273).** After this deploy korg-api logged
+the korg connector as `2026-07-28` (18 sessions) with a minority
+`2025-11-25` (6), and the new INFO line shows the probe forwarded for both
+clients. The era is renegotiated per new chat or connection, not pinned per
+connector as sprint 094's addendum read it.
+
+**Nit, recorded not filed:** `deploy/korg-gate/korg-gate.service` still has
+`Description=… read-only`; one line for the next korg-gate sprint.
