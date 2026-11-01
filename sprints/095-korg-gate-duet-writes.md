@@ -174,3 +174,19 @@ The third was the overseer's round-1 ruling on comment 4268.
 ## Follow-ups
 
 - None filed.
+
+## Deployed
+
+Nothing was deployed from this ship, on purpose. The overseer's clearance said
+so (korg:4298 comment 4270), and the reason is the same as in sprint 094.
+
+The declared step is `deploy-kubsdb`, which rebuilds the korg-api image from
+`main`. The squash `d671463` (PR #102) changed only `crates/korg-gate/`,
+`docs/gate.md`, the README and this record. `git diff 33a388e..d671463` is
+empty for `Cargo.lock`, the root `Cargo.toml`, `crates/korg-api`, `korg-core`,
+`korg-mcp`, `web/`, `contract/` and the `Dockerfile`. So kubsdb stays on its
+recorded release.
+
+The gate itself goes to krgate by hand in the ops half, following
+`docs/gate.md` under "Turning the writes on". Until then, krgate runs the
+sprint-094 gate: two doors, korg reads only.
