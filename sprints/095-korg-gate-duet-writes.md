@@ -43,12 +43,10 @@ it. Nothing was deployed to krgate. This sprint ran as a karc leg on kai
   client, so a second scope would separate nobody. claude.ai's connector flow
   has no scope picker, so every existing token would lack the new scope and
   the phone would have to be disconnected and signed in again. That would buy
-  nothing a scope check could add. **The name is now inaccurate, on purpose,**
-  and so are two strings kept byte for byte with it: the korg metadata's
-  `resource_name` (`korg (read-only)`) and the sign-in page's "wants
-  **read-only** access to korg". `docs/gate.md` says so. Changing them is a
-  change to the korg door's surface, which the brief ruled out for this slice
-  (flagged on the proposal).
+  nothing a scope check could add. **The scope's name is now inaccurate, on
+  purpose,** and `docs/gate.md` says so. Round 1 also kept two human-facing
+  read-only strings byte for byte and flagged them. The overseer then ruled
+  them a repair in this change (see "Repaired in passing").
 - **The korg door's refusal message changed, and klams's did not.** It said
   "which exposes korg read-only", which is now false. It now says "which
   exposes korg's reads and the ruled write set". It is a JSON-RPC error body
@@ -118,6 +116,20 @@ it. Nothing was deployed to krgate. This sprint ran as a karc leg on kai
      tuple. korg's `tools/list` went from 26 to 34. It added exactly the eight
      and removed none. The `update_proposal` refusal differs only in its
      wording (above).
+
+     **After round 2, rows 1, 2, 14 and 15 of the 22 differ, and that is
+     intended.** They are the two korg metadata forms and the two korg sign-in
+     pages (no `resource`, and korg's). I rebuilt the binary and re-ran the
+     unauthenticated survey only (the overseer ruled the two-binary run
+     unnecessary), then diffed it against the old binary's stored rows. The
+     metadata rows differ only in `resource_name` (`korg (read-only)` →
+     `korg`). The sign-in rows differ only in the sentence ("wants
+     **read-only** access to korg" → "wants access to korg's reads and the
+     ruled write set") and the button (**Allow read access** → **Allow
+     access**). The other 18 rows are still identical, including klams's
+     metadata and sign-in page. So the korg door's intended differences from
+     `33a388e` are four: the 26 → 34 tool list, the refusal wording, the
+     `resource_name`, and the sign-in sentence and button.
   4. **One live write through the new gate:** `add_comment` on korg:4298 with
      `origin: "smoke-sent-this"`. korg stored comment 4267 with origin
      `claude-duet`, read back through the gate with `list_comments`. Its body
@@ -139,7 +151,8 @@ it. Nothing was deployed to krgate. This sprint ran as a karc leg on kai
 
 ## Repaired in passing
 
-Both were ruled on in the ops half of 4297 (WI 4294, comment 4262).
+The first two were ruled on in the ops half of 4297 (WI 4294, comment 4262).
+The third was the overseer's round-1 ruling on comment 4268.
 
 - **The startup log named only korg's upstream.** It now carries
   `upstreams="korg=… klams=…"`, built from the open doors. Seen in the new
@@ -147,8 +160,17 @@ Both were ruled on in the ops half of 4297 (WI 4294, comment 4262).
 - **A forwarded `server/discover` left no INFO line**, unlike `tools/call`.
   It now logs `forwarded client=… door=… method="server/discover"`. Seen in
   the same journal (Verification 5).
+- **korg's door still told humans it was read-only.** This changes no
+  behaviour; the strings are display only. `resource_name` is now `korg`.
+  The sign-in page now reads "wants access to korg's reads and the ruled
+  write set". I also changed the button from **Allow read access** to
+  **Allow access**. The ruling named two strings, but the button is a third
+  false statement on the same page, and the ruling's reason covers it, so I
+  repaired it rather than leaving it. All of klams's strings are unchanged.
+  `tests/flow.rs` pins the new korg strings (and that the korg page no longer
+  says "read-only") and klams's old ones. The proof is the four-row survey
+  diff (Verification 3) and `just check`.
 
 ## Follow-ups
 
-- None filed. The two read-only strings kept for byte-for-byte compatibility
-  are flagged on the proposal for the overseer's ruling, not filed.
+- None filed.

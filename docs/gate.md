@@ -55,9 +55,13 @@ exception is a request for `klams:read` alone, which is klams's: that is the
 scope its metadata advertises, so a client that skips RFC 8707 still lands at
 the right door.
 
-**The korg door is unchanged apart from its tools.** Its URL, metadata, 401,
-sign-in page and token responses are what they were before klams existed; its
-tool list gained the write set in sprint 095, and nothing else did. The
+**The korg door's behaviour is unchanged apart from its tools.** Its URL, 401,
+scopes and token responses are what they were before klams existed. Sprint 095
+gave its tool list the write set, and corrected three human-facing strings that
+had become false: the metadata's `resource_name` is now `korg` (was
+`korg (read-only)`), and the sign-in page now asks for "access to korg's reads
+and the ruled write set" with an **Allow access** button (was "**read-only**
+access" and **Allow read access**). klams's strings still say read-only. The
 authorization-server metadata still lists only `korg:read`. That document is
 shared by both doors, RFC 8414 lets a server leave scopes unadvertised, and a
 client takes each door's scope from that door's own metadata. Refresh tokens
@@ -152,9 +156,7 @@ see or enforce, so it is re-checked in the ops half and after any reconnect.
 
 **OAuth scope: still `korg:read` (option A).** The korg door's one scope keeps
 its name, and the allowlist plus per-tool approval are the controls on writes.
-The name is now inaccurate, and so are the korg metadata's `resource_name`
-(`korg (read-only)`) and the sign-in page's "wants **read-only** access to
-korg". All three are kept byte for byte on purpose: the alternative, a
+The scope's name is now inaccurate, and is kept on purpose: the alternative, a
 `korg:write` scope, would leave every existing token without it, and claude.ai's
 connector flow has no scope picker, so the phone would have to be disconnected
 and signed in again to gain anything a scope check could add. With one owner,

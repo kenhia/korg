@@ -71,6 +71,32 @@ impl Door {
         }
     }
 
+    /// RFC 9728 `resource_name`, a display string. korg's lost "(read-only)"
+    /// when its door gained writes (sprint 095); klams's is still true.
+    pub fn resource_name(self) -> &'static str {
+        match self {
+            Door::Korg => "korg",
+            Door::Klams => "klams (read-only)",
+        }
+    }
+
+    /// What the sign-in page says the client wants, as HTML. klams's is the
+    /// sprint 094 wording, byte for byte.
+    pub fn sign_in_ask(self) -> &'static str {
+        match self {
+            Door::Korg => "access to korg's reads and the ruled write set",
+            Door::Klams => "<strong>read-only</strong> access to klams",
+        }
+    }
+
+    /// The sign-in page's submit button.
+    pub fn sign_in_button(self) -> &'static str {
+        match self {
+            Door::Korg => "Allow access",
+            Door::Klams => "Allow read access",
+        }
+    }
+
     /// RFC 9728 §3.1's path-inserted metadata URL for this door's resource.
     pub fn metadata_path(self) -> String {
         format!("/.well-known/oauth-protected-resource{}", self.path())

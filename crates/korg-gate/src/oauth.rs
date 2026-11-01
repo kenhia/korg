@@ -42,7 +42,7 @@ pub async fn protected_resource(
         "authorization_servers": [app.config.issuer()],
         "bearer_methods_supported": ["header"],
         "scopes_supported": [door.scope()],
-        "resource_name": format!("{} (read-only)", door.name()),
+        "resource_name": door.resource_name(),
     }))
 }
 
@@ -523,15 +523,16 @@ fn sign_in_page(req: &AuthRequest, error: Option<&str>, status: StatusCode) -> R
         status,
         format!(
             "<h1>korg gate</h1>\
-             <p><strong>{}</strong> wants <strong>read-only</strong> access to {}. \
+             <p><strong>{}</strong> wants {}. \
              You will be sent back to <strong>{}</strong>.</p>{error}\
              <form method=\"post\" action=\"/authorize\">{fields}\
              <label for=\"p\">Passphrase</label>\
              <input id=\"p\" name=\"passphrase\" type=\"password\" autocomplete=\"current-password\" autofocus required>\
-             <button type=\"submit\">Allow read access</button></form>",
+             <button type=\"submit\">{}</button></form>",
             escape(who),
-            req.door.name(),
+            req.door.sign_in_ask(),
             escape(&host),
+            req.door.sign_in_button(),
         ),
     )
 }
