@@ -1,0 +1,609 @@
+[
+  {
+    "name": "register_author",
+    "description": "Register the calling agent and obtain an author_id (UUID v7). Optional for bearer-authenticated callers: write tools default to the token's bound author. `repo` accepts an absolute path or a bare repo name.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "agent_name": {
+          "type": "string"
+        },
+        "client_app": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "client_version": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "extra": {
+          "additionalProperties": true,
+          "default": {},
+          "description": "Free-form session metadata.\n\nObject schema for the same reason as `memory_add.payload`\n(sprint 046, WI #850): the class test found this third instance\nthe WI had not spotted. `#[serde(default)]` renders it as\n`{\"default\": null}` — no `type`, so unsendable as an object.\n\nThe default is `{}`, not `null`, so the advertised default does\nnot contradict the advertised type. Behaviour is unchanged: the\nstore already normalizes a null `extra` to `{}` before insert.",
+          "type": "object"
+        },
+        "model": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session_title": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "agent_name"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "memory_add",
+    "description": "Persist a fact or knowledge memory. Set kind=\"fact\" with fact_type + payload, or kind=\"knowledge\" with text (+ optional tags/source_path/repo). author_id defaults to the bearer token's bound author.",
+    "inputSchema": {
+      "$defs": {
+        "FactTypeArg": {
+          "enum": [
+            "UserFact",
+            "TaskFact",
+            "EnvFact"
+          ],
+          "type": "string"
+        },
+        "MemoryAddKind": {
+          "description": "Memory kind discriminator for the flat `memory_add` schema.",
+          "enum": [
+            "fact",
+            "knowledge"
+          ],
+          "type": "string"
+        },
+        "VolatilityArg": {
+          "description": "Declared volatility for knowledge writes (sprint 029, #638 /\nreview F-1.4). `volatile` memories are age-demoted in ranking after\na grace week; `stable` and undeclared memories never decay.",
+          "enum": [
+            "stable",
+            "volatile"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "amends": {
+          "description": "Optional, `fact` only: the id of an existing fact this write\n**amends**. Supply it when you believe a stored fact is now\nwrong and this payload replaces it.\n\nAmending is where the trust policy applies. If the fact you are\namending was written by a more-trusted source than an agent\nproposal, your version does NOT overwrite it: it is recorded as\na dissent for review, and the response comes back with\n`write_path: \"dissent\"` plus a `dissent_id`. If it was written\nat equal or lower trust, the amendment applies and the fact's\nversion bumps.\n\nOmit it to add a new fact. Sprint 031 (#645): this is the MCP\nspelling of the REST `explicit_id` field — without it there was\nno way to express \"I am correcting THAT fact\" over MCP, so the\ndissent path was unreachable from this tool no matter which\nstore method it called.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "author_id": {
+          "default": "00000000-0000-0000-0000-000000000000",
+          "description": "Optional: defaults to the author bound to the caller's bearer\ntoken (WI #62). Pass explicitly to write as a different\nregistered author.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fact_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FactTypeArg"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Required when `kind` is `fact`."
+        },
+        "kind": {
+          "$ref": "#/$defs/MemoryAddKind",
+          "description": "Discriminator: decides which of the remaining fields apply."
+        },
+        "payload": {
+          "additionalProperties": true,
+          "description": "Required when `kind` is `fact`: arbitrary JSON payload.\n\nRendered as an object schema, NOT a bare `Option<serde_json::Value>`\n(sprint 046, WI #850). schemars renders the latter with no `type`\nat all, so no client ever sends an object and the `is_object()`\nguard below refuses every `kind: \"fact\"` call — the same defect\n#309 fixed for `memory_append_event.payload`, applied then to the\none call site instead of to the class.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "repo": {
+          "description": "Optional, `knowledge` only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_path": {
+          "description": "Optional, `knowledge` only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tags": {
+          "description": "Optional, `knowledge` only.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "text": {
+          "description": "Required when `kind` is `knowledge`: the text to embed.\n\nBounded by the embedding model's input length. Oversized text is\nrefused with `PAYLOAD_TOO_LARGE`, whose message names both the\nlimit and what you submitted — split at that size and retry. The\nerror is permanent for that text: it will never carry\n`retry_after_seconds`, and retrying it unchanged always fails.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "volatility": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VolatilityArg"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional, `knowledge` only: declare how this memory ages.\n`volatile` = expected to go stale (IPs, versions, \"not yet on\nX\"); ranked down as it ages. `stable` (or omitted) = never\ndecays."
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "memory_search",
+    "description": "Search memory across facts, knowledge, and events; returns merged results ranked by relevance. Hits are COMPACT: a match-window snippet (<=320 chars) plus an `id` — call `memory_get` with that id for the full record. Pass `full: true` to get whole texts inline instead. Pass `tags` to search *within* a tagged subset rather than the whole corpus — e.g. tags:[\"gotcha\"] for the curated gotchas. Multiple tags are AND.",
+    "inputSchema": {
+      "$defs": {
+        "MemoryKindFilter": {
+          "enum": [
+            "fact",
+            "knowledge",
+            "event"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "full": {
+          "default": null,
+          "description": "Return whole memory texts inline instead of compact snippets.\n\nSprint 046 (WI #1178): compact is the default. Full text cost\n4,491 tokens per answered query on khound's fair suite; the\ncompact contract cost 1,024-1,476 on the same suite with answers\npreserved, and that metric already charges the follow-up read\nwhen a snippet fell short. Default-on is the deliberate call —\na flag nobody passes is a default that never changes anything —\nso this exists for the callers that genuinely want bodies in\nbulk (eval harnesses, exports), not as the ordinary path.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "kinds": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/MemoryKindFilter"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "query": {
+          "type": "string"
+        },
+        "tags": {
+          "default": null,
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "top_k": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "memory_get",
+    "description": "Fetch one memory in full by id — the follow-up read for a `memory_search` hit whose snippet did not carry what you needed. Pass the hit's `id`. Works for facts, knowledge and events alike.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "description": "The memory id, as returned in a `memory_search` hit's `id`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "memory_related",
+    "description": "Find knowledge items semantically related to an existing memory id.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "top_k": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "memory_append_event",
+    "description": "Append an immutable event (deployment, run, signal). author_id defaults to the bearer token's bound author.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "author_id": {
+          "default": "00000000-0000-0000-0000-000000000000",
+          "description": "Optional: defaults to the author bound to the caller's bearer\ntoken (WI #62). Pass explicitly to write as a different\nregistered author.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "category": {
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "description": "Rendered as an object schema, NOT a bare `serde_json::Value` —\nschemars turns the latter into the boolean schema `true`, which\nClaude Code rejects, discarding the whole tool list (WI #309).",
+          "type": "object"
+        },
+        "task_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "category",
+        "payload"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "event_search",
+    "description": "Search events by author/category/window/payload with cursor pagination.",
+    "inputSchema": {
+      "$defs": {
+        "EventOrderInput": {
+          "enum": [
+            "desc",
+            "asc"
+          ],
+          "type": "string"
+        },
+        "StringOrMany": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "UuidOrMany": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "author_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UuidOrMany"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "category": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StringOrMany"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cursor": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "order": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EventOrderInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "payload_match": {
+          "additionalProperties": true,
+          "default": null,
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "since": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "until": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "memory_delete",
+    "description": "Soft-delete a fact or knowledge memory by id (FR-014). Idempotent. Events are append-only. Omit author_id — the delete acts as the author bound to your bearer token. You may delete memories you wrote; deleting another author's memory requires the `manage` scope.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "author_id": {
+          "default": null,
+          "description": "Optional since sprint 025 (#633): the delete is attributed to the\nauthor bound to your bearer token. If supplied it must *equal*\nthat author — passing somebody else's id is the backdoor this\nsprint closed, not a way to act as them.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "memory_supersede",
+    "description": "Replace a stale or wrong agent-authored knowledge memory in one call: writes your replacement text as a new memory and hides the old one behind a superseded_by pointer (restorable via admin). Prefer this over memory_delete + memory_add — it keeps the correction trail. Tags/volatility inherit from the old memory unless given. You may supersede memories you wrote; another author's requires the `manage` scope.",
+    "inputSchema": {
+      "$defs": {
+        "VolatilityArg": {
+          "description": "Declared volatility for knowledge writes (sprint 029, #638 /\nreview F-1.4). `volatile` memories are age-demoted in ranking after\na grace week; `stable` and undeclared memories never decay.",
+          "enum": [
+            "stable",
+            "volatile"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "description": "The memory being replaced (agent-authored knowledge only).",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Tags for the replacement. Omitted = the old memory's tags are\ninherited.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "text": {
+          "description": "The replacement text. Embedded and written as a new memory\nauthored by you.",
+          "type": "string"
+        },
+        "volatility": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VolatilityArg"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Volatility declaration for the replacement. Omitted = inherited\nfrom the old memory."
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "memory_update",
+    "description": "Edit an agent-authored knowledge memory in place (text, tags, and/or volatility); the id stays stable and text changes re-embed. For typos and small amendments — use memory_supersede when the old statement was wrong and the trail matters. You may update memories you wrote; another author's requires the `manage` scope.",
+    "inputSchema": {
+      "$defs": {
+        "VolatilityArg": {
+          "description": "Declared volatility for knowledge writes (sprint 029, #638 /\nreview F-1.4). `volatile` memories are age-demoted in ranking after\na grace week; `stable` and undeclared memories never decay.",
+          "enum": [
+            "stable",
+            "volatile"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "description": "The memory to edit (agent-authored knowledge only).",
+          "type": "string"
+        },
+        "tags": {
+          "description": "New tag set (replaces the old set). Omitted = unchanged.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "text": {
+          "description": "New text. Omitted = unchanged. Re-embeds when present.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "volatility": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VolatilityArg"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "New volatility declaration. Omitted = unchanged."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "dissent_propose",
+    "description": "File a dissent against a live canonical fact (proposed correction + reason). Lands as a pending AgentProposal a human promotes or discards over the dissents endpoints.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "author_id": {
+          "default": "00000000-0000-0000-0000-000000000000",
+          "description": "Optional: defaults to the author bound to the caller's bearer\ntoken (WI #62). Pass explicitly to write as a different\nregistered author.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "contradicting_memory_id": {
+          "default": null,
+          "description": "Optional: the memory (fact/knowledge/event id) that conflicts\nwith `fact_id`. Recorded for the human reviewer; not validated\nagainst the store.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fact_id": {
+          "description": "The canonical fact being disputed; must exist and be live.",
+          "type": "string"
+        },
+        "proposed_payload": {
+          "additionalProperties": true,
+          "description": "The corrected payload — same shape as the fact type's payload.\nPromoting the dissent overwrites the fact with this verbatim.\n\nObject schema, not a bare `serde_json::Value` (sprint 046, WI\n#850) — see the note on `memory_add.payload`.",
+          "type": "object"
+        },
+        "reason": {
+          "description": "Why the proposer believes the fact is wrong (1..=2000 chars).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fact_id",
+        "proposed_payload",
+        "reason"
+      ],
+      "type": "object"
+    }
+  }
+]

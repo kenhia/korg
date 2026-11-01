@@ -3,8 +3,15 @@
 //! Shaped by Claude's connector contract
 //! (<https://claude.com/docs/connectors/building/authentication.md>): DCR with
 //! a public client, S256 PKCE advertised and enforced, a form-urlencoded token
-//! endpoint, rotating refresh tokens, and `invalid_grant` for a dead one. One
-//! scope, `korg:read`, because read is all the gate ever grants.
+//! endpoint, rotating refresh tokens, and `invalid_grant` for a dead one.
+//!
+//! One authorization server for every door (sprint 094): one issuer (the
+//! origin), one passphrase, one client table. What differs per door is the
+//! `resource` and its one read scope (`korg:read`, `klams:read`), and every
+//! code and token is bound to the door it was issued for. A request names its
+//! door by `resource` (RFC 8707, which claude.ai sends); one that names none
+//! is korg's, as every request was before klams had a door — unless it asks
+//! for `klams:read` alone, the scope the klams door's metadata advertises.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -12,6 +19,7 @@ use std::net::SocketAddr;
 use axum::extract::{ConnectInfo, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::Extension;
 use axum::{Form, Json};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -19,19 +27,22 @@ use subtle::ConstantTimeEq;
 use url::Url;
 
 use crate::config::CLAUDE_CALLBACK;
+use crate::door::Door;
 use crate::store::{Gate as Lock, GrantError, RegisterError};
 use crate::AppState;
 
-pub const SCOPE: &str = "korg:read";
 const MAX_CLIENT_NAME: usize = 120;
 
-pub async fn protected_resource(State(app): State<AppState>) -> Json<Value> {
+pub async fn protected_resource(
+    State(app): State<AppState>,
+    Extension(door): Extension<Door>,
+) -> Json<Value> {
     Json(json!({
-        "resource": app.config.resource(),
+        "resource": app.config.resource_for(door),
         "authorization_servers": [app.config.issuer()],
         "bearer_methods_supported": ["header"],
-        "scopes_supported": [SCOPE],
-        "resource_name": "korg (read-only)",
+        "scopes_supported": [door.scope()],
+        "resource_name": format!("{} (read-only)", door.name()),
     }))
 }
 
@@ -47,8 +58,12 @@ pub async fn server_metadata(State(app): State<AppState>) -> Json<Value> {
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
         // `offline_access` listed so Claude asks for it and expects a refresh
-        // token; the gate issues one on every exchange regardless.
-        "scopes_supported": [SCOPE, "offline_access"],
+        // token; the gate issues one on every exchange regardless. Only korg's
+        // read scope is listed: this document is shared by every door, a client
+        // takes a door's scope from that door's resource metadata, and RFC 8414
+        // lets a server leave scopes unadvertised — so adding a door leaves the
+        // korg connector's view of the server unchanged.
+        "scopes_supported": [Door::Korg.scope(), "offline_access"],
     }))
 }
 
@@ -172,6 +187,9 @@ struct AuthRequest {
     redirect_uri: String,
     code_challenge: String,
     state: Option<String>,
+    door: Door,
+    /// `door`'s resource, carried in the form for any door but korg's.
+    resource: String,
 }
 
 enum AuthRejection {
@@ -221,18 +239,37 @@ fn validate_auth(
     if get("code_challenge_method").as_deref() != Some("S256") {
         return Err(back("invalid_request"));
     }
-    if let Some(resource) = get("resource") {
-        if resource != app.config.resource() {
-            return Err(back("invalid_target"));
-        }
-    }
+    let door = match get("resource") {
+        Some(resource) => match app.config.door_for_resource(&resource) {
+            Some(door) => door,
+            None => return Err(back("invalid_target")),
+        },
+        None => door_by_scope(app, get("scope").as_deref()),
+    };
     Ok(AuthRequest {
         client_id,
         client_name: client.client_name,
         redirect_uri,
         code_challenge,
         state,
+        door,
+        resource: app.config.resource_for(door),
     })
+}
+
+/// The door for a request that named no `resource`: korg, unless the scope
+/// asks for another open door's read scope and not korg's. The fallback for a
+/// client that discovers scopes but omits RFC 8707's parameter; without it
+/// such a client would sign in to klams and be handed a korg token.
+fn door_by_scope(app: &AppState, scope: Option<&str>) -> Door {
+    let asked: Vec<&str> = scope.unwrap_or("").split_whitespace().collect();
+    if asked.contains(&Door::Korg.scope()) {
+        return Door::Korg;
+    }
+    app.config
+        .doors()
+        .find(|d| asked.contains(&d.scope()))
+        .unwrap_or(Door::Korg)
 }
 
 fn redirect_with(base: &str, pairs: &[(&str, &str)], state: Option<&str>) -> Response {
@@ -294,12 +331,12 @@ pub async fn authorize_submit(
         return sign_in_page(&req, Some("Wrong passphrase."), StatusCode::UNAUTHORIZED);
     }
     app.store.sign_in_succeeded();
-    tracing::info!(%ip, client = %short(&req.client_id), "sign-in succeeded");
+    tracing::info!(%ip, client = %short(&req.client_id), door = req.door.name(), "sign-in succeeded");
     let code = app.store.issue_code(
         &req.client_id,
         &req.redirect_uri,
         &req.code_challenge,
-        SCOPE,
+        req.door,
     );
     redirect_with(&req.redirect_uri, &[("code", &code)], req.state.as_deref())
 }
@@ -323,15 +360,19 @@ pub async fn token(
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let get = |k: &str| form.get(k).map(String::as_str).filter(|v| !v.is_empty());
-    if let Some(resource) = get("resource") {
-        if resource != app.config.resource() {
-            return oauth_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_target",
-                "unknown resource",
-            );
-        }
-    }
+    let resource = match get("resource") {
+        Some(resource) => match app.config.door_for_resource(resource) {
+            Some(door) => Some(door),
+            None => {
+                return oauth_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_target",
+                    "unknown resource",
+                )
+            }
+        },
+        None => None,
+    };
     let result = match get("grant_type") {
         Some("authorization_code") => {
             let (Some(code), Some(redirect_uri), Some(client_id), Some(verifier)) = (
@@ -347,7 +388,7 @@ pub async fn token(
                 );
             };
             app.store
-                .exchange_code(code, client_id, redirect_uri, verifier)
+                .exchange_code(code, client_id, redirect_uri, verifier, resource)
         }
         Some("refresh_token") => {
             let Some(refresh) = get("refresh_token") else {
@@ -357,7 +398,7 @@ pub async fn token(
                     "refresh_token is required",
                 );
             };
-            app.store.refresh(refresh, get("client_id"))
+            app.store.refresh(refresh, get("client_id"), resource)
         }
         _ => {
             return oauth_error(
@@ -380,6 +421,14 @@ pub async fn token(
             resp.headers_mut()
                 .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
             resp
+        }
+        Ok(Err(GrantError::WrongResource)) => {
+            tracing::warn!(reason = ?GrantError::WrongResource, "token request refused");
+            oauth_error(
+                StatusCode::BAD_REQUEST,
+                "invalid_target",
+                "the grant was not issued for that resource",
+            )
         }
         Ok(Err(why)) => {
             tracing::warn!(reason = ?why, "token request refused");
@@ -462,6 +511,11 @@ fn sign_in_page(req: &AuthRequest, error: Option<&str>, status: StatusCode) -> R
     if let Some(s) = &req.state {
         fields += &hidden("state", s);
     }
+    // The door must survive the round trip through the form. korg's needs no
+    // field — a POST without one is korg's — so its page is what it always was.
+    if req.door != Door::Korg {
+        fields += &hidden("resource", &req.resource);
+    }
     let error = error
         .map(|e| format!("<p class=\"err\">{}</p>", escape(e)))
         .unwrap_or_default();
@@ -469,13 +523,14 @@ fn sign_in_page(req: &AuthRequest, error: Option<&str>, status: StatusCode) -> R
         status,
         format!(
             "<h1>korg gate</h1>\
-             <p><strong>{}</strong> wants <strong>read-only</strong> access to korg. \
+             <p><strong>{}</strong> wants <strong>read-only</strong> access to {}. \
              You will be sent back to <strong>{}</strong>.</p>{error}\
              <form method=\"post\" action=\"/authorize\">{fields}\
              <label for=\"p\">Passphrase</label>\
              <input id=\"p\" name=\"passphrase\" type=\"password\" autocomplete=\"current-password\" autofocus required>\
              <button type=\"submit\">Allow read access</button></form>",
             escape(who),
+            req.door.name(),
             escape(&host),
         ),
     )

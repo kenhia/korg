@@ -11,6 +11,8 @@ use std::time::Duration;
 use anyhow::{bail, Context};
 use url::Url;
 
+use crate::door::Door;
+
 /// The one redirect URI the gate will ever register or send a code to: the
 /// callback shared by claude.ai on the web, Desktop and mobile. Claude Code's
 /// loopback redirect is deliberately *not* accepted — the gate exists for Duet.
@@ -30,6 +32,10 @@ pub struct Config {
     pub public_url: Url,
     /// korg-api's MCP endpoint, e.g. `https://kubsdb.example.ts.net:5674/mcp`.
     pub upstream: Url,
+    /// klams's MCP endpoint, e.g. `https://kubs0.example.ts.net:7777/mcp`.
+    /// Unset means the klams door does not exist: its paths are 404s and no
+    /// token can be issued for it.
+    pub klams_upstream: Option<Url>,
     /// The owner's sign-in passphrase.
     pub passphrase: String,
     /// Where registered clients and refresh tokens persist across restarts.
@@ -57,12 +63,17 @@ impl Config {
         let state_dir = std::env::var("KORG_GATE_STATE_DIR")
             .context("KORG_GATE_STATE_DIR is required")?
             .into();
+        let klams_upstream = match std::env::var("KORG_GATE_UPSTREAM_KLAMS") {
+            Ok(v) if !v.is_empty() => Some(v.parse().context("KORG_GATE_UPSTREAM_KLAMS")?),
+            _ => None,
+        };
         let client_ip_header = std::env::var("KORG_GATE_CLIENT_IP_HEADER")
             .unwrap_or_else(|_| "x-forwarded-for".to_string());
         let config = Self {
             listen,
             public_url: public_url.parse().context("KORG_GATE_PUBLIC_URL")?,
             upstream: upstream.parse().context("KORG_GATE_UPSTREAM")?,
+            klams_upstream,
             passphrase,
             state_dir,
             client_ip_header,
@@ -105,9 +116,38 @@ impl Config {
         self.public_url.origin().ascii_serialization()
     }
 
-    /// The `resource` value: the connector URL, byte for byte.
+    /// The korg door's `resource` value: the connector URL, byte for byte.
     pub fn resource(&self) -> String {
         self.public_url.as_str().to_string()
+    }
+
+    /// A door's `resource`. korg's is the configured connector URL exactly as
+    /// it always was; every other door's is the issuer plus its path.
+    pub fn resource_for(&self, door: Door) -> String {
+        match door {
+            Door::Korg => self.resource(),
+            _ => self.endpoint(door.path()),
+        }
+    }
+
+    /// The upstream a door proxies to, if the door is open.
+    pub fn upstream_for(&self, door: Door) -> Option<&Url> {
+        match door {
+            Door::Korg => Some(&self.upstream),
+            Door::Klams => self.klams_upstream.as_ref(),
+        }
+    }
+
+    /// The doors this gate serves, korg first.
+    pub fn doors(&self) -> impl Iterator<Item = Door> + '_ {
+        Door::ALL
+            .into_iter()
+            .filter(|d| self.upstream_for(*d).is_some())
+    }
+
+    /// The open door whose `resource` is exactly `resource`.
+    pub fn door_for_resource(&self, resource: &str) -> Option<Door> {
+        self.doors().find(|d| self.resource_for(*d) == resource)
     }
 
     pub fn endpoint(&self, path: &str) -> String {

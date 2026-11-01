@@ -1,5 +1,7 @@
 //! The whole OAuth flow, end to end, the way claude.ai drives it — and the
-//! proxied read it buys (WI 4147's code-half Done list).
+//! proxied read it buys (WI 4147's code-half Done list). Every test here runs
+//! with the klams door open too (sprint 094), so the korg-door tests are also
+//! the proof that adding it changed nothing at `/mcp`.
 
 mod common;
 
@@ -336,4 +338,405 @@ async fn clients_and_refresh_tokens_survive_a_gate_restart() {
     let state: Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(state["clients"].as_object().unwrap().len(), 1);
     assert_eq!(state["refresh"].as_object().unwrap().len(), 1);
+}
+
+// ---- Sprint 094: `server/discover`, and the klams door ----
+
+#[tokio::test]
+async fn server_discover_is_forwarded_and_the_upstream_answer_stands() {
+    // WI 4243, option (a): the gate admits MCP 2026-07-28's mandatory probe and
+    // lets each upstream answer it, so it tracks the upstream's MCP era rather
+    // than claiming one. Both upstreams run rmcp 3.1.2, which implements
+    // 2026-07-28: a probe without `Mcp-Method` gets its header error, and one
+    // with it gets the real answer — the gate adds and removes nothing.
+    assert!(korg_gate::allowlist::method_allowed("server/discover"));
+    let h = Harness::start().await;
+    let (_, token, _) = h.access_token().await;
+    let probe = json!({"jsonrpc":"2.0","id":"d1","method":"server/discover","params":{}});
+
+    let resp = h.rpc(&token, probe.clone()).await;
+    assert_eq!(resp.json_value().await, missing_mcp_method(json!("d1")));
+    let body = h
+        .rpc_with(
+            "/mcp",
+            &token,
+            probe.clone(),
+            &[("mcp-method", "server/discover")],
+        )
+        .await
+        .json_value()
+        .await;
+    assert_eq!(
+        body["result"]["supportedVersions"],
+        json!(SUPPORTED_VERSIONS)
+    );
+    {
+        let seen = h.seen.0.lock().unwrap();
+        assert_eq!(seen.len(), 2, "both probes reached korg");
+        let (headers, msg) = seen.last().unwrap();
+        assert_eq!(msg, &probe);
+        assert_eq!(headers["mcp-method"], "server/discover");
+        assert_eq!(headers["x-homelab-agent"], "claude-duet");
+    }
+
+    // Same rule on the klams door.
+    let (_, token, _) = h.klams_token().await;
+    let text = h
+        .rpc_with(
+            "/klams/mcp",
+            &token,
+            probe.clone(),
+            &[("mcp-method", "server/discover")],
+        )
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(text.contains("supportedVersions"), "{text}");
+    assert_eq!(h.klams_seen.0.lock().unwrap().last().unwrap().1, probe);
+}
+
+#[tokio::test]
+async fn routing_headers_are_the_gates_own_and_must_agree_with_the_body() {
+    // 2026-07-28 routes by `Mcp-Method` / `Mcp-Name` headers. Forwarding the
+    // caller's would let the header and the checked body disagree, so the
+    // gate refuses a mismatch itself and forwards values derived from the body.
+    let h = Harness::start().await;
+    let (_, token, _) = h.access_token().await;
+    let call = json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+                      "params":{"name":"get_item","arguments":{}}});
+    for (extra, why) in [
+        (
+            vec![("mcp-method", "tools/list")],
+            "Mcp-Method header `tools/list` does not match body method `tools/call`",
+        ),
+        (
+            vec![("mcp-method", "tools/call"), ("mcp-name", "delete_area")],
+            "Mcp-Name header `delete_area` does not match body value `get_item`",
+        ),
+    ] {
+        let resp = h.rpc_with("/mcp", &token, call.clone(), &extra).await;
+        assert_eq!(resp.status(), 400);
+        let body = resp.json_value().await;
+        assert_eq!(body["id"], 1);
+        assert_eq!(body["error"]["code"], -32020);
+        assert_eq!(body["error"]["message"], why);
+    }
+    assert!(
+        h.seen.0.lock().unwrap().is_empty(),
+        "a mismatch reached korg"
+    );
+
+    // Agreeing headers pass, as the gate's own values.
+    let resp = h
+        .rpc_with(
+            "/mcp",
+            &token,
+            call.clone(),
+            &[("mcp-method", "tools/call"), ("mcp-name", "get_item")],
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+    // And a 2025-era call carries neither, exactly as before.
+    h.rpc(&token, call).await;
+    let seen = h.seen.0.lock().unwrap();
+    assert_eq!(seen[0].0["mcp-method"], "tools/call");
+    assert_eq!(seen[0].0["mcp-name"], "get_item");
+    assert!(seen[1].0.get("mcp-method").is_none());
+    assert!(seen[1].0.get("mcp-name").is_none());
+}
+
+#[tokio::test]
+async fn klams_door_full_flow_then_a_read_reaches_klams_stamped() {
+    let h = Harness::start().await;
+    let resource = h.klams_resource();
+
+    // 1. The 401 points at the klams door's own metadata, with its scope.
+    let resp = h
+        .http
+        .post(h.url("/klams/mcp"))
+        .body(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    assert_eq!(
+        resp.headers()["www-authenticate"].to_str().unwrap(),
+        format!(
+            "Bearer resource_metadata=\"{}/.well-known/oauth-protected-resource/klams/mcp\", \
+             scope=\"klams:read\"",
+            h.base
+        )
+    );
+
+    // 2. Its metadata: its own resource, the same single issuer.
+    let prm: Value = h
+        .http
+        .get(h.url("/.well-known/oauth-protected-resource/klams/mcp"))
+        .send()
+        .await
+        .unwrap()
+        .json_value()
+        .await;
+    assert_eq!(prm["resource"], resource);
+    assert_eq!(prm["authorization_servers"], json!([h.base]));
+    assert_eq!(prm["scopes_supported"], json!(["klams:read"]));
+    assert_eq!(prm["resource_name"], "klams (read-only)");
+
+    // 3. The sign-in page names klams and carries the resource to the POST.
+    let client_id = h.register().await;
+    let verifier = "dBjftJeZ4CVP-mJ92K1-AlUQZsHBk3vSqyWjeuQ0MKc";
+    let challenge = pkce_s256(verifier);
+    let html = h
+        .http
+        .get(h.url("/authorize"))
+        .query(&[
+            ("response_type", "code"),
+            ("client_id", &client_id),
+            ("redirect_uri", CALLBACK),
+            ("code_challenge", &challenge),
+            ("code_challenge_method", "S256"),
+            ("state", "st-123"),
+            ("scope", "klams:read offline_access"),
+            ("resource", &resource),
+        ])
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(html.contains("read-only</strong> access to klams."));
+    assert!(html.contains(&format!(
+        "<input type=\"hidden\" name=\"resource\" value=\"{resource}\">"
+    )));
+
+    // 4. Sign in and exchange, both naming the klams resource.
+    let code = code_from(
+        &h.sign_in_with(
+            &client_id,
+            &challenge,
+            PASSPHRASE,
+            &[("resource", &resource)],
+        )
+        .await,
+    );
+    let (status, tokens) = h
+        .token(&[
+            ("grant_type", "authorization_code"),
+            ("code", &code),
+            ("redirect_uri", CALLBACK),
+            ("client_id", &client_id),
+            ("code_verifier", verifier),
+            ("resource", &resource),
+        ])
+        .await;
+    assert_eq!(status, 200, "{tokens}");
+    assert_eq!(tokens["scope"], "klams:read");
+    let access = tokens["access_token"].as_str().unwrap();
+
+    // 5. A read reaches klams, stamped, without the gate's token; klams's SSE
+    //    answer and session header come back.
+    let resp = h
+        .rpc_at(
+            "/klams/mcp",
+            access,
+            json!({"jsonrpc":"2.0","id":7,"method":"tools/call",
+                   "params":{"name":"memory_search","arguments":{"query":"kaed"}}}),
+        )
+        .await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.headers()["mcp-session-id"], "klams-session");
+    assert!(resp.text().await.unwrap().contains("called memory_search"));
+    {
+        let seen = h.klams_seen.0.lock().unwrap();
+        let (headers, msg) = seen.last().expect("the read reached klams");
+        assert_eq!(headers["x-homelab-agent"], "claude-duet");
+        assert!(headers.get("authorization").is_none());
+        assert_eq!(msg["params"]["name"], "memory_search");
+    }
+    assert!(
+        h.seen.0.lock().unwrap().is_empty(),
+        "klams traffic reached korg"
+    );
+}
+
+#[tokio::test]
+async fn a_token_opens_only_the_door_it_was_issued_for() {
+    let h = Harness::start().await;
+    let (_, korg, _) = h.access_token().await;
+    let (_, klams, _) = h.klams_token().await;
+    let list = json!({"jsonrpc":"2.0","id":1,"method":"tools/list"});
+
+    let resp = h.rpc_at("/klams/mcp", &korg, list.clone()).await;
+    assert_eq!(resp.status(), 401, "a korg token opened the klams door");
+    assert!(resp.headers()["www-authenticate"]
+        .to_str()
+        .unwrap()
+        .contains("/.well-known/oauth-protected-resource/klams/mcp"));
+    let resp = h.rpc(&klams, list.clone()).await;
+    assert_eq!(resp.status(), 401, "a klams token opened the korg door");
+    assert_eq!(
+        resp.headers()["www-authenticate"].to_str().unwrap(),
+        format!(
+            "Bearer resource_metadata=\"{}/.well-known/oauth-protected-resource\"",
+            h.base
+        )
+    );
+    for method in ["GET", "DELETE"] {
+        let resp = h
+            .http
+            .request(method.parse().unwrap(), h.url("/klams/mcp"))
+            .bearer_auth(&korg)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 401, "{method}");
+    }
+    assert!(h.seen.0.lock().unwrap().is_empty());
+    assert!(h.klams_seen.0.lock().unwrap().is_empty());
+
+    // Each still works at its own door.
+    assert_eq!(h.rpc(&korg, list.clone()).await.status(), 200);
+    assert_eq!(h.rpc_at("/klams/mcp", &klams, list).await.status(), 200);
+}
+
+#[tokio::test]
+async fn refresh_keeps_the_door_and_refuses_another_resource_without_spending_the_token() {
+    let h = Harness::start().await;
+    let (client_id, _, refresh) = h.klams_token().await;
+    let korg_resource = format!("{}/mcp", h.base);
+
+    let (status, body) = h
+        .token(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", &refresh),
+            ("client_id", &client_id),
+            ("resource", &korg_resource),
+        ])
+        .await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (400, Some("invalid_target"))
+    );
+
+    // Still live: no resource named, and the grant's own door is kept.
+    let (status, rotated) = h
+        .token(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", &refresh),
+            ("client_id", &client_id),
+        ])
+        .await;
+    assert_eq!(status, 200, "{rotated}");
+    assert_eq!(rotated["scope"], "klams:read");
+    let access = rotated["access_token"].as_str().unwrap();
+    let list = json!({"jsonrpc":"2.0","id":1,"method":"tools/list"});
+    assert_eq!(
+        h.rpc_at("/klams/mcp", access, list.clone()).await.status(),
+        200
+    );
+    assert_eq!(h.rpc(access, list).await.status(), 401);
+}
+
+#[tokio::test]
+async fn a_sign_in_without_a_resource_takes_its_door_from_the_scope() {
+    let h = Harness::start().await;
+    let list = json!({"jsonrpc":"2.0","id":1,"method":"tools/list"});
+    // A client that read the klams door's metadata but omits RFC 8707.
+    let (_, token, _) = h
+        .access_token_with(&[("scope", "klams:read offline_access")])
+        .await;
+    assert_eq!(
+        h.rpc_at("/klams/mcp", &token, list.clone()).await.status(),
+        200
+    );
+    // Asking for both is korg's, as is asking for nothing (the pre-094 rule).
+    for scope in ["korg:read klams:read", ""] {
+        let (_, token, _) = h.access_token_with(&[("scope", scope)]).await;
+        assert_eq!(h.rpc(&token, list.clone()).await.status(), 200, "{scope:?}");
+    }
+}
+
+#[tokio::test]
+async fn without_a_klams_upstream_the_klams_door_does_not_exist() {
+    let h = Harness::start_with(Options {
+        klams: false,
+        state_dir: None,
+    })
+    .await;
+    for path in [
+        "/klams/mcp",
+        "/.well-known/oauth-protected-resource/klams/mcp",
+    ] {
+        let resp = h.http.get(h.url(path)).send().await.unwrap();
+        assert_eq!(resp.status(), 404, "{path}");
+    }
+    let client_id = h.register().await;
+    let resp = h
+        .http
+        .get(h.url("/authorize"))
+        .query(&[
+            ("response_type", "code"),
+            ("client_id", &client_id),
+            ("redirect_uri", CALLBACK),
+            ("code_challenge", "x"),
+            ("code_challenge_method", "S256"),
+            ("resource", &h.klams_resource()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.headers()["location"]
+        .to_str()
+        .unwrap()
+        .contains("error=invalid_target"));
+    // A scope alone cannot open a door that is not there.
+    let (_, token, _) = h.access_token_with(&[("scope", "klams:read")]).await;
+    let list = json!({"jsonrpc":"2.0","id":1,"method":"tools/list"});
+    assert_eq!(h.rpc(&token, list).await.status(), 200);
+}
+
+#[tokio::test]
+async fn a_refresh_token_from_the_pre_094_gate_keeps_working_at_the_korg_door() {
+    // The state file exactly as the one-door gate wrote it (no `door` field):
+    // the phone's existing connector must refresh and read as before.
+    let dir = temp_state_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let refresh = "a-refresh-token-the-one-door-gate-issued";
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let state = json!({
+        "clients": { "old-client": { "client_name": "Claude",
+                                     "redirect_uris": [CALLBACK], "issued_at": now - 86400 } },
+        "refresh": { korg_gate::store::digest(refresh):
+                     { "client_id": "old-client", "scope": "korg:read", "expires_at": now + 86400 } },
+    });
+    std::fs::write(dir.join("state.json"), state.to_string()).unwrap();
+    let h = Harness::start_with(Options {
+        klams: true,
+        state_dir: Some(dir),
+    })
+    .await;
+
+    let (status, body) = h
+        .token(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh),
+            ("client_id", "old-client"),
+        ])
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["scope"], "korg:read");
+    assert_eq!(body["expires_in"], 3600);
+    let access = body["access_token"].as_str().unwrap();
+    let list = json!({"jsonrpc":"2.0","id":1,"method":"tools/list"});
+    let listed = h.rpc(access, list.clone()).await.json_value().await;
+    assert_eq!(
+        listed["result"]["tools"].as_array().unwrap().len(),
+        korg_gate::allowlist::READ_TOOLS.len()
+    );
+    assert_eq!(h.rpc_at("/klams/mcp", access, list).await.status(), 401);
 }

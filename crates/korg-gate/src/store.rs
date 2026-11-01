@@ -11,6 +11,10 @@
 //!
 //! Tokens are stored as SHA-256 digests, never raw, so the state file is not a
 //! bag of live credentials if it ever leaks.
+//!
+//! Every code, access token and refresh grant is bound to the [`Door`] it was
+//! issued for (RFC 8707). A refresh grant persisted before sprint 094 has no
+//! `door` field and reads as korg's, which is what it was.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -22,6 +26,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::door::Door;
 
 /// Registration is unauthenticated (that is what DCR is), so the client table
 /// is bounded: claude.ai registers afresh on every new connection, and an
@@ -45,6 +51,8 @@ struct RefreshGrant {
     client_id: String,
     scope: String,
     expires_at: u64,
+    #[serde(default)]
+    door: Door,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -58,12 +66,13 @@ struct PendingCode {
     client_id: String,
     redirect_uri: String,
     challenge: String,
-    scope: String,
+    door: Door,
     expires: Instant,
 }
 
 struct AccessGrant {
     client_id: String,
+    door: Door,
     expires: Instant,
 }
 
@@ -112,6 +121,9 @@ pub enum GrantError {
     RedirectMismatch,
     PkceMismatch,
     UnknownRefresh,
+    /// The request named a `resource` the grant was not issued for. On the
+    /// wire this one is `invalid_target` (RFC 8707 §2), not `invalid_grant`.
+    WrongResource,
 }
 
 /// The sign-in lockout's verdict on an attempt, decided *before* the
@@ -276,7 +288,7 @@ impl Store {
         client_id: &str,
         redirect_uri: &str,
         challenge: &str,
-        scope: &str,
+        door: Door,
     ) -> String {
         let code = random_token();
         let mut inner = self.lock();
@@ -288,7 +300,7 @@ impl Store {
                 client_id: client_id.to_string(),
                 redirect_uri: redirect_uri.to_string(),
                 challenge: challenge.to_string(),
-                scope: scope.to_string(),
+                door,
                 expires: now + CODE_TTL,
             },
         );
@@ -297,13 +309,15 @@ impl Store {
 
     /// Exchange an authorization code. The code is consumed whether or not the
     /// exchange succeeds — a code is single-use, and a failed PKCE check is
-    /// exactly the case where it must not get a second try.
+    /// exactly the case where it must not get a second try. `resource`, when
+    /// the request named one, must be the door the code was issued for.
     pub fn exchange_code(
         &self,
         code: &str,
         client_id: &str,
         redirect_uri: &str,
         verifier: &str,
+        resource: Option<Door>,
     ) -> anyhow::Result<Result<Tokens, GrantError>> {
         let mut inner = self.lock();
         let Some(pending) = inner.codes.remove(&digest(code)) else {
@@ -325,17 +339,23 @@ impl Store {
         )) {
             return Ok(Err(GrantError::PkceMismatch));
         }
-        let tokens = self.mint(&mut inner, client_id, &pending.scope);
+        if resource.is_some_and(|d| d != pending.door) {
+            return Ok(Err(GrantError::WrongResource));
+        }
+        let tokens = self.mint(&mut inner, client_id, pending.door);
         self.save(&inner.persisted)?;
         Ok(Ok(tokens))
     }
 
     /// Rotate a refresh token: the old one dies in the same step that mints its
-    /// replacement (OAuth 2.1 for public clients).
+    /// replacement (OAuth 2.1 for public clients). A request naming another
+    /// door's `resource` is refused *without* spending the token: it proves
+    /// nothing about whether the holder is legitimate.
     pub fn refresh(
         &self,
         refresh_token: &str,
         client_id: Option<&str>,
+        resource: Option<Door>,
     ) -> anyhow::Result<Result<Tokens, GrantError>> {
         let mut inner = self.lock();
         let key = digest(refresh_token);
@@ -345,17 +365,20 @@ impl Store {
         if client_id.is_some_and(|c| c != grant.client_id) {
             return Ok(Err(GrantError::ClientMismatch));
         }
+        if resource.is_some_and(|d| d != grant.door) {
+            return Ok(Err(GrantError::WrongResource));
+        }
         inner.persisted.refresh.remove(&key);
         if grant.expires_at <= unix_now() {
             self.save(&inner.persisted)?;
             return Ok(Err(GrantError::Expired));
         }
-        let tokens = self.mint(&mut inner, &grant.client_id, &grant.scope);
+        let tokens = self.mint(&mut inner, &grant.client_id, grant.door);
         self.save(&inner.persisted)?;
         Ok(Ok(tokens))
     }
 
-    fn mint(&self, inner: &mut Inner, client_id: &str, scope: &str) -> Tokens {
+    fn mint(&self, inner: &mut Inner, client_id: &str, door: Door) -> Tokens {
         let access_token = random_token();
         let refresh_token = random_token();
         let now = Instant::now();
@@ -364,6 +387,7 @@ impl Store {
             digest(&access_token),
             AccessGrant {
                 client_id: client_id.to_string(),
+                door,
                 expires: now + self.access_ttl,
             },
         );
@@ -373,26 +397,28 @@ impl Store {
             digest(&refresh_token),
             RefreshGrant {
                 client_id: client_id.to_string(),
-                scope: scope.to_string(),
+                scope: door.scope().to_string(),
                 expires_at: unix + self.refresh_ttl.as_secs(),
+                door,
             },
         );
         Tokens {
             access_token,
             refresh_token,
             expires_in: self.access_ttl.as_secs(),
-            scope: scope.to_string(),
+            scope: door.scope().to_string(),
         }
     }
 
-    /// The client an access token was issued to, if it is live.
-    pub fn authenticate(&self, access_token: &str) -> Option<String> {
+    /// The client an access token was issued to, and the door it opens, if it
+    /// is live.
+    pub fn authenticate(&self, access_token: &str) -> Option<(String, Door)> {
         let inner = self.lock();
         inner
             .access
             .get(&digest(access_token))
             .filter(|a| a.expires > Instant::now())
-            .map(|a| a.client_id.clone())
+            .map(|a| (a.client_id.clone(), a.door))
     }
 }
 
@@ -426,8 +452,11 @@ mod tests {
         let dir = temp_dir("restart");
         let s = store(&dir);
         let (id, _) = s.register(None, vec!["x".into()]).unwrap().unwrap();
-        let code = s.issue_code(&id, "x", &pkce_s256("v"), "korg:read");
-        let tokens = s.exchange_code(&code, &id, "x", "v").unwrap().unwrap();
+        let code = s.issue_code(&id, "x", &pkce_s256("v"), Door::Korg);
+        let tokens = s
+            .exchange_code(&code, &id, "x", "v", None)
+            .unwrap()
+            .unwrap();
         assert!(s.authenticate(&tokens.access_token).is_some());
         drop(s);
 
@@ -435,7 +464,7 @@ mod tests {
         assert!(s.client(&id).is_some());
         assert!(s.authenticate(&tokens.access_token).is_none());
         let fresh = s
-            .refresh(&tokens.refresh_token, Some(&id))
+            .refresh(&tokens.refresh_token, Some(&id), None)
             .unwrap()
             .unwrap();
         assert!(s.authenticate(&fresh.access_token).is_some());
@@ -446,19 +475,77 @@ mod tests {
     }
 
     #[test]
+    fn a_grant_persisted_before_doors_existed_is_a_korg_grant() {
+        // The exact shape the pre-094 gate wrote: no `door` field.
+        let dir = temp_dir("legacy");
+        let token = "a-refresh-token-issued-by-the-old-gate";
+        let state = serde_json::json!({
+            "clients": { "c1": { "client_name": "Claude", "redirect_uris": ["x"], "issued_at": 1 } },
+            "refresh": { digest(token): { "client_id": "c1", "scope": "korg:read",
+                                          "expires_at": unix_now() + 600 } },
+        });
+        std::fs::write(dir.join("state.json"), state.to_string()).unwrap();
+        let s = store(&dir);
+        // Naming another door neither works nor spends the token.
+        assert_eq!(
+            s.refresh(token, Some("c1"), Some(Door::Klams))
+                .unwrap()
+                .unwrap_err(),
+            GrantError::WrongResource
+        );
+        let fresh = s
+            .refresh(token, Some("c1"), Some(Door::Korg))
+            .unwrap()
+            .unwrap();
+        assert_eq!(fresh.scope, "korg:read");
+        assert_eq!(
+            s.authenticate(&fresh.access_token),
+            Some(("c1".to_string(), Door::Korg))
+        );
+    }
+
+    #[test]
+    fn a_klams_grant_stays_a_klams_grant_through_rotation_and_restart() {
+        let dir = temp_dir("klams");
+        let s = store(&dir);
+        let (id, _) = s.register(None, vec!["x".into()]).unwrap().unwrap();
+        let code = s.issue_code(&id, "x", &pkce_s256("v"), Door::Klams);
+        assert_eq!(
+            s.exchange_code(&code, &id, "x", "v", Some(Door::Korg))
+                .unwrap()
+                .unwrap_err(),
+            GrantError::WrongResource
+        );
+        let code = s.issue_code(&id, "x", &pkce_s256("v"), Door::Klams);
+        let tokens = s
+            .exchange_code(&code, &id, "x", "v", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(tokens.scope, "klams:read");
+        drop(s);
+        let s = store(&dir);
+        let fresh = s
+            .refresh(&tokens.refresh_token, None, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fresh.scope, "klams:read");
+        assert_eq!(s.authenticate(&fresh.access_token).unwrap().1, Door::Klams);
+    }
+
+    #[test]
     fn a_code_is_single_use_even_after_a_failed_pkce_check() {
         let dir = temp_dir("code");
         let s = store(&dir);
         let (id, _) = s.register(None, vec!["x".into()]).unwrap().unwrap();
-        let code = s.issue_code(&id, "x", &pkce_s256("right"), "korg:read");
+        let code = s.issue_code(&id, "x", &pkce_s256("right"), Door::Korg);
         assert_eq!(
-            s.exchange_code(&code, &id, "x", "wrong")
+            s.exchange_code(&code, &id, "x", "wrong", None)
                 .unwrap()
                 .unwrap_err(),
             GrantError::PkceMismatch
         );
         assert_eq!(
-            s.exchange_code(&code, &id, "x", "right")
+            s.exchange_code(&code, &id, "x", "right", None)
                 .unwrap()
                 .unwrap_err(),
             GrantError::UnknownCode
@@ -470,8 +557,10 @@ mod tests {
         let dir = temp_dir("bound");
         let s = store(&dir);
         let (held, _) = s.register(None, vec!["x".into()]).unwrap().unwrap();
-        let code = s.issue_code(&held, "x", &pkce_s256("v"), "korg:read");
-        s.exchange_code(&code, &held, "x", "v").unwrap().unwrap();
+        let code = s.issue_code(&held, "x", &pkce_s256("v"), Door::Korg);
+        s.exchange_code(&code, &held, "x", "v", None)
+            .unwrap()
+            .unwrap();
         for _ in 0..MAX_CLIENTS * 2 {
             s.register(None, vec!["x".into()]).unwrap().unwrap();
         }

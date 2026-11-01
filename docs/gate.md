@@ -1,15 +1,17 @@
 # korg-gate — the read-only public front door
 
 `korg-gate` lets **Claude Duet** (and claude.ai on the web, Desktop and mobile)
-read korg. Those clients reach tools only through *custom connectors*, which
-must be public HTTPS. korg is tailnet-only and unauthenticated by design, so
+read korg, and klams. Those clients reach tools only through *custom
+connectors*, which must be public HTTPS. korg and klams are tailnet-only, so
 something has to stand between the two. That is this crate (`crates/korg-gate`,
 one binary).
 
 - **Decision:** WI 4146, a scoped exception to the 2026-07-11 "nothing to the
   public internet" decision. **Build:** WI 4147. **Stand-up:** WI 4234.
-- **korg-api does not change.** The gate is a client of korg-api's `/mcp`, the
-  same as any fleet agent.
+- **The klams door:** Ken's decision of 2026-10-31, recorded in korg+ GP-17.
+  **Build:** WI 4293 (sprint 094). **Stand-up:** WI 4294.
+- **korg-api and klams do not change.** The gate is a client of each one's
+  `/mcp`, the same as any fleet agent.
 - **It does not ship with the kubsdb image.** It runs on its own Pi, on an
   isolated network, behind Tailscale Funnel. `just deploy`/`.sprint-deploy` never
   touch it.
@@ -18,21 +20,81 @@ one binary).
 
 | Path | Purpose |
 |---|---|
-| `/.well-known/oauth-protected-resource` (and `…/mcp`) | RFC 9728 metadata: `resource` is the connector URL, `authorization_servers` is the gate itself |
+| `/.well-known/oauth-protected-resource` (and `…/mcp`) | RFC 9728 metadata for the korg door: `resource` is the connector URL, `authorization_servers` is the gate itself |
+| `/.well-known/oauth-protected-resource/klams/mcp` | The same for the klams door: `resource` is `<origin>/klams/mcp`, scope `klams:read` |
 | `/.well-known/oauth-authorization-server` | RFC 8414 metadata: DCR, S256 PKCE, public clients, `korg:read` + `offline_access` |
 | `POST /register` | RFC 7591 dynamic client registration. Only `https://claude.ai/api/mcp/auth_callback` may be registered |
 | `GET`/`POST /authorize` | The sign-in page: one owner passphrase, no accounts |
 | `POST /token` | Code + PKCE exchange, and refresh with rotation. A dead refresh token gets `invalid_grant` |
-| `POST`/`GET`/`DELETE /mcp` | The proxied MCP endpoint. Without a live access token: `401` + `WWW-Authenticate: Bearer resource_metadata="…"` |
+| `POST`/`GET`/`DELETE /mcp` | The korg door. Without a live korg token: `401` + `WWW-Authenticate: Bearer resource_metadata="…"` |
+| `POST`/`GET`/`DELETE /klams/mcp` | The klams door, only when `KORG_GATE_UPSTREAM_KLAMS` is set (otherwise `404`, as is its metadata). Without a live klams token: `401` pointing at its own metadata, with `scope="klams:read"` |
 | `GET /healthz` | `ok` |
 
+## Doors
+
+One process, one authorization server, two doors (sprint 094). The issuer is
+the origin for both, so there is one passphrase, one client table and one
+lockout. What a door owns is its path, its upstream, its OAuth `resource` and
+scope, and its tool allowlist:
+
+| Door | Path | Upstream | `resource` | Scope | Tools |
+|---|---|---|---|---|---|
+| korg | `/mcp` | `KORG_GATE_UPSTREAM` | `KORG_GATE_PUBLIC_URL`, byte for byte | `korg:read` | `READ_TOOLS` (26) |
+| klams | `/klams/mcp` | `KORG_GATE_UPSTREAM_KLAMS` | `<origin>/klams/mcp` | `klams:read` | `KLAMS_READ_TOOLS` (4) |
+
+**Every token is bound to its door** (RFC 8707). A sign-in names its door by
+`resource`, which claude.ai sends. The code, the access token and the refresh
+token all carry that door. A token presented at the other door gets the same
+401 as no token. A token request naming the other door's `resource` gets
+`invalid_target`, and does not spend the refresh token. A sign-in that names no
+`resource` is korg's, as every sign-in was before klams had a door. The one
+exception is a request for `klams:read` alone, which is klams's: that is the
+scope its metadata advertises, so a client that skips RFC 8707 still lands at
+the right door.
+
+**The korg door is unchanged.** Its URL, metadata, 401, sign-in page, token
+responses and tool list are what they were before klams existed. The
+authorization-server metadata still lists only `korg:read`. That document is
+shared by both doors, RFC 8414 lets a server leave scopes unadvertised, and a
+client takes each door's scope from that door's own metadata. Refresh tokens
+issued before sprint 094 carry no door in `state.json` and read as korg's.
+Sprint 094 proved all of this against the previous binary on one state
+directory.
+
+**Adding a door** is a code change on purpose, because each door publishes
+another server's tools to the internet (korg+ GP-17). Add a `Door` variant in
+`crates/korg-gate/src/door.rs` (path, scope, tools), give it an explicit
+allowlist and a forcing test against a committed catalogue in `allowlist.rs`,
+and add its upstream variable to `config.rs` and the table below. Then record
+the decision in GP-17. The deploy is an ops item: a tailnet grant from
+`tag:korg-gate` to the new upstream, the variable in `/etc/korg-gate/env`, a
+restart, and a second connector.
+
+**Rolling back** to a one-door binary: it ignores the `door` field, so a
+klams refresh token would mint korg tokens. Both are read-only and behind the
+same passphrase, but to keep the doors apart, stop the unit, delete
+`/var/lib/korg-gate/state.json`, and reconnect.
+
 **Read-only, deny by default.** Only the MCP lifecycle methods (`initialize`,
-`notifications/initialized`, `ping`, `tools/list`, `tools/call`) pass. A
-`tools/call` passes only for a tool named in `READ_TOOLS`
-(`crates/korg-gate/src/allowlist.rs`), and `tools/list` is filtered to the same
-list. A refused request is a JSON-RPC error; it never reaches korg. A
-`tools/list` answer the gate cannot parse is refused, never passed through
-unfiltered. Batches are refused.
+`notifications/initialized`, `ping`, `server/discover`, `tools/list`,
+`tools/call`) pass, on either door. A `tools/call` passes only for a tool on
+that door's list (`crates/korg-gate/src/allowlist.rs`), and `tools/list` is
+filtered to the same list. A refused request is a JSON-RPC error; it never
+reaches the upstream. A `tools/list` answer the gate cannot parse is refused,
+never passed through unfiltered. SSE answers are filtered too, including
+klams's empty priming event. Batches are refused.
+
+**`server/discover`** is MCP 2026-07-28's mandatory server method. A dual-era
+client (claude.ai's connector) probes with it before falling back to
+`initialize`. The gate forwards it and the upstream's own answer stands
+(WI 4243). Both upstreams run rmcp 3.1.2, which implements 2026-07-28, so a
+well-formed probe gets the real version list back. 2026-07-28 also routes by
+the `Mcp-Method` and `Mcp-Name` request headers. The gate never forwards the
+caller's copies. If the caller sends one, it must agree with the body the gate
+checked: the method, and for `tools/call` the tool name. A mismatch is refused
+at the gate with `-32020` on an HTTP 400, and an agreeing header is forwarded as
+the gate's own value. A caller that sends neither (every 2025-era client) is
+forwarded exactly as before.
 
 The allowlist is explicit names, not a prefix rule. The `allowlist` test suite
 reads korg's real catalogue (`crates/korg-mcp/tests/tools_schema.json`). It fails
@@ -41,8 +103,20 @@ and when the list names a tool korg no longer serves. **Adding a tool to
 `READ_TOOLS` publishes it to the internet.** Do that on purpose. Write access is
 a separate, later decision.
 
+klams has no naming rule to lean on, so its test is total. Every tool in
+klams's catalogue, committed at `crates/korg-gate/tests/klams_tools.json`, must
+be in `KLAMS_READ_TOOLS` (`memory_search`, `memory_get`, `memory_related`,
+`event_search`) or in `KLAMS_REFUSED_TOOLS` (every write, and
+`register_author`). A tool klams adds fails the build until somebody rules on
+it. To refresh the fixture, call `tools/list` on klams as an identity that sees
+every tool, not as `claude-duet`, which klams already narrows to the four
+reads. klams refuses `claude-duet`'s writes on its own as well, so a write
+needs two independent refusals to get through.
+
 **Forwarded requests** carry `X-Homelab-Agent: claude-duet`, so korg's logs can
-tell Duet traffic apart. The gate's own bearer token is never forwarded.
+tell Duet traffic apart. For klams that header is the whole credential (klams
+sprint 049), so the klams door needs no secret. The gate's own bearer token is
+never forwarded.
 `Mcp-Session-Id` passes in both directions. The gate forwards its own
 re-serialisation of the message it checked, not the caller's bytes, so a
 duplicate JSON key cannot make the check and korg see different tools.
@@ -75,7 +149,8 @@ Set in `/etc/korg-gate/env` (template: `deploy/korg-gate/env.example`).
 |---|---|---|
 | `KORG_GATE_LISTEN` | no (`127.0.0.1:8475`) | Bind address. Keep it on loopback; Funnel terminates TLS |
 | `KORG_GATE_PUBLIC_URL` | yes | The connector URL exactly as entered in claude.ai, ending in `/mcp`. It is the OAuth `resource`; its origin is the issuer |
-| `KORG_GATE_UPSTREAM` | yes | korg-api's MCP URL, e.g. `https://kubsdb.encke-wahoo.ts.net:5674/mcp` |
+| `KORG_GATE_UPSTREAM` | yes | korg-api's MCP URL, e.g. `https://kubsdb.encke-wahoo.ts.net:5674/mcp`. It is the korg door's upstream |
+| `KORG_GATE_UPSTREAM_KLAMS` | no (unset) | klams's MCP URL, `https://kubs0.encke-wahoo.ts.net:7777/mcp`. Setting it opens the klams door at `/klams/mcp`. Unset or empty, the door does not exist |
 | `KORG_GATE_PASSPHRASE` | yes | The owner passphrase, 20+ characters. Registered in krot; on the Pi it is rendered into `/etc/khomelab/secrets.env` by k-homelab and reaches the unit through the `korg-gate.service.d/khomelab-secrets.conf` drop-in, so it is **not** in `/etc/korg-gate/env` (see below) |
 | `KORG_GATE_STATE_DIR` | yes | Where clients and refresh tokens persist: `/var/lib/korg-gate` under the unit |
 | `KORG_GATE_CLIENT_IP_HEADER` | no (`x-forwarded-for`) | Header carrying the caller's address. The *last* entry is used, because that is the one tailscaled appended |
@@ -98,8 +173,9 @@ Prerequisites belong to the ops item (WI 4234) and its k-homelab onboarding
 item, not to this page. They are: Raspberry Pi OS Lite 64-bit; fleet onboarding;
 the Pi on its **own isolated UniFi network** with internet only; Tailscale up as
 `tag:korg-gate`; and the tailnet policy narrowed so `tag:korg-gate` reaches
-`kubsdb:5674` and nothing else (korg:4146#comment-4098). **Do not enable Funnel
-until all of that holds.**
+`kubsdb:5674` and nothing else (korg:4146#comment-4098), plus `kubs0:7777` once
+the klams door is open (WI 4294). **Do not enable Funnel until all of that
+holds.**
 
 ```sh
 # from kai
@@ -159,6 +235,10 @@ The connector URL is that origin plus `/mcp`, and it must equal
    On the phone, do the same in the Claude app, where the connector is already
    present.
 
+The klams door is a **second connector** with URL `<origin>/klams/mcp`. Add it
+the same way. The same passphrase signs it in, and its tokens open only
+`/klams/mcp`.
+
 ## Operator checks
 
 Run these on the Pi after install, and again after any change:
@@ -170,6 +250,9 @@ curl -s  $U/.well-known/oauth-protected-resource               # resource == the
 curl -s  $U/.well-known/oauth-authorization-server             # S256, registration_endpoint, issuer == $U
 curl -s  $U/register -H 'content-type: application/json' \
      -d '{"redirect_uris":["https://evil.example/cb"]}'        # invalid_redirect_uri
+# with the klams door open:
+curl -si $U/klams/mcp -X POST | sed -n '1p;/^www-authenticate/Ip'  # 401 + …/oauth-protected-resource/klams/mcp, scope="klams:read"
+curl -s  $U/.well-known/oauth-protected-resource/klams/mcp     # resource == $U/klams/mcp
 journalctl -u korg-gate -n 50                                  # sign-ins carry the caller's public address
 ```
 
