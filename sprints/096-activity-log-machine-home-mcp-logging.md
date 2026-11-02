@@ -181,3 +181,30 @@ None.
 ## Follow-ups
 
 None filed.
+
+## Deployed
+
+Deployed on 2026-11-02 at about 10:56 PST, through `deploy-kubsdb`, by the
+same karc leg on its ship turn. The overseer cleared it in korg:4314 comment
+4284.
+
+- **What shipped:** squash merge `7a25ffd` (PR #104). The image is
+  `kubsdb.encke-wahoo.ts.net:5000/korg:7a25ffd3659b` (plus `latest`). The
+  running container's revision label matched the built commit. The rollback
+  target is `korg:b73c14155380`, confirmed in the registry. Rolling back past
+  0037/0038 is a re-tag; the tables are inert to the old image.
+- **Migrations 0037 and 0038** applied at startup. `post-deploy-check
+  --compare` was OK, and every count was unchanged from the baseline (node
+  count 4217).
+- **Machine seed:** the six `PUT /api/machines` calls ran straight after the
+  health check. kai, kubs0, kubsdb and thrall are `/home/ken`, kimac is
+  `/Users/ken`, and cleo is `null`. `GET /api/connectors/projects` then
+  located 55 projects, with `unlocated: []`.
+- **Activity log:** `GET /api/activity` serves the existing transition
+  history (4826 events at verification). The newest entry, WI 2936's status
+  change, resolves its proposal, korg:4314. `/activity` and `/plan` return
+  200.
+- **/mcp logging:** `docker logs korg` shows the new lines, for example
+  `korg_api::mcp: mcp request agent=- http="POST" rpc=tools/call:list_projects`.
+  No `agent=claude-duet` line yet: Duet had not called korg since the deploy.
+  It is the first Duet call that will show one.
