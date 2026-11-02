@@ -369,7 +369,8 @@ korg-specific code. That is why the envelope names itself.
     { "name": "korg", "category": "Infrastructure", "starred": true,
       "locations": [ { "host": "kai", "path": "/home/ken/src/tools/korg", "kind": "posix" } ] },
     { "name": "kctrldeck", "category": "Tools", "starred": true,
-      "locations": [ { "host": "cleo", "path": "D:\\ClaudeWorks\\kctrldeck", "kind": "windows" } ] } ] }
+      "locations": [ { "host": "cleo", "path": "D:\\ClaudeWorks\\kctrldeck", "kind": "windows" } ] } ],
+  "unlocated": [] }
 ```
 
 **No new data.** Every field is a projection of what `GET /api/projects`
@@ -405,11 +406,22 @@ it describes those and nothing else, so a REST-only projection does not belong
 in it — adding one would fail that suite's `phantom` check. Branch on
 `version`; within a version, changes are additive only.
 
-**Expanding `~/` needs a home directory, and korg has nowhere to record one.**
-`machines` is a `TEXT[]` of names (0011), not rows, so `POSIX_HOME` is a
-documented constant — correct for the fleet as it stands, and a wrong value
-fails loudly at the consumer rather than silently. Whether korg should model
-machines at all is WI 2919.
+**Expanding `~/` needs the host's home directory, which comes from its
+`machine` row** (migration 0037, WI 2919). Sprint 086 used a `/home/ken`
+constant, which was wrong for kimac (`/Users/ken`). The table is two columns,
+`name` and `home`, read with `GET /api/machines` and written with
+`PUT /api/machines/:name` and a body of `{"home": "/home/ken"}`. `home` is
+required and may be `null`, meaning the host does not expand `~`: the Windows
+hosts, whose drive-root paths need no home. `project.machines` stays a
+`TEXT[]` and does not reference the table.
+
+**`unlocated`, additive within v1.** A project with a `src_path` and a host
+that korg cannot make absolute is listed in `unlocated` as
+`{name, host, src_path, reason}` rather than expanded against a guess.
+`reason` is `no_machine_row` (the host has no row), `host_does_not_expand_tilde`
+(a `~/` path on a host whose `home` is null), or `unrecognised_src_path`
+(neither 0036 form, which korg's own writes cannot produce). The fix for the
+first is a `PUT /api/machines/:name`.
 
 ### Disposal semantics (WI #855)
 

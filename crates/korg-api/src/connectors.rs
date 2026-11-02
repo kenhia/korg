@@ -14,7 +14,9 @@
 //!
 //! - `src_path` is `~/`-relative, or a drive root for a Windows clone (0036).
 //!   `path` here is ABSOLUTE and native to its host, so a consumer never needs
-//!   korg's `~/` convention, a home directory, or the drive-root mapping.
+//!   korg's `~/` convention, a home directory, or the drive-root mapping. The
+//!   home comes from the host's `machine` row (0037, WI 2919); sprint 086 used
+//!   a `/home/ken` constant, which was wrong for kimac (`/Users/ken`).
 //! - `machines` is a list and `src_path` is singular — documented since #675
 //!   as the working copy on the *development* machine. So a location's host is
 //!   `machines[0]`, the one host `src_path` is defined against.
@@ -31,6 +33,8 @@
 //! that suite's `phantom` check. `version` is what a consumer branches on;
 //! within a version, changes are additive only.
 
+use std::collections::HashMap;
+
 use axum::extract::State;
 use serde::Serialize;
 
@@ -45,23 +49,6 @@ use serde_json::{json, Value};
 /// do not bump it — that is the promise the number is making.
 pub const VERSION: u32 = 1;
 
-/// Every POSIX host in the fleet runs as `ken`, so `~/` expands the same way
-/// on all of them.
-///
-/// Hardcoded, and worth saying why rather than leaving it to read as an
-/// oversight: korg models machines as a `TEXT[]` of names (migration 0011) and
-/// has no machine *rows*, so there is nowhere to record a per-host user. A
-/// registry is a schema addition and a question about whether korg should
-/// model hosts at all — filed rather than guessed at here (korg WI 2919).
-/// Until then this constant is the fleet convention it already encodes:
-/// `src_path` has been `~/`-relative since 0019 precisely because every
-/// development host shares one.
-///
-/// Verified 2026-09-20 on both hosts this can emit: `$HOME` is `/home/ken` on
-/// kai and on kubs0. A wrong value here fails loudly at the consumer — VS Code
-/// cannot open the folder — rather than silently.
-const POSIX_HOME: &str = "/home/ken";
-
 /// One clone, addressed the way its own host spells it.
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct Location {
@@ -75,32 +62,61 @@ pub struct Location {
     pub kind: &'static str,
 }
 
+/// Why a project with a `src_path` and a host still has no `locations` row.
+/// Reported in the listing's `unlocated` array rather than guessed at: the
+/// consumer is promised an absolute path, and a guessed one is worse than none.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Unlocated {
+    /// `~/`-relative, and the host has no `machine` row, so its home is unknown.
+    NoMachineRow,
+    /// `~/`-relative, and the host's row says it does not expand `~` (NULL home).
+    NoHome,
+    /// Neither 0036 form. Unreachable through korg's own writes —
+    /// `project_src_path_canonical` admits exactly the two — but a direct SQL
+    /// write is not impossible.
+    UnrecognisedForm,
+}
+
+impl Unlocated {
+    fn reason(&self) -> &'static str {
+        match self {
+            Self::NoMachineRow => "no_machine_row",
+            Self::NoHome => "host_does_not_expand_tilde",
+            Self::UnrecognisedForm => "unrecognised_src_path",
+        }
+    }
+}
+
 /// How a stored `src_path` is spelled on its host, and the expansion that goes
-/// with it.
-///
-/// Returns `None` for a value in neither form. Unreachable through korg's own
-/// writes — `project_src_path_canonical` admits exactly these two — but a
-/// direct SQL write is not impossible, and the alternative to skipping is
-/// emitting a path that is not absolute, which is the one thing the consumer
-/// is promised.
-fn locate(src_path: &str) -> Option<(String, &'static str)> {
+/// with it. `home` is the host's `machine` row: `None` for no row,
+/// `Some(None)` for a row whose home is NULL.
+fn locate(
+    src_path: &str,
+    home: Option<&Option<String>>,
+) -> Result<(String, &'static str), Unlocated> {
     if let Some(rest) = src_path.strip_prefix("~/") {
-        return Some((format!("{POSIX_HOME}/{rest}"), "posix"));
+        return match home {
+            None => Err(Unlocated::NoMachineRow),
+            Some(None) => Err(Unlocated::NoHome),
+            Some(Some(home)) => Ok((format!("{home}/{rest}"), "posix")),
+        };
     }
     // `/d/ClaudeWorks/kctrldeck` -> `D:\ClaudeWorks\kctrldeck`. The inverse of
     // what 0036 accepts, and mechanical in both directions by design — that
     // reversibility is why the drive-root form was chosen over storing the
-    // native spelling.
+    // native spelling. Needs no home, so it does not consult the row.
     let bytes = src_path.as_bytes();
     if bytes.len() >= 3 && bytes[0] == b'/' && bytes[1].is_ascii_lowercase() && bytes[2] == b'/' {
         let drive = (bytes[1] as char).to_ascii_uppercase();
         let rest = src_path[2..].replace('/', "\\");
-        return Some((format!("{drive}:{rest}"), "windows"));
+        return Ok((format!("{drive}:{rest}"), "windows"));
     }
-    None
+    Err(Unlocated::UnrecognisedForm)
 }
 
-/// The v1 row for one project, or `None` if korg cannot say where it lives.
+/// The v1 row for one project, `None` if korg has nothing to place, or an
+/// `unlocated` entry if it has a path and a host but cannot make the path
+/// absolute.
 ///
 /// The filter is the shape's own precondition rather than a policy: a project
 /// with no `src_path` has no path to emit, and one with no `machines` has no
@@ -108,10 +124,27 @@ fn locate(src_path: &str) -> Option<(String, &'static str)> {
 /// korg cannot locate is not an error, it is a project whose metadata nobody
 /// has filled in, and failing the whole listing over one would take the panel
 /// down for a missing field.
-fn project_row(p: &ProjectRow) -> Option<Value> {
+///
+/// A path korg *has* but cannot expand is different: that is a missing
+/// `machine` row (or a host that does not expand `~`), which somebody can fix,
+/// so it is named in `unlocated` instead of vanishing (WI 2919).
+fn project_row(
+    p: &ProjectRow,
+    homes: &HashMap<String, Option<String>>,
+) -> Option<Result<Value, Value>> {
     let src_path = p.src_path.as_deref()?;
     let host = p.machines.first()?;
-    let (path, kind) = locate(src_path)?;
+    let (path, kind) = match locate(src_path, homes.get(host)) {
+        Ok(found) => found,
+        Err(why) => {
+            return Some(Err(json!({
+                "name": p.name,
+                "host": host,
+                "src_path": src_path,
+                "reason": why.reason(),
+            })))
+        }
+    };
 
     let mut row = json!({
         "name": p.name,
@@ -124,23 +157,30 @@ fn project_row(p: &ProjectRow) -> Option<Value> {
     if let Some(category) = &p.category {
         row["category"] = json!(category);
     }
-    Some(row)
+    Some(Ok(row))
 }
 
 /// `GET /api/connectors/projects` — the v1 listing.
 ///
 /// Read-only and unauthenticated, like every other korg read: korg is no-auth
 /// HTTP on the tailnet, and this endpoint exposes nothing `GET /api/projects`
-/// does not already.
+/// and `GET /api/machines` do not already.
+///
+/// `unlocated` is additive within v1: a consumer that ignores it sees exactly
+/// the listing it always did.
 pub(crate) async fn projects(State(s): State<AppState>) -> ApiResult {
     let rows = repo::list_projects(&s.pool).await?;
-    let projects: Vec<Value> = rows
-        .iter()
-        // Archived projects are the point of the automation: one archived in
-        // korg leaves the panel on the next refresh, with nothing hand-kept.
-        .filter(|p| p.status == "active")
-        .filter_map(project_row)
-        .collect();
+    let homes = repo::machine_homes(&s.pool).await?;
+    let (mut projects, mut unlocated) = (Vec::new(), Vec::new());
+    // Archived projects are the point of the automation: one archived in korg
+    // leaves the panel on the next refresh, with nothing hand-kept.
+    for row in rows.iter().filter(|p| p.status == "active") {
+        match project_row(row, &homes) {
+            Some(Ok(v)) => projects.push(v),
+            Some(Err(v)) => unlocated.push(v),
+            None => {}
+        }
+    }
 
     Ok(Json(json!({
         "connector": "korg",
@@ -153,6 +193,7 @@ pub(crate) async fn projects(State(s): State<AppState>) -> ApiResult {
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_default(),
         "projects": projects,
+        "unlocated": unlocated,
     })))
 }
 
@@ -160,35 +201,54 @@ pub(crate) async fn projects(State(s): State<AppState>) -> ApiResult {
 mod tests {
     use super::*;
 
+    fn home(h: &str) -> Option<String> {
+        Some(h.to_string())
+    }
+
     #[test]
-    fn a_tilde_path_expands_to_the_fleet_home() {
+    fn a_tilde_path_expands_to_its_hosts_home() {
         assert_eq!(
-            locate("~/src/tools/korg"),
-            Some(("/home/ken/src/tools/korg".to_string(), "posix"))
+            locate("~/src/tools/korg", Some(&home("/home/ken"))),
+            Ok(("/home/ken/src/tools/korg".to_string(), "posix"))
+        );
+        // kimac: the host the old `/home/ken` constant was wrong for.
+        assert_eq!(
+            locate("~/src/x", Some(&home("/Users/ken"))),
+            Ok(("/Users/ken/src/x".to_string(), "posix"))
         );
     }
 
     #[test]
+    fn a_tilde_path_with_no_home_is_reported_not_guessed() {
+        assert_eq!(locate("~/src/x", None), Err(Unlocated::NoMachineRow));
+        assert_eq!(locate("~/src/x", Some(&None)), Err(Unlocated::NoHome));
+    }
+
+    #[test]
     fn a_drive_root_becomes_the_native_windows_spelling() {
+        // A drive root needs no home, so neither a missing row nor a NULL home
+        // stops it — cleo's row is NULL by design.
+        for h in [None, Some(&None)] {
+            assert_eq!(
+                locate("/d/ClaudeWorks/kctrldeck", h),
+                Ok((r"D:\ClaudeWorks\kctrldeck".to_string(), "windows"))
+            );
+        }
         assert_eq!(
-            locate("/d/ClaudeWorks/kctrldeck"),
-            Some((r"D:\ClaudeWorks\kctrldeck".to_string(), "windows"))
-        );
-        assert_eq!(
-            locate("/c/Users/kenhi/thing"),
-            Some((r"C:\Users\kenhi\thing".to_string(), "windows"))
+            locate("/c/Users/kenhi/thing", None),
+            Ok((r"C:\Users\kenhi\thing".to_string(), "windows"))
         );
     }
 
     /// The near-miss that matters: a bare POSIX absolute path must not be read
     /// as drive `h`. 0036's CHECK refuses to store one, and this is the second
     /// half of that guarantee — if one ever arrives by another route it is
-    /// skipped, not mangled into `H:\ome\ken\…`.
+    /// reported, not mangled into `H:\ome\ken\…`.
     #[test]
-    fn an_unrecognised_form_is_skipped_rather_than_guessed() {
-        assert_eq!(locate("/home/ken/src/x"), None);
-        assert_eq!(locate("src/tools/korg"), None);
-        assert_eq!(locate("~"), None);
-        assert_eq!(locate("/d"), None);
+    fn an_unrecognised_form_is_reported_rather_than_guessed() {
+        let h = Some(&home("/home/ken"));
+        for p in ["/home/ken/src/x", "src/tools/korg", "~", "/d"] {
+            assert_eq!(locate(p, h), Err(Unlocated::UnrecognisedForm), "{p}");
+        }
     }
 }
