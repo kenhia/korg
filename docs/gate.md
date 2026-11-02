@@ -146,7 +146,9 @@ tools that carry it, `add_comment` and `relate`, the gate sets
 object are refused). It touches no other field and no other tool. For the
 writes without an `origin` field, attribution is the gate's journal, which logs
 every `tools/call` with its tool name, and the `X-Homelab-Agent: claude-duet`
-header on every forwarded request (korg-api does not log it yet: WI 4242).
+header on every forwarded request. korg-api logs that header on one INFO line
+per `/mcp` request (WI 4242), with the JSON-RPC method and, for `tools/call`,
+the tool name: `docker logs korg | grep 'agent=claude-duet'` on kubsdb.
 
 **The second control is claude.ai's per-tool approval.** The ruling's
 condition is that every write tool stays on **Needs approval** in the

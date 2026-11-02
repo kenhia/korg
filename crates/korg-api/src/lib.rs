@@ -30,6 +30,7 @@ use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, Stream
 pub mod connectors;
 pub mod error;
 pub mod img;
+pub mod mcp_log;
 use error::ApiError;
 
 #[derive(Clone)]
@@ -159,7 +160,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/img/:id/:variant", get(img::serve_variant))
         .with_state(state);
 
-    let api = api.route_service("/mcp", mcp);
+    // One INFO line per request naming its `X-Homelab-Agent` (WI 4242). Layered
+    // on this route alone: the REST surface has no gate in front of it.
+    let api = api.merge(
+        Router::new()
+            .route_service("/mcp", mcp)
+            .layer(axum::middleware::from_fn(mcp_log::log_caller)),
+    );
 
     let router = match web_dir() {
         Some(dir) => spa_fallback(api, &dir),
