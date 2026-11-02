@@ -9,6 +9,7 @@
 // accepts; a nine-entry WI_TYPES list of which the server rejects six).
 
 import type {
+  ActivityEvent,
   AreaRow,
   AttachmentRow,
   AwaitingRow,
@@ -38,6 +39,7 @@ import type {
   WorkItemRow,
 } from "./generated/korg";
 import type {
+  ActivityAction,
   CardStatus,
   Disposition,
   ErrorCode,
@@ -591,6 +593,19 @@ export const api = {
   // clear — the same core path an agent uses, not a second one that could
   // drift from it.
   awaiting: () => http<AwaitingRow[]>("GET", "/api/awaiting"),
+
+  // the activity log (WI 2936): what changed, newest first. `since`/`until`
+  // are RFC 3339 instants; `toISOString()` gives the `Z` form the server
+  // wants (a `+` offset would decode as a space).
+  activity: (params: {
+    action?: ActivityAction;
+    kind?: string;
+    project?: string;
+    since?: string;
+    until?: string;
+    limit?: number;
+    offset?: number;
+  }) => http<Page<ActivityEvent>>("GET", `/api/activity${listQuery({ ...params })}`),
   setAwaiting: (node_id: number, awaiting: boolean, note?: string) =>
     http<AwaitingRow>("PUT", `/api/nodes/${node_id}/awaiting`, {
       awaiting,

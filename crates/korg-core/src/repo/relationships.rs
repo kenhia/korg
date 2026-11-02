@@ -11,6 +11,7 @@ use crate::error::RepoError;
 use crate::relationships;
 use crate::vocab;
 
+use super::activity::record_edge_activity;
 use super::common::{cross_project_covers, node_kind, node_project, wi_handle};
 use super::programs::promote_programs_over;
 use super::selectors::unknown_label;
@@ -240,12 +241,15 @@ pub async fn relate(
     // its slices, so an edge that commits without the promotion leaves the
     // claim false — and the panel back to reporting the wrong thing.
     let mut tx = pool.begin().await?;
-    let id: i64 = sqlx::query(
+    // `xmax = 0` is true only for a row this statement inserted: an existing
+    // edge re-related takes the ON CONFLICT branch, and the activity log's
+    // no-op guard (WI 2936) keeps it out of the feed.
+    let row = sqlx::query(
         "INSERT INTO relationship (left_id, right_id, relationship, created, origin, rank) \
          VALUES ($1, $2, $3, now(), $4, $5) \
          ON CONFLICT (left_id, right_id, relationship) \
          DO UPDATE SET rank = COALESCE(EXCLUDED.rank, relationship.rank) \
-         RETURNING id",
+         RETURNING id, (xmax = 0) AS inserted",
     )
     .bind(left)
     .bind(right)
@@ -253,8 +257,11 @@ pub async fn relate(
     .bind(origin)
     .bind(rank)
     .fetch_one(&mut *tx)
-    .await?
-    .get("id");
+    .await?;
+    let id: i64 = row.get("id");
+    if row.get::<bool, _>("inserted") {
+        record_edge_activity(&mut *tx, left, edge_action(label, true), right, Some(label)).await?;
+    }
 
     // #1424: attaching a slice is the third way a program's "nothing has
     // started" claim can stop being true, and the one a rule living only in
@@ -466,12 +473,38 @@ pub async fn project_edges(pool: &PgPool, project: &str, label: &str) -> Result<
     Ok(rows)
 }
 
+/// The activity-log action for an edge appearing or going (WI 2936). An image
+/// reaching its owner is `attached`, not `related`, whichever path wrote the
+/// edge — the feed reads the same either way.
+pub(super) fn edge_action(label: &str, added: bool) -> &'static str {
+    match (label == "has_attachment", added) {
+        (true, true) => "attached",
+        (true, false) => "detached",
+        (false, true) => "related",
+        (false, false) => "unrelated",
+    }
+}
+
 /// Delete an edge; `false` means there was nothing with that id (WI #525 —
 /// deletes report what they did instead of always claiming success).
 pub async fn unrelate(pool: &PgPool, id: i64) -> Result<bool> {
-    let result = sqlx::query("DELETE FROM relationship WHERE id = $1")
-        .bind(id)
-        .execute(pool)
+    let mut tx = pool.begin().await?;
+    let gone: Option<(i64, i64, String)> = sqlx::query_as(
+        "DELETE FROM relationship WHERE id = $1 RETURNING left_id, right_id, relationship",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some((left, right, label)) = &gone {
+        record_edge_activity(
+            &mut *tx,
+            *left,
+            edge_action(label, false),
+            *right,
+            Some(label),
+        )
         .await?;
-    Ok(result.rows_affected() > 0)
+    }
+    tx.commit().await?;
+    Ok(gone.is_some())
 }

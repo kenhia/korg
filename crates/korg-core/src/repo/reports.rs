@@ -12,6 +12,7 @@ use crate::error::RepoError;
 use crate::ops::{self, schema};
 use crate::vocab::{self, REPORT_STATUSES};
 
+use super::activity::{fingerprint, record_activity, record_edit};
 use super::common::{report_date_fmt, require_non_empty, touch_node, validate_status};
 use super::work_items::node_id_for_wi;
 
@@ -75,6 +76,12 @@ pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
             .await?
             .map(|r| r.get("node_id"));
 
+    // A same-day re-run replaces the report in place: an edit, not a creation,
+    // and only if the content actually moved (WI 2936).
+    let before = match existing {
+        Some(id) => fingerprint(&mut *tx, id).await?,
+        None => None,
+    };
     let (node_id, replaced) = match existing {
         Some(id) => {
             // `reviewed = false` on the replace (#2154), and it is the one
@@ -151,6 +158,11 @@ pub async fn upsert_report(pool: &PgPool, new: NewReport) -> Result<ReportRef> {
         .await?;
     }
 
+    if replaced {
+        record_edit(&mut tx, node_id, before).await?;
+    } else {
+        record_activity(&mut *tx, node_id, "created").await?;
+    }
     tx.commit().await?;
     Ok(ReportRef {
         node_id,

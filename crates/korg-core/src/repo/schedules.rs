@@ -27,6 +27,7 @@ use crate::error::RepoError;
 use crate::ops::{self, schema};
 use crate::vocab::{self, WI_FINISHED_STATUSES};
 
+use super::activity::{fingerprint, record_activity, record_edit};
 use super::awaiting::settle_awaiting;
 use super::comments::Comment;
 use super::common::{require_kind, require_non_empty, touch_node, validate_status};
@@ -359,6 +360,7 @@ pub async fn create_schedule(pool: &PgPool, new: NewSchedule) -> Result<Schedule
     .bind(&new.wi_tshirt)
     .execute(&mut *tx)
     .await?;
+    record_activity(&mut *tx, node_id, "created").await?;
     tx.commit().await?;
 
     get_schedule(pool, node_id)
@@ -621,6 +623,8 @@ pub async fn update_schedule(
     }
 
     let mut tx = pool.begin().await?;
+    // The activity log's no-op guard (WI 2936): compared before commit.
+    let before = fingerprint(&mut *tx, node_id).await?;
     require_kind(&mut *tx, node_id, "schedule", "schedule").await?;
     if let Some(v) = &patch.title {
         sqlx::query("UPDATE schedule SET title = $2 WHERE node_id = $1")
@@ -701,6 +705,7 @@ pub async fn update_schedule(
     }
     settle_awaiting(&mut *tx, node_id).await?;
     touch_node(&mut *tx, node_id).await?;
+    record_edit(&mut tx, node_id, before).await?;
     tx.commit().await?;
     get_schedule(pool, node_id)
         .await?
@@ -878,6 +883,7 @@ pub async fn materialize_schedule(
     .execute(&mut *tx)
     .await?;
     touch_node(&mut *tx, node_id).await?;
+    record_activity(&mut *tx, wi_node_id, "created").await?;
     tx.commit().await?;
 
     let work_item = get_work_item(pool, wi_node_id)

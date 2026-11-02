@@ -30,6 +30,7 @@ use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, Stream
 pub mod connectors;
 pub mod error;
 pub mod img;
+pub mod mcp_log;
 use error::ApiError;
 
 #[derive(Clone)]
@@ -57,6 +58,8 @@ pub fn build_router(state: AppState) -> Router {
         // connector protocol, not to korg's project surface — a second source
         // emitting it would serve the same document from its own namespace.
         .route("/api/connectors/projects", get(connectors::projects))
+        .route("/api/machines", get(list_machines))
+        .route("/api/machines/:name", put(set_machine))
         .route(
             "/api/work-items",
             get(list_work_items).post(create_work_item),
@@ -120,6 +123,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/report-sources", get(list_report_sources))
         .route("/api/report-sources/:source", patch(set_report_source))
         .route("/api/awaiting", get(list_awaiting))
+        .route("/api/activity", get(list_activity))
         .route("/api/search", get(search))
         .route("/api/board", get(board))
         .route("/api/nodes/:id/awaiting", put(set_awaiting))
@@ -159,7 +163,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/img/:id/:variant", get(img::serve_variant))
         .with_state(state);
 
-    let api = api.route_service("/mcp", mcp);
+    // One INFO line per request naming its `X-Homelab-Agent` (WI 4242). Layered
+    // on this route alone: the REST surface has no gate in front of it.
+    let api = api.merge(
+        Router::new()
+            .route_service("/mcp", mcp)
+            .layer(axum::middleware::from_fn(mcp_log::log_caller)),
+    );
 
     let router = match web_dir() {
         Some(dir) => spa_fallback(api, &dir),
@@ -946,6 +956,38 @@ async fn set_report_source(
     Ok(Json(json!(
         repo::set_report_source(&s.pool, &source, patch).await?
     )))
+}
+
+// --- the activity log (WI 2936) ---------------------------------------------
+
+/// What changed in korg, newest first, filtered by `action`, `kind`, `project`
+/// and an RFC 3339 `since`/`until` window. REST only, like the machine table:
+/// the consumer is korg's own Activity page, and an MCP read would need a
+/// ruling in korg-gate's allowlist that nothing yet asks for.
+async fn list_activity(
+    State(s): State<AppState>,
+    Query(filter): Query<repo::ActivityFilter>,
+) -> ApiResult {
+    Ok(Json(json!(repo::list_activity(&s.pool, filter).await?)))
+}
+
+// --- machines (WI 2919) ------------------------------------------------------
+
+/// Every described host and its home directory (`null` = does not expand `~`).
+/// REST only, deliberately: an MCP tool would need a ruling in korg-gate's
+/// allowlist, and the only consumer is the connector, which reads the table
+/// directly.
+async fn list_machines(State(s): State<AppState>) -> ApiResult {
+    Ok(Json(json!(repo::list_machines(&s.pool).await?)))
+}
+
+/// Create or replace a host's row. The body must carry `home`, even if null.
+async fn set_machine(
+    State(s): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<repo::MachinePut>,
+) -> ApiResult {
+    Ok(Json(json!(repo::set_machine(&s.pool, &name, body).await?)))
 }
 
 // --- the board rollup (#970) ------------------------------------------------

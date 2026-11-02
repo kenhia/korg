@@ -369,7 +369,8 @@ korg-specific code. That is why the envelope names itself.
     { "name": "korg", "category": "Infrastructure", "starred": true,
       "locations": [ { "host": "kai", "path": "/home/ken/src/tools/korg", "kind": "posix" } ] },
     { "name": "kctrldeck", "category": "Tools", "starred": true,
-      "locations": [ { "host": "cleo", "path": "D:\\ClaudeWorks\\kctrldeck", "kind": "windows" } ] } ] }
+      "locations": [ { "host": "cleo", "path": "D:\\ClaudeWorks\\kctrldeck", "kind": "windows" } ] } ],
+  "unlocated": [] }
 ```
 
 **No new data.** Every field is a projection of what `GET /api/projects`
@@ -405,11 +406,22 @@ it describes those and nothing else, so a REST-only projection does not belong
 in it — adding one would fail that suite's `phantom` check. Branch on
 `version`; within a version, changes are additive only.
 
-**Expanding `~/` needs a home directory, and korg has nowhere to record one.**
-`machines` is a `TEXT[]` of names (0011), not rows, so `POSIX_HOME` is a
-documented constant — correct for the fleet as it stands, and a wrong value
-fails loudly at the consumer rather than silently. Whether korg should model
-machines at all is WI 2919.
+**Expanding `~/` needs the host's home directory, which comes from its
+`machine` row** (migration 0037, WI 2919). Sprint 086 used a `/home/ken`
+constant, which was wrong for kimac (`/Users/ken`). The table is two columns,
+`name` and `home`, read with `GET /api/machines` and written with
+`PUT /api/machines/:name` and a body of `{"home": "/home/ken"}`. `home` is
+required and may be `null`, meaning the host does not expand `~`: the Windows
+hosts, whose drive-root paths need no home. `project.machines` stays a
+`TEXT[]` and does not reference the table.
+
+**`unlocated`, additive within v1.** A project with a `src_path` and a host
+that korg cannot make absolute is listed in `unlocated` as
+`{name, host, src_path, reason}` rather than expanded against a guess.
+`reason` is `no_machine_row` (the host has no row), `host_does_not_expand_tilde`
+(a `~/` path on a host whose `home` is null), or `unrecognised_src_path`
+(neither 0036 form, which korg's own writes cannot produce). The fix for the
+first is a `PUT /api/machines/:name`.
 
 ### Disposal semantics (WI #855)
 
@@ -1064,6 +1076,87 @@ all.
 Consumers: **kfdc** (`kai:~/src/tools/kfdc`, the widescreen overseer board) and
 **korg-dash** (the kdeskdash Pi feed, which derives its panel counts from this
 read rather than growing its own queries).
+
+## The activity log (2936)
+
+`GET /api/activity` is what changed in korg, newest first, for a reader with
+several agents writing at once. The Activity page in the web UI renders it. It
+is REST only: its one consumer is korg's own UI, and an MCP read would need a
+ruling in korg-gate's allowlist that nothing has asked for.
+
+```json
+{ "items": [
+    { "key": "a812", "action": "comment_added", "at": "2026-11-01T20:37:00Z",
+      "target": { "node_id": 1234, "kind": "workitem", "wi_number": 1234,
+                  "title": "Some title", "url": "/work-items/1234" },
+      "project": "korg", "comment_id": 4400,
+      "from_status": null, "to_status": null, "other": null, "label": null,
+      "proposal": { "node_id": 5678, "kind": "sprint_proposal", "wi_number": null,
+                    "title": "…", "url": "/planning/5678" },
+      "program":  { "node_id": 9012, "kind": "program", "wi_number": null,
+                    "title": "…", "url": "/programs/9012" } } ],
+  "total": 1, "limit": 100, "offset": 0 }
+```
+
+**Two tables, one feed.** `status_changed` rows come from 0026's `transition`
+log. Every other action comes from 0038's `activity` table, which korg-core's
+write paths append to. A trigger never writes it. The actions are
+`ACTIVITY_ACTIONS`: `created`, `edited`, `comment_added`, `comment_edited`,
+`comment_deleted`, `related`, `unrelated`, `attached`, `detached`, and the
+transition log's `status_changed`. A `has_attachment` edge reads as
+`attached`/`detached` rather than `related`/`unrelated`.
+
+**A write that changes nothing logs nothing.** That is 0026's rule, extended:
+
+- An update path fingerprints the node before and after the write, and logs
+  `edited` only when the two differ.
+- The fingerprint leaves out `updated`, the awaiting marker, and the status of
+  the three kinds the transition log covers. A status-only write is therefore
+  one `status_changed` row and not also an `edited`. A card's or schedule's
+  status has no transition row, so for those kinds a status move is `edited`.
+- Re-relating an existing edge, or re-saving a comment unchanged, is not an
+  event.
+
+**What is not logged, on purpose:**
+
+- **Deletions of a node.** A node's history is deleted with it (`ON DELETE
+  CASCADE`, as in 0026).
+- **Create-time edges.** `covers`, `includes`, `finding` and `materializes`
+  edges are part of their node's `created`. The exception is a handoff's
+  `has_handoff` edges, logged as `related` on each owner, because a handoff
+  matters for the work it lands on.
+- **The awaiting marker, a report's `reviewed` flag, and schedule
+  materialisation.** `materialize_schedule` logs the work item it creates and
+  nothing on the schedule.
+- **Projects and areas.** They are not nodes.
+
+There is no backfill. A corpus starts empty and fills forward.
+
+**Context is resolved at read time, never stored.** `proposal` is the newest
+`covers` edge into the target. `program` is the newest `includes` edge into
+that proposal, or into the target when the target is itself a proposal. So an
+item covered after the event still shows its proposal. `project` is the
+target's; a program has none.
+
+**Filters**, all optional, combined with AND:
+
+- `action`: one of the actions above.
+- `kind`: one of `NODE_KINDS`.
+- `project`: a project name.
+- `since` / `until`: RFC 3339, inclusive and exclusive. Use a `Z` offset,
+  because a `+` in a query string decodes as a space.
+- `limit` (default 100, max 500) and `offset`.
+
+`total` is the filtered count on every page. An unknown action or kind, or an
+out-of-range limit, is `invalid_input`.
+
+**Ordering** is `at` descending. Two rows from one transaction share `now()`:
+the status change sorts above the edit of the same instant, then the newer
+id goes first, so a refresh never reshuffles the feed.
+
+No actor column, as in 0026. korg has no authenticated writer, and
+`X-Homelab-Agent` (WI 4242) is the same `claude` for every Claude session. The
+caller is in korg-api's `/mcp` log line instead.
 
 ## The flow series (#1318)
 

@@ -13,6 +13,7 @@ use crate::error::RepoError;
 use crate::ops::{self, schema};
 use crate::vocab::{PROPOSAL_LIVE_STATUSES, PROPOSAL_STATUSES};
 
+use super::activity::{fingerprint, record_activity, record_edit};
 use super::awaiting::settle_awaiting;
 use super::comments::Comment;
 use super::common::{
@@ -199,6 +200,7 @@ pub async fn create_proposal(pool: &PgPool, new: NewProposal) -> Result<Proposal
         .await?;
     }
 
+    record_activity(&mut *tx, node_id, "created").await?;
     tx.commit().await?;
     let row = get_proposal(pool, node_id)
         .await?
@@ -617,6 +619,8 @@ pub async fn update_proposal(
         check_proposal_summary(v)?;
     }
     let mut tx = pool.begin().await?;
+    // The activity log's no-op guard (WI 2936): compared before commit.
+    let before = fingerprint(&mut *tx, node_id).await?;
     require_kind(&mut *tx, node_id, "sprint_proposal", "proposal").await?;
     if let Some(v) = &patch.title {
         sqlx::query("UPDATE sprint_proposal SET title = $2 WHERE node_id = $1")
@@ -698,6 +702,7 @@ pub async fn update_proposal(
     // marker on this proposal has been answered by the transition itself.
     settle_awaiting(&mut *tx, node_id).await?;
     touch_node(&mut *tx, node_id).await?;
+    record_edit(&mut tx, node_id, before).await?;
     tx.commit().await?;
     get_proposal(pool, node_id)
         .await?

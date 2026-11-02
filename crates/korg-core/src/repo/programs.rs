@@ -27,6 +27,7 @@ use crate::vocab::{
     WI_UNFINISHED_STATUSES,
 };
 
+use super::activity::{fingerprint, record_activity, record_edit};
 use super::awaiting::settle_awaiting;
 use super::comments::Comment;
 use super::common::{
@@ -222,6 +223,7 @@ pub async fn create_program(pool: &PgPool, new: NewProgram) -> Result<ProgramCre
         .await?;
     }
 
+    record_activity(&mut *tx, node_id, "created").await?;
     tx.commit().await?;
     let row = get_program(pool, node_id)
         .await?
@@ -786,6 +788,8 @@ pub async fn update_program(
         check_program_aim(v)?;
     }
     let mut tx = pool.begin().await?;
+    // The activity log's no-op guard (WI 2936): compared before commit.
+    let before = fingerprint(&mut *tx, node_id).await?;
     require_kind(&mut *tx, node_id, "program", "program").await?;
     if let Some(v) = &patch.title {
         sqlx::query("UPDATE program SET title = $2 WHERE node_id = $1")
@@ -859,6 +863,7 @@ pub async fn update_program(
     }
     settle_awaiting(&mut *tx, node_id).await?;
     touch_node(&mut *tx, node_id).await?;
+    record_edit(&mut tx, node_id, before).await?;
     tx.commit().await?;
     get_program(pool, node_id)
         .await?
