@@ -34,6 +34,9 @@
     // write. Nothing on either page runs on its own.
     { href: "/schedules", label: "Schedules" },
     { href: "/reading-list", label: "Reading" },
+    // What changed, across every kind (WI 2936). A thing you consult when
+    // several agents have been writing, so it sits with Plan at the end.
+    { href: "/activity", label: "Activity" },
     { href: "/plan", label: "Plan" },
   ];
 

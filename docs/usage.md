@@ -318,6 +318,7 @@ describing a route that no longer exists.
 | `GET` | `/api/report-sources` | Every reporting source with its `freshness` and what it `asserts`. Anything not `fresh` asserts `unknown`, never a last known status. |
 | `PATCH` | `/api/report-sources/:source` | Declare a source's cadence, grace window, retirement or note. Every field is an override; `null` returns it to derivation. |
 | `GET` | `/api/awaiting` | Everything waiting on Ken, oldest ask first, across every node kind. |
+| `GET` | `/api/activity` | The **activity log** (WI 2936): what changed in korg, newest first, as `{items, total, limit, offset}`. Filters `action`, `kind`, `project`, `since` (inclusive) and `until` (exclusive), both RFC 3339, plus `limit` (default 100, max 500) and `offset`. Each event names its `target`, the `other` end of an edge, and the covering `proposal` and including `program`, resolved from the edges at read time. Status changes come from the transition log as `status_changed`. See [api.md](api.md#the-activity-log-2936). |
 | `PUT` | `/api/nodes/:id/awaiting` | Set or clear the awaiting-Ken marker on any node (`{awaiting, note}`). The UI's one-click clear is this call with `awaiting: false`. |
 | `GET` | `/api/search` | Full-text search over every node kind plus every comment. `q` is required; narrow with `kind`, `project`, `scope` (`live` default, `all` for the whole corpus), `archived` (`true\|false\|all`), `limit`, `offset`. Returns the paginated envelope plus `omitted`, `relaxed` (the all-terms query found nothing and this is the any-term fallback) and `parsed` (the tsquery Postgres ran). |
 | `GET` | `/api/board` | The whole board in one request: active sprints with progress, the ranked queue, what is blocked and by what, programs with slices, the awaiting lane, per-project depth, newest reports, the status-transition ticker, and every reporting source's freshness. No parameters — see [api.md](api.md#the-board-rollup-970). |
@@ -466,6 +467,7 @@ Vocabularies are validated in korg-core, so an unknown value comes back as a
 - schedule substitutions: `YEAR`, `MONTH`, `DAY`, `DATE`, `QUARTER`
 - source `freshness`: `fresh`, `stale`, `retired`, `unrated`, `on-demand`
 - source `asserts`: `ok`, `attention`, `problem`, `unknown`
+- activity `action`: `created`, `edited`, `status_changed`, `comment_added`, `comment_edited`, `comment_deleted`, `related`, `unrelated`, `attached`, `detached`
 
 ## MCP endpoint
 

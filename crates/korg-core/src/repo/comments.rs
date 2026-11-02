@@ -8,6 +8,7 @@ use ts_rs::TS;
 
 use crate::error::RepoError;
 
+use super::activity::record_comment_activity;
 use super::common::{require_node, require_non_empty};
 
 // --- comments -------------------------------------------------------------
@@ -55,6 +56,7 @@ pub async fn add_comment(
     // Provenance (#1879) follows D-17: stamped on insert, self-reported, and
     // NULL when the writer sent nothing. No caller-derived guess is
     // substituted — a fabricated origin is worse than an absent one.
+    let mut tx = pool.begin().await?;
     let c = sqlx::query_as::<_, Comment>(
         "INSERT INTO comment (node_id, body, origin) VALUES ($1, $2, $3) \
          RETURNING id, node_id, body, origin, created, updated",
@@ -62,8 +64,10 @@ pub async fn add_comment(
     .bind(node_id)
     .bind(body)
     .bind(origin)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
+    record_comment_activity(&mut *tx, node_id, "comment_added", c.id).await?;
+    tx.commit().await?;
     Ok(c)
 }
 
@@ -82,6 +86,14 @@ pub async fn update_comment(
     origin: Option<&str>,
 ) -> Result<Comment> {
     require_non_empty(body, "comment body")?;
+    let mut tx = pool.begin().await?;
+    // Read-before-write for the activity log's no-op guard (WI 2936): an
+    // edit that leaves the body and origin as they were logs nothing.
+    let before: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT body, origin FROM comment WHERE id = $1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
     let c = sqlx::query_as::<_, Comment>(
         "UPDATE comment SET body = $2, origin = COALESCE($3, origin) WHERE id = $1 \
          RETURNING id, node_id, body, origin, created, updated",
@@ -89,16 +101,27 @@ pub async fn update_comment(
     .bind(id)
     .bind(body)
     .bind(origin)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?;
-    c.ok_or_else(|| RepoError::NotFound(format!("no comment with id {id}")).into())
+    let c = c.ok_or_else(|| RepoError::NotFound(format!("no comment with id {id}")))?;
+    if before != Some((c.body.clone(), c.origin.clone())) {
+        record_comment_activity(&mut *tx, c.node_id, "comment_edited", c.id).await?;
+    }
+    tx.commit().await?;
+    Ok(c)
 }
 
 /// Delete a comment; `false` means there was no such comment (WI #525).
 pub async fn delete_comment(pool: &PgPool, id: i64) -> Result<bool> {
-    let result = sqlx::query("DELETE FROM comment WHERE id = $1")
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(result.rows_affected() > 0)
+    let mut tx = pool.begin().await?;
+    let node_id: Option<i64> =
+        sqlx::query_scalar("DELETE FROM comment WHERE id = $1 RETURNING node_id")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if let Some(node_id) = node_id {
+        record_comment_activity(&mut *tx, node_id, "comment_deleted", id).await?;
+    }
+    tx.commit().await?;
+    Ok(node_id.is_some())
 }

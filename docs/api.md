@@ -1077,6 +1077,87 @@ Consumers: **kfdc** (`kai:~/src/tools/kfdc`, the widescreen overseer board) and
 **korg-dash** (the kdeskdash Pi feed, which derives its panel counts from this
 read rather than growing its own queries).
 
+## The activity log (2936)
+
+`GET /api/activity` is what changed in korg, newest first, for a reader with
+several agents writing at once. The Activity page in the web UI renders it. It
+is REST only: its one consumer is korg's own UI, and an MCP read would need a
+ruling in korg-gate's allowlist that nothing has asked for.
+
+```json
+{ "items": [
+    { "key": "a812", "action": "comment_added", "at": "2026-11-01T20:37:00Z",
+      "target": { "node_id": 1234, "kind": "workitem", "wi_number": 1234,
+                  "title": "Some title", "url": "/work-items/1234" },
+      "project": "korg", "comment_id": 4400,
+      "from_status": null, "to_status": null, "other": null, "label": null,
+      "proposal": { "node_id": 5678, "kind": "sprint_proposal", "wi_number": null,
+                    "title": "…", "url": "/planning/5678" },
+      "program":  { "node_id": 9012, "kind": "program", "wi_number": null,
+                    "title": "…", "url": "/programs/9012" } } ],
+  "total": 1, "limit": 100, "offset": 0 }
+```
+
+**Two tables, one feed.** `status_changed` rows come from 0026's `transition`
+log. Every other action comes from 0038's `activity` table, which korg-core's
+write paths append to. A trigger never writes it. The actions are
+`ACTIVITY_ACTIONS`: `created`, `edited`, `comment_added`, `comment_edited`,
+`comment_deleted`, `related`, `unrelated`, `attached`, `detached`, and the
+transition log's `status_changed`. A `has_attachment` edge reads as
+`attached`/`detached` rather than `related`/`unrelated`.
+
+**A write that changes nothing logs nothing.** That is 0026's rule, extended:
+
+- An update path fingerprints the node before and after the write, and logs
+  `edited` only when the two differ.
+- The fingerprint leaves out `updated`, the awaiting marker, and the status of
+  the three kinds the transition log covers. A status-only write is therefore
+  one `status_changed` row and not also an `edited`. A card's or schedule's
+  status has no transition row, so for those kinds a status move is `edited`.
+- Re-relating an existing edge, or re-saving a comment unchanged, is not an
+  event.
+
+**What is not logged, on purpose:**
+
+- **Deletions of a node.** A node's history is deleted with it (`ON DELETE
+  CASCADE`, as in 0026).
+- **Create-time edges.** `covers`, `includes`, `finding` and `materializes`
+  edges are part of their node's `created`. The exception is a handoff's
+  `has_handoff` edges, logged as `related` on each owner, because a handoff
+  matters for the work it lands on.
+- **The awaiting marker, a report's `reviewed` flag, and schedule
+  materialisation.** `materialize_schedule` logs the work item it creates and
+  nothing on the schedule.
+- **Projects and areas.** They are not nodes.
+
+There is no backfill. A corpus starts empty and fills forward.
+
+**Context is resolved at read time, never stored.** `proposal` is the newest
+`covers` edge into the target. `program` is the newest `includes` edge into
+that proposal, or into the target when the target is itself a proposal. So an
+item covered after the event still shows its proposal. `project` is the
+target's; a program has none.
+
+**Filters**, all optional, combined with AND:
+
+- `action`: one of the actions above.
+- `kind`: one of `NODE_KINDS`.
+- `project`: a project name.
+- `since` / `until`: RFC 3339, inclusive and exclusive. Use a `Z` offset,
+  because a `+` in a query string decodes as a space.
+- `limit` (default 100, max 500) and `offset`.
+
+`total` is the filtered count on every page. An unknown action or kind, or an
+out-of-range limit, is `invalid_input`.
+
+**Ordering** is `at` descending. Two rows from one transaction share `now()`:
+the status change sorts above the edit of the same instant, then the newer
+id goes first, so a refresh never reshuffles the feed.
+
+No actor column, as in 0026. korg has no authenticated writer, and
+`X-Homelab-Agent` (WI 4242) is the same `claude` for every Claude session. The
+caller is in korg-api's `/mcp` log line instead.
+
 ## The flow series (#1318)
 
 `work_item_flow` (REST: `GET /api/work-items/flow?days=N`) is korg's one

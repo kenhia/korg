@@ -22,6 +22,7 @@
 //! function between these modules cannot change what a caller sees. `rustc`
 //! still refuses an ambiguous glob, so no two modules can export one name.
 
+mod activity;
 mod areas;
 mod attachments;
 mod awaiting;
@@ -50,6 +51,7 @@ mod work_items;
 pub use crate::error::RepoError;
 pub use crate::vocab::{node_path, NODE_ROUTES, PROJECT_CATEGORIES, PROJECT_STATUSES, WI_STATUSES};
 
+pub use activity::*;
 pub use areas::*;
 pub use attachments::*;
 pub use awaiting::*;

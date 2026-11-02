@@ -123,6 +123,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/report-sources", get(list_report_sources))
         .route("/api/report-sources/:source", patch(set_report_source))
         .route("/api/awaiting", get(list_awaiting))
+        .route("/api/activity", get(list_activity))
         .route("/api/search", get(search))
         .route("/api/board", get(board))
         .route("/api/nodes/:id/awaiting", put(set_awaiting))
@@ -955,6 +956,19 @@ async fn set_report_source(
     Ok(Json(json!(
         repo::set_report_source(&s.pool, &source, patch).await?
     )))
+}
+
+// --- the activity log (WI 2936) ---------------------------------------------
+
+/// What changed in korg, newest first, filtered by `action`, `kind`, `project`
+/// and an RFC 3339 `since`/`until` window. REST only, like the machine table:
+/// the consumer is korg's own Activity page, and an MCP read would need a
+/// ruling in korg-gate's allowlist that nothing yet asks for.
+async fn list_activity(
+    State(s): State<AppState>,
+    Query(filter): Query<repo::ActivityFilter>,
+) -> ApiResult {
+    Ok(Json(json!(repo::list_activity(&s.pool, filter).await?)))
 }
 
 // --- machines (WI 2919) ------------------------------------------------------

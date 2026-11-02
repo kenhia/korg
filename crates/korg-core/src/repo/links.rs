@@ -11,6 +11,7 @@ use crate::error::RepoError;
 use crate::ops::schema;
 use crate::vocab::LINK_DISPOSITIONS;
 
+use super::activity::{fingerprint, record_activity, record_edit};
 use super::common::{require_kind, require_node, require_non_empty, touch_node, validate_status};
 use super::page::{archived_default, ArchivedFilter, Page, PageQuery};
 use super::selectors::resolve_project;
@@ -85,6 +86,7 @@ pub async fn create_link(pool: &PgPool, new: NewLink) -> Result<LinkRow> {
         .execute(&mut *tx)
         .await?;
 
+    record_activity(&mut *tx, node_id, "created").await?;
     tx.commit().await?;
     get_link(pool, node_id)
         .await?
@@ -184,6 +186,8 @@ pub async fn update_link(pool: &PgPool, node_id: i64, patch: LinkPatch) -> Resul
         validate_status(d, &LINK_DISPOSITIONS, "link disposition")?;
     }
     let mut tx = pool.begin().await?;
+    // The activity log's no-op guard (WI 2936): compared before commit.
+    let before = fingerprint(&mut *tx, node_id).await?;
     require_kind(&mut *tx, node_id, "link", "link").await?;
     if let Some(d) = &patch.disposition {
         sqlx::query("UPDATE link SET disposition = $2::link_disposition WHERE node_id = $1")
@@ -214,6 +218,7 @@ pub async fn update_link(pool: &PgPool, node_id: i64, patch: LinkPatch) -> Resul
             .await?;
     }
     touch_node(&mut *tx, node_id).await?;
+    record_edit(&mut tx, node_id, before).await?;
     tx.commit().await?;
     reread_link(pool, node_id).await
 }
@@ -288,34 +293,46 @@ pub async fn set_link_disposition(
 ) -> Result<LinkRow> {
     validate_status(disposition, &LINK_DISPOSITIONS, "link disposition")?;
     require_kind(pool, node_id, "link", "link").await?;
+    let mut tx = pool.begin().await?;
+    let before = fingerprint(&mut *tx, node_id).await?;
     sqlx::query("UPDATE link SET disposition = $2::link_disposition WHERE node_id = $1")
         .bind(node_id)
         .bind(disposition)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
-    touch_node(pool, node_id).await?;
+    touch_node(&mut *tx, node_id).await?;
+    record_edit(&mut tx, node_id, before).await?;
+    tx.commit().await?;
     reread_link(pool, node_id).await
 }
 
 /// Update the cross-cutting tags on any node.
 pub async fn set_node_tags(pool: &PgPool, node_id: i64, tags: &[String]) -> Result<()> {
     require_node(pool, node_id).await?;
+    let mut tx = pool.begin().await?;
+    let before = fingerprint(&mut *tx, node_id).await?;
     sqlx::query("UPDATE node SET tags = $2 WHERE id = $1")
         .bind(node_id)
         .bind(tags)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    record_edit(&mut tx, node_id, before).await?;
+    tx.commit().await?;
     Ok(())
 }
 
 pub async fn mark_link_read(pool: &PgPool, node_id: i64, read: bool) -> Result<LinkRow> {
     require_kind(pool, node_id, "link", "link").await?;
+    let mut tx = pool.begin().await?;
+    let before = fingerprint(&mut *tx, node_id).await?;
     sqlx::query("UPDATE link SET read = $2 WHERE node_id = $1")
         .bind(node_id)
         .bind(read)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
-    touch_node(pool, node_id).await?;
+    touch_node(&mut *tx, node_id).await?;
+    record_edit(&mut tx, node_id, before).await?;
+    tx.commit().await?;
     reread_link(pool, node_id).await
 }
 

@@ -12,6 +12,7 @@ use crate::error::RepoError;
 use crate::ops::{self, schema};
 use crate::vocab::CARD_STATUSES;
 
+use super::activity::{fingerprint, record_activity, record_edit};
 use super::common::{require_kind, touch_node, validate_status};
 use super::page::{archived_default, ArchivedFilter, Page, PageQuery};
 use super::selectors::{resolve_project, resolve_project_patch};
@@ -76,6 +77,7 @@ pub async fn create_card(pool: &PgPool, new: NewCard) -> Result<CardRow> {
     .execute(&mut *tx)
     .await?;
 
+    record_activity(&mut *tx, node_id, "created").await?;
     tx.commit().await?;
     get_card(pool, node_id)
         .await?
@@ -211,6 +213,8 @@ pub async fn update_card(pool: &PgPool, node_id: i64, patch: CardPatch) -> Resul
     }
     let project_id = resolve_project_patch(pool, patch.project_id, patch.project).await?;
     let mut tx = pool.begin().await?;
+    // The activity log's no-op guard (WI 2936): compared before commit.
+    let before = fingerprint(&mut *tx, node_id).await?;
     require_kind(&mut *tx, node_id, "card", "card").await?;
     if let Some(status) = &patch.status {
         sqlx::query("UPDATE card SET status = $2::card_status WHERE node_id = $1")
@@ -269,6 +273,7 @@ pub async fn update_card(pool: &PgPool, node_id: i64, patch: CardPatch) -> Resul
             .await?;
     }
     touch_node(&mut *tx, node_id).await?;
+    record_edit(&mut tx, node_id, before).await?;
     tx.commit().await?;
     get_card(pool, node_id)
         .await?

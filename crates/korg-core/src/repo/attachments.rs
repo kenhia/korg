@@ -27,6 +27,7 @@ use ts_rs::TS;
 
 use crate::error::RepoError;
 
+use super::activity::record_edge_activity;
 use super::common::{node_kind, require_kind, require_non_empty};
 use super::relationships::relate;
 
@@ -460,6 +461,10 @@ pub async fn create_attachment(pool: &PgPool, new: NewAttachment) -> Result<Atta
         .bind(node_id)
         .execute(&mut *tx)
         .await?;
+        // The image's own creation is not logged: it is not a change Ken
+        // reads as one, and a pending paste that is never saved would be
+        // noise. Its owner gaining it is (WI 2936).
+        record_edge_activity(&mut *tx, owner, "attached", node_id, Some("has_attachment")).await?;
     }
 
     tx.commit().await?;
@@ -540,13 +545,27 @@ pub async fn attach_attachment(
 /// there was no such attachment, which is not an error: cleaning up after a
 /// write that never landed is the ordinary way to reach it.
 pub async fn delete_attachment(pool: &PgPool, node_id: i64) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    // The owners lose an image: say so on each, before the cascade takes the
+    // edges that name them (WI 2936). A pending image has none.
+    let owners: Vec<i64> = sqlx::query_scalar(
+        "SELECT r.left_id FROM relationship r JOIN node n ON n.id = r.right_id \
+          WHERE r.right_id = $1 AND r.relationship = 'has_attachment' AND n.kind = 'attachment'",
+    )
+    .bind(node_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for owner in owners {
+        record_edge_activity(&mut *tx, owner, "detached", node_id, Some("has_attachment")).await?;
+    }
     // Cascades to `attachment`, `attachment_variant`, the edges and any
     // comments, all declared ON DELETE CASCADE.
     let deleted = sqlx::query("DELETE FROM node WHERE id = $1 AND kind = 'attachment'")
         .bind(node_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?
         .rows_affected();
+    tx.commit().await?;
     Ok(deleted > 0)
 }
 

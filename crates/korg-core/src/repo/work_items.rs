@@ -11,6 +11,7 @@ use crate::error::RepoError;
 use crate::ops::{self, schema};
 use crate::vocab::{self, WI_LIVE_STATUSES, WI_STATUSES};
 
+use super::activity::{fingerprint, record_activity, record_edit};
 use super::attachments::{list_attachments, AttachmentRow};
 use super::awaiting::settle_awaiting;
 use super::comments::Comment;
@@ -156,6 +157,7 @@ pub async fn create_work_item(pool: &PgPool, new: NewWorkItem) -> Result<WorkIte
     .await?
     .get("wi_number");
 
+    record_activity(&mut *tx, node_id, "created").await?;
     tx.commit().await?;
     get_work_item(pool, wi_number)
         .await?
@@ -771,6 +773,8 @@ pub async fn update_work_item(
     // update, which isn't known until then.
     let project_id = resolve_project_patch(pool, patch.project_id, patch.project).await?;
     let mut tx = pool.begin().await?;
+    // The activity log's no-op guard (WI 2936): compared before commit.
+    let before = fingerprint(&mut *tx, node_id).await?;
 
     if let Some(v) = &patch.title {
         sqlx::query("UPDATE workitem SET title = $2 WHERE node_id = $1")
@@ -973,6 +977,7 @@ pub async fn update_work_item(
     }
     touch_node(&mut *tx, node_id).await?;
 
+    record_edit(&mut tx, node_id, before).await?;
     tx.commit().await?;
     get_work_item(pool, wi_number)
         .await?

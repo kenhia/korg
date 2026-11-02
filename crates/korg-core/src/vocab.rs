@@ -45,6 +45,24 @@ pub const NODE_KINDS: [&str; 9] = [
     "attachment",
 ];
 
+/// What the activity log calls a change (WI 2936, migration 0038).
+///
+/// `status_changed` is read from 0026's `transition` table; every other action
+/// is a row in `activity`, whose `activity_action_known` CHECK lists exactly
+/// the rest. `activity_actions_match_the_check_constraint` pins the two.
+pub const ACTIVITY_ACTIONS: [&str; 10] = [
+    "created",
+    "edited",
+    "status_changed",
+    "comment_added",
+    "comment_edited",
+    "comment_deleted",
+    "related",
+    "unrelated",
+    "attached",
+    "detached",
+];
+
 /// What an attachment's lifecycle position is called (sprint 056, #582/#1119).
 ///
 /// **Derived on every read, never stored.** `pending` is an attachment with no
@@ -695,7 +713,7 @@ pub const PROJECT_CATEGORIES: [&str; 8] = [
 /// hand-kept copy that drifts (the old `api.ts` `WI_TYPES` had nine entries,
 /// six of which the server rejects). `docs_drift` (korg-mcp) walks it too, so a
 /// vocabulary enumerated in prose is checked against this registry, not a copy.
-pub const EXPORTED: [(&str, &str, &[&str]); 18] = [
+pub const EXPORTED: [(&str, &str, &[&str]); 19] = [
     ("NODE_KINDS", "NodeKind", &NODE_KINDS),
     ("WI_STATUSES", "WiStatus", &WI_STATUSES),
     ("WI_TYPES", "WiType", &WI_TYPES),
@@ -717,6 +735,7 @@ pub const EXPORTED: [(&str, &str, &[&str]); 18] = [
     ),
     ("SOURCE_FRESHNESS", "SourceFreshness", &SOURCE_FRESHNESS),
     ("SOURCE_ASSERTIONS", "SourceAssertion", &SOURCE_ASSERTIONS),
+    ("ACTIVITY_ACTIONS", "ActivityAction", &ACTIVITY_ACTIONS),
     // Not a domain vocabulary but the same kind of fact: a closed set the
     // client must agree with. The web app branches on it to tell "you typed
     // something wrong" from "korg broke" (sprint 019).

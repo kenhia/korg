@@ -566,6 +566,7 @@ const VOCAB_BULLETS: &[(&str, &str)] = &[
     ("schedule substitutions", "SCHEDULE_SUBSTITUTIONS"),
     ("source `freshness`", "SOURCE_FRESHNESS"),
     ("source `asserts`", "SOURCE_ASSERTIONS"),
+    ("activity `action`", "ACTIVITY_ACTIONS"),
 ];
 
 fn vocabulary(const_name: &str) -> &'static [&'static str] {

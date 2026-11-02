@@ -51,6 +51,9 @@ export type SourceFreshness = (typeof SOURCE_FRESHNESS)[number];
 export const SOURCE_ASSERTIONS = ["ok", "attention", "problem", "unknown"] as const;
 export type SourceAssertion = (typeof SOURCE_ASSERTIONS)[number];
 
+export const ACTIVITY_ACTIONS = ["created", "edited", "status_changed", "comment_added", "comment_edited", "comment_deleted", "related", "unrelated", "attached", "detached"] as const;
+export type ActivityAction = (typeof ACTIVITY_ACTIONS)[number];
+
 export const ERROR_CODES = ["invalid_input", "not_found", "conflict", "internal"] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 

@@ -17,6 +17,7 @@ use ts_rs::TS;
 use crate::error::RepoError;
 use crate::ops::schema;
 
+use super::activity::{fingerprint, record_activity, record_edge_activity, record_edit};
 use super::common::{node_kind, require_kind, touch_node};
 use super::relationships::{related_context, RelatedRef};
 use super::selectors::resolve_project;
@@ -190,8 +191,15 @@ pub async fn create_handoff(pool: &PgPool, new: NewHandoff) -> Result<HandoffCre
         .bind(node_id)
         .execute(&mut *tx)
         .await?;
+        // The one create-time edge the activity log records (WI 2936): a
+        // handoff's point is the work it lands on, so the owner's feed — and
+        // the owner's proposal and program context — is where it belongs.
+        // Other create-time edges (`covers`, `includes`, `finding`,
+        // `materializes`) are part of their node's `created`.
+        record_edge_activity(&mut *tx, owner, "related", node_id, Some("has_handoff")).await?;
     }
 
+    record_activity(&mut *tx, node_id, "created").await?;
     tx.commit().await?;
     let handoff = get_handoff_row(pool, node_id)
         .await?
@@ -256,6 +264,8 @@ pub async fn update_handoff(
         return Err(RepoError::InvalidInput("handoff summary must not be empty".into()).into());
     }
     let mut tx = pool.begin().await?;
+    // The activity log's no-op guard (WI 2936): compared before commit.
+    let before = fingerprint(&mut *tx, node_id).await?;
     require_kind(&mut *tx, node_id, "handoff", "handoff").await?;
     if let Some(v) = &patch.title {
         sqlx::query("UPDATE handoff SET title = $2 WHERE node_id = $1")
@@ -293,6 +303,7 @@ pub async fn update_handoff(
             .await?;
     }
     touch_node(&mut *tx, node_id).await?;
+    record_edit(&mut tx, node_id, before).await?;
     tx.commit().await?;
     get_handoff_row(pool, node_id)
         .await?
