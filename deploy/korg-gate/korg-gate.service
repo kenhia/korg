@@ -1,4 +1,4 @@
-# korg-gate — read-only, OAuth-gated public front door to korg's MCP (WI 4147).
+# korg-gate — OAuth-gated public front door to korg's and klams's MCP (WI 4147).
 #
 # Installed on the gate Pi as /etc/systemd/system/korg-gate.service; see
 # docs/gate.md. Listens on loopback only: Tailscale Funnel terminates TLS on the
@@ -10,7 +10,7 @@
 # address families beyond IP and a Unix socket for logging.
 
 [Unit]
-Description=korg-gate (OAuth front door to korg MCP, read-only)
+Description=korg-gate (OAuth front door to korg and klams MCP)
 Documentation=https://github.com/kenhia/korg/blob/main/docs/gate.md
 Wants=network-online.target tailscaled.service
 After=network-online.target tailscaled.service

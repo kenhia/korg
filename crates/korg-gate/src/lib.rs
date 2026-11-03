@@ -3,7 +3,9 @@
 //! read korg. WI 4147; the decision to allow it is WI 4146. Sprint 094
 //! (WI 4293) added a second door, klams, read-only behind the same
 //! authorization server; see `door`. Sprint 095 (WI 4244) opened the korg door
-//! to a ruled set of writes, `origin` stamped by the gate.
+//! to a ruled set of writes, `origin` stamped by the gate. Sprint 097
+//! (WI 4324) did the same for klams: four knowledge writes, `author_id`
+//! stripped by the gate.
 //!
 //! Three jobs in one small process:
 //!

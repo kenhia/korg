@@ -1,7 +1,7 @@
 # korg-gate — the public front door
 
 `korg-gate` lets **Claude Duet** (and claude.ai on the web, Desktop and mobile)
-read korg and klams, and make a ruled set of korg writes. Those clients reach tools only through *custom
+read korg and klams, and make a ruled set of writes to each. Those clients reach tools only through *custom
 connectors*, which must be public HTTPS. korg and klams are tailnet-only, so
 something has to stand between the two. That is this crate (`crates/korg-gate`,
 one binary).
@@ -13,6 +13,10 @@ one binary).
 - **korg writes:** Ken's ruling of 2026-10-31 (WI 4244, comment 4264), recorded
   in korg+ GP-17. **Build:** sprint 095 (proposal korg:4298, code half). The ops
   half is below, under [Turning the writes on](#turning-the-writes-on).
+- **klams writes:** Ken's ruling of 2026-11-02 (WI 4324, answering WI 4307),
+  recorded in korg+ GP-17. **Build:** sprint 097 (proposal korg:4326). The ops
+  half is korg:4308, below under
+  [Turning the klams writes on](#turning-the-klams-writes-on).
 - **korg-api and klams do not change.** The gate is a client of each one's
   `/mcp`, the same as any fleet agent.
 - **It does not ship with the kubsdb image.** It runs on its own Pi, on an
@@ -43,7 +47,7 @@ scope, and its tool allowlist:
 | Door | Path | Upstream | `resource` | Scope | Tools |
 |---|---|---|---|---|---|
 | korg | `/mcp` | `KORG_GATE_UPSTREAM` | `KORG_GATE_PUBLIC_URL`, byte for byte | `korg:read` | `READ_TOOLS` (26) + `WRITE_TOOLS` (8) |
-| klams | `/klams/mcp` | `KORG_GATE_UPSTREAM_KLAMS` | `<origin>/klams/mcp` | `klams:read` | `KLAMS_READ_TOOLS` (4) |
+| klams | `/klams/mcp` | `KORG_GATE_UPSTREAM_KLAMS` | `<origin>/klams/mcp` | `klams:read` | `KLAMS_READ_TOOLS` (4) + `KLAMS_WRITE_TOOLS` (4) |
 
 **Every token is bound to its door** (RFC 8707). A sign-in names its door by
 `resource`, which claude.ai sends. The code, the access token and the refresh
@@ -61,8 +65,10 @@ gave its tool list the write set, and corrected three human-facing strings that
 had become false: the metadata's `resource_name` is now `korg` (was
 `korg (read-only)`), and the sign-in page now asks for "access to korg's reads
 and the ruled write set" with an **Allow access** button (was "**read-only**
-access" and **Allow read access**). klams's strings still say read-only. The
-authorization-server metadata still lists only `korg:read`. That document is
+access" and **Allow read access**). Sprint 097 did the same for klams when its
+door gained writes: `resource_name` is `klams` (was `klams (read-only)`), the
+page asks for "access to klams's reads and the ruled write set", and the button
+is **Allow access**. The metadata still lists only `korg:read`. That document is
 shared by both doors, RFC 8414 lets a server leave scopes unadvertised, and a
 client takes each door's scope from that door's own metadata. Refresh tokens
 issued before sprint 094 carry no door in `state.json` and read as korg's.
@@ -171,12 +177,59 @@ with no re-sign-in.
 klams has no naming rule to lean on, so its test is total. Every tool in
 klams's catalogue, committed at `crates/korg-gate/tests/klams_tools.json`, must
 be in `KLAMS_READ_TOOLS` (`memory_search`, `memory_get`, `memory_related`,
-`event_search`) or in `KLAMS_REFUSED_TOOLS` (every write, and
-`register_author`). A tool klams adds fails the build until somebody rules on
-it. To refresh the fixture, call `tools/list` on klams as an identity that sees
-every tool, not as `claude-duet`, which klams already narrows to the four
-reads. klams refuses `claude-duet`'s writes on its own as well, so a write
-needs two independent refusals to get through.
+`event_search`), `KLAMS_WRITE_TOOLS` (below) or `KLAMS_REFUSED_TOOLS`. A tool
+klams adds fails the build until somebody rules on it, and so does a ruling
+naming a tool klams no longer serves.
+
+**The fixture is a full-scope view.** klams narrows `tools/list` to the
+caller's scopes, so a fixture fetched as a write identity hides the six
+`memory_admin_*` tools, and the forcing test would never see them. No live
+identity holds `admin`, so sprint 097 generated the fixture from klams's source:
+in a throwaway clone, an example calling
+`klams_mcp::tools::all_tool_descriptors()` and printing it as pretty JSON. It
+first checked that those descriptors, for the eleven tools a `claude` identity
+sees, equal the live `tools/list` byte for byte. Refresh it the same way, and
+keep the check. A test fails if the fixture carries no admin tools.
+
+#### klams writes (sprint 097)
+
+`KLAMS_WRITE_TOOLS`, exactly as Ken ruled (WI 4324), and pinned by a test that
+says widening it is a decision:
+
+| Tool | What the gate does to it |
+|---|---|
+| `memory_add` | Forwarded only when `arguments.kind` is exactly `"knowledge"`. Anything else (`"fact"`, a missing or `null` kind, `"Knowledge"`) is refused with `-32602` and a message saying the door writes knowledge only. `author_id` is stripped |
+| `memory_supersede`, `memory_update` | `author_id` stripped (neither declares one today; the strip is defence in depth) |
+| `memory_delete` | `author_id` stripped |
+
+**Refused by name** (`KLAMS_REFUSED_TOOLS`): `memory_append_event` (events are
+irreversible), `dissent_propose`, `register_author`, and every admin-scope tool
+(`memory_admin_restore`, `memory_admin_hard_delete`,
+`memory_admin_list_deleted`, `memory_admin_list_authors`,
+`memory_admin_remove_author`, `memory_admin_merge_authors`).
+
+**`author_id` is stripped, not stamped.** klams fills an omitted `author_id`
+with the author bound to the forwarded identity, which is `claude-duet`
+(`X-Homelab-Agent`, below). So the gate removes the key from every klams write
+it forwards, whatever the caller sent, and klams attributes the write to Duet.
+The gate does not know Duet's author UUID and does not need to. Missing or
+`null` arguments become an object; arguments that are not an object are
+refused. Reads are forwarded untouched: `event_search`'s `author_id` is a
+filter, not an attribution. klams refusing a foreign `author_id` for every
+caller (klams WI 4323) is the second, independent control.
+
+**What `manage` means here.** The ops half gives `claude-duet` the scopes
+`read,write,manage` (Ken's ruling), so Duet can supersede, update and delete
+other agents' records, not only its own. With `manage`, `memory_delete` can
+soft-delete any record. klams deletes are soft and restorable through
+`memory_admin_restore`, which needs `admin` and is refused at this door.
+
+**Approval and scope are as on the korg door.** Every klams write tool stays on
+**Needs approval** in the klams connector's settings, subject to the finding
+in claude-duet WI 4309. The scope keeps its name, `klams:read`, for the same
+reason as option A above: claude.ai has no scope picker, and a new scope would
+force a re-sign-in to separate nobody. The existing klams connector gains the
+four tools on its next `tools/list`.
 
 **Forwarded requests** carry `X-Homelab-Agent: claude-duet`, so korg's logs can
 tell Duet traffic apart. For klams that header is the whole credential (klams
@@ -345,6 +398,32 @@ The ops half of sprint 095, interactive with Ken (proposal korg:4298):
 4. From the phone: one real `add_comment` on a work item and one
    `propose_sprint`. Read both back from the tailnet; the comment's `origin` is
    `claude-duet`. `journalctl -u korg-gate` shows a `tools/call` line for each.
+
+## Turning the klams writes on
+
+The ops half of sprint 097, interactive with Ken (korg:4308, claude-duet). In
+this order, because each step is safe only once the one before it holds:
+
+1. **klams first: the bound-author rule.** klams WI 4323 (refuse a foreign
+   `author_id` on every create tool, fleet-wide) is deployed on kubs0. Without
+   it the gate's strip is the only control on attribution.
+2. **The identity's scopes.** On kubs0, widen `claude-duet` to
+   `read,write,manage`: `sudo klams-token identity scopes claude-duet --add
+   write`, then `--add manage` (klams `docs/auth.md`), and reload klams. Until the new gate is installed, the old one still refuses
+   every klams write, so this step publishes nothing.
+3. **The binary.** As in [Turning the writes on](#turning-the-writes-on), step
+   1: `just gate-pi` on kai, install over `/usr/local/bin/korg-gate`, restart.
+   Operator checks: klams metadata `resource_name: "klams"`, korg's unchanged,
+   both doors 401.
+4. **The connector.** In claude.ai → Settings → Connectors → the klams
+   connector, let it refresh its tool list (a new chat is enough; no
+   reconnect), then confirm the four write tools are **Needs approval**.
+5. **From the phone:** one `memory_add` with `kind: "knowledge"`, one
+   `memory_add` with `kind: "fact"` (refused, "knowledge only"), and a
+   `memory_supersede` of the first. Read them back over the tailnet: the
+   author is `claude-duet`. `journalctl -u korg-gate` shows a `tools/call …
+   door="klams"` line for each, and a `tools/call arguments refused` warning
+   for the fact. Clean up with `memory_delete`.
 
 ## Rotating the passphrase
 

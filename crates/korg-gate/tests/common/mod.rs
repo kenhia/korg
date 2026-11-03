@@ -38,10 +38,13 @@ pub fn catalogue() -> Vec<String> {
         .collect()
 }
 
-/// klams's real tool catalogue, committed at `tests/klams_tools.json`.
-/// Refresh it from a klams identity that sees every tool (not `claude-duet`,
-/// which klams itself narrows to four): `initialize`, then `tools/list`, against
-/// `https://kubs0.encke-wahoo.ts.net:7777/mcp`, and write `result.tools`.
+/// klams's real tool catalogue, committed at `tests/klams_tools.json` as a
+/// **full-scope** view (read, write, manage and admin), so an admin tool klams
+/// serves is ruled on too. klams narrows `tools/list` to the caller's scopes and
+/// no live identity holds `admin`, so sprint 097 dumped
+/// `klams_mcp::tools::all_tool_descriptors()` from klams's source instead, after
+/// checking that its descriptors for the eleven tools a `claude` identity sees
+/// equal the live `tools/list` byte for byte. See `docs/gate.md` § klams.
 pub fn klams_catalogue() -> Vec<String> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/klams_tools.json");
     let tools: Vec<Value> = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();

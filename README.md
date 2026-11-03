@@ -66,7 +66,8 @@ project-scoped; tags/category are shared across kinds.
   runtime dependency of anything, so it ships in no binary.
 - `korg-gate` — the OAuth-gated public front door that lets Claude Duet and
   claude.ai read korg, and make a ruled set of korg writes, through a custom
-  connector, and read klams through a second one at `/klams/mcp`. It is a standalone
+  connector, and read klams and make a ruled set of knowledge writes through a
+  second one at `/klams/mcp`. It is a standalone
   proxy with no `korg-core` dependency, runs on its own Pi behind Tailscale
   Funnel, and is not part of the kubsdb image. See [docs/gate.md](docs/gate.md).
 

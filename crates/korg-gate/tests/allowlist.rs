@@ -3,16 +3,16 @@
 //! drifts with korg's tool surface rather than a hand-typed list — and, for the
 //! klams door, against klams's catalogue as committed at `tests/klams_tools.json`.
 //!
-//! The korg door's ruling is total (sprint 095): every korg tool is a read, a
-//! ruled write, or refused by name, and a tool korg adds fails here until
-//! somebody says which.
+//! Both doors' rulings are total (korg's since sprint 095, klams's since 097):
+//! every tool is a read, a ruled write, or refused by name, and a tool either
+//! upstream adds fails here until somebody says which.
 
 mod common;
 
 use common::*;
 use korg_gate::allowlist::{
-    looks_read_only, DUET_ORIGIN, KLAMS_READ_TOOLS, KLAMS_REFUSED_TOOLS, READ_TOOLS, REFUSED_TOOLS,
-    WRITE_TOOLS,
+    looks_read_only, DUET_ORIGIN, KLAMS_READ_TOOLS, KLAMS_REFUSED_TOOLS, KLAMS_WRITE_TOOLS,
+    READ_TOOLS, REFUSED_TOOLS, WRITE_TOOLS,
 };
 use serde_json::json;
 
@@ -316,26 +316,35 @@ async fn duplicate_keys_cannot_smuggle_a_write_past_the_check() {
     assert_eq!(forwarded["params"]["name"], "get_item");
 }
 
-// ---- The klams door (sprint 094, WI 4293) ----
+// ---- The klams door (sprint 094, WI 4293; writes sprint 097, WI 4324) ----
+
+fn klams_rulings() -> impl Iterator<Item = &'static &'static str> {
+    KLAMS_READ_TOOLS
+        .iter()
+        .chain(KLAMS_WRITE_TOOLS)
+        .chain(KLAMS_REFUSED_TOOLS)
+}
+
+/// A UUID that is nobody's bound author: what a caller would send to write as
+/// another agent.
+const FOREIGN_AUTHOR: &str = "0195f000-0000-7000-8000-00000000beef";
 
 #[test]
 fn every_klams_tool_has_been_ruled_on_and_every_ruling_names_a_real_tool() {
     // klams has no read naming rule to lean on, so the ruling is total: a tool
-    // klams adds fails here until it is put in KLAMS_READ_TOOLS (published to
-    // the internet) or KLAMS_REFUSED_TOOLS.
+    // klams adds fails here until it is put in KLAMS_READ_TOOLS or
+    // KLAMS_WRITE_TOOLS (published to the internet) or KLAMS_REFUSED_TOOLS.
     let catalogue = klams_catalogue();
     let unruled: Vec<_> = catalogue
         .iter()
-        .filter(|n| {
-            !KLAMS_READ_TOOLS.contains(&n.as_str()) && !KLAMS_REFUSED_TOOLS.contains(&n.as_str())
-        })
+        .filter(|n| !klams_rulings().any(|r| r == n))
         .collect();
     assert!(
         unruled.is_empty(),
         "klams serves tools korg-gate has not ruled on: {unruled:?} \
          (crates/korg-gate/src/allowlist.rs)"
     );
-    for name in KLAMS_READ_TOOLS.iter().chain(KLAMS_REFUSED_TOOLS) {
+    for name in klams_rulings() {
         assert!(
             catalogue.iter().any(|c| c == name),
             "the klams rulings name `{name}`, which klams no longer serves — drop it"
@@ -351,21 +360,51 @@ fn every_klams_tool_has_been_ruled_on_and_every_ruling_names_a_real_tool() {
         ],
         "widening the klams door is a decision (korg+ GP-17), not an edit"
     );
+    assert_eq!(
+        KLAMS_WRITE_TOOLS,
+        [
+            "memory_add",
+            "memory_delete",
+            "memory_supersede",
+            "memory_update"
+        ],
+        "widening the klams door's writes is a decision (korg+ GP-17), not an edit"
+    );
+}
+
+#[test]
+fn the_klams_catalogue_is_a_full_scope_view() {
+    // A read-scope fixture would hide klams's admin tools from the forcing
+    // test, and so from any ruling.
+    let catalogue = klams_catalogue();
+    let admin: Vec<_> = catalogue
+        .iter()
+        .filter(|n| n.starts_with("memory_admin_"))
+        .collect();
+    assert!(
+        admin.len() >= 6,
+        "no admin tools in the fixture: {catalogue:?}"
+    );
+    for name in admin {
+        assert!(KLAMS_REFUSED_TOOLS.contains(&name.as_str()), "{name}");
+    }
 }
 
 #[tokio::test]
-async fn every_klams_write_is_refused_on_call_and_the_list_is_exactly_the_four_reads() {
+async fn every_refused_klams_tool_is_refused_on_call_and_the_list_is_reads_plus_writes() {
     let h = Harness::start().await;
     let (_, token, _) = h.klams_token().await;
 
-    // Every klams tool outside the four, plus a korg read: the klams door
-    // knows only its own list.
+    // Every klams tool outside the eight, plus a korg read and a korg write:
+    // the klams door knows only its own lists.
     let refused: Vec<String> = klams_catalogue()
         .into_iter()
-        .filter(|n| !KLAMS_READ_TOOLS.contains(&n.as_str()))
-        .chain(["get_item".to_string(), "search".to_string()])
+        .filter(|n| {
+            !KLAMS_READ_TOOLS.contains(&n.as_str()) && !KLAMS_WRITE_TOOLS.contains(&n.as_str())
+        })
+        .chain(["get_item".to_string(), "add_comment".to_string()])
         .collect();
-    assert_eq!(refused.len(), 9);
+    assert_eq!(refused.len(), KLAMS_REFUSED_TOOLS.len() + 2);
     for (i, name) in refused.iter().enumerate() {
         let body = h
             .rpc_at(
@@ -386,7 +425,7 @@ async fn every_klams_write_is_refused_on_call_and_the_list_is_exactly_the_four_r
             body["error"]["message"]
                 .as_str()
                 .unwrap()
-                .contains("exposes klams read-only"),
+                .contains("exposes klams's reads and the ruled write set"),
             "{body}"
         );
     }
@@ -424,7 +463,157 @@ async fn every_klams_write_is_refused_on_call_and_the_list_is_exactly_the_four_r
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     names.sort_unstable();
-    assert_eq!(names, KLAMS_READ_TOOLS);
+    let mut expected: Vec<&str> = KLAMS_READ_TOOLS
+        .iter()
+        .chain(KLAMS_WRITE_TOOLS)
+        .copied()
+        .collect();
+    expected.sort_unstable();
+    assert_eq!(names, expected);
+    assert_eq!(names.len(), 8);
+}
+
+#[tokio::test]
+async fn every_klams_write_reaches_klams_with_author_id_stripped() {
+    let h = Harness::start().await;
+    let (_, token, _) = h.klams_token().await;
+
+    for (i, name) in KLAMS_WRITE_TOOLS.iter().enumerate() {
+        let body = h
+            .rpc_at(
+                "/klams/mcp",
+                &token,
+                json!({"jsonrpc":"2.0","id":i,"method":"tools/call",
+                       "params":{"name":name,"arguments":{
+                           "kind":"knowledge","text":"t","id":"m-1",
+                           "author_id":FOREIGN_AUTHOR}}}),
+            )
+            .await
+            .text()
+            .await
+            .unwrap();
+        assert!(body.contains(&format!("called {name}")), "{name}: {body}");
+    }
+    let seen = h.klams_seen.0.lock().unwrap();
+    let calls: Vec<_> = seen
+        .iter()
+        .filter(|(_, m)| m["method"] == "tools/call")
+        .collect();
+    assert_eq!(calls.len(), KLAMS_WRITE_TOOLS.len());
+    for (headers, msg) in calls {
+        let name = msg["params"]["name"].as_str().unwrap();
+        let arguments = msg["params"]["arguments"].as_object().unwrap();
+        // klams fills the author bound to this header: claude-duet.
+        assert_eq!(headers["x-homelab-agent"], "claude-duet", "{name}");
+        assert!(
+            !arguments.contains_key("author_id"),
+            "{name} reached klams with an author_id: {msg}"
+        );
+        // Everything else passes as sent.
+        assert_eq!(arguments["kind"], "knowledge", "{name}");
+        assert_eq!(arguments["text"], "t", "{name}");
+        assert_eq!(arguments["id"], "m-1", "{name}");
+    }
+    assert!(
+        !seen
+            .iter()
+            .any(|(_, m)| m.to_string().contains(FOREIGN_AUTHOR)),
+        "the foreign author_id reached klams"
+    );
+}
+
+#[tokio::test]
+async fn memory_add_is_knowledge_only_and_unstrippable_arguments_are_refused() {
+    let h = Harness::start().await;
+    let (_, token, _) = h.klams_token().await;
+
+    let refused = [
+        (
+            "memory_add",
+            json!({"kind":"fact","fact_type":"UserFact","payload":{}}),
+        ),
+        ("memory_add", json!({"kind":"Knowledge","text":"t"})),
+        ("memory_add", json!({"kind":null,"text":"t"})),
+        ("memory_add", json!({"text":"t"})),
+        ("memory_add", json!(null)),
+        ("memory_delete", json!("author_id=someone")),
+        ("memory_update", json!(["id"])),
+    ];
+    for (i, (name, arguments)) in refused.iter().enumerate() {
+        let body = h
+            .rpc_at(
+                "/klams/mcp",
+                &token,
+                json!({"jsonrpc":"2.0","id":i,"method":"tools/call",
+                       "params":{"name":name,"arguments":arguments}}),
+            )
+            .await
+            .json_value()
+            .await;
+        assert_eq!(body["id"], i, "{name} {arguments}");
+        assert_eq!(body["error"]["code"], -32602, "{name} {arguments}: {body}");
+    }
+    let kind_refusal = h
+        .rpc_at(
+            "/klams/mcp",
+            &token,
+            json!({"jsonrpc":"2.0","id":"k","method":"tools/call",
+                   "params":{"name":"memory_add","arguments":{"kind":"fact"}}}),
+        )
+        .await
+        .json_value()
+        .await;
+    assert!(
+        kind_refusal["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("knowledge only"),
+        "the refusal must say why: {kind_refusal}"
+    );
+    assert!(
+        h.klams_seen.0.lock().unwrap().is_empty(),
+        "a refused klams write reached klams"
+    );
+
+    // A delete with no arguments key, or null ones, is forwarded as an
+    // object with nothing to strip — klams answers for the missing `id`.
+    for (i, params) in [
+        json!({"name":"memory_delete"}),
+        json!({"name":"memory_delete","arguments":null}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        h.rpc_at(
+            "/klams/mcp",
+            &token,
+            json!({"jsonrpc":"2.0","id":i,"method":"tools/call","params":params}),
+        )
+        .await;
+    }
+    let seen = h.klams_seen.0.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    for (_, msg) in seen.iter() {
+        assert_eq!(msg["params"]["arguments"], json!({}), "{msg}");
+    }
+}
+
+#[tokio::test]
+async fn a_klams_read_keeps_its_author_id_filter() {
+    let h = Harness::start().await;
+    let (_, token, _) = h.klams_token().await;
+    h.rpc_at(
+        "/klams/mcp",
+        &token,
+        json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+               "params":{"name":"event_search","arguments":{"author_id":FOREIGN_AUTHOR}}}),
+    )
+    .await;
+    let seen = h.klams_seen.0.lock().unwrap();
+    assert_eq!(
+        seen[0].1["params"]["arguments"]["author_id"],
+        FOREIGN_AUTHOR
+    );
 }
 
 #[tokio::test]
