@@ -23,7 +23,10 @@ use axum::Extension;
 use axum::Json;
 use serde_json::{json, Value};
 
-use crate::allowlist::{method_allowed, DUET_ORIGIN, ORIGIN_TOOLS};
+use crate::allowlist::{
+    method_allowed, DUET_ORIGIN, KLAMS_AUTHOR_FIELD, KLAMS_KNOWLEDGE_KIND, KLAMS_WRITE_TOOLS,
+    ORIGIN_TOOLS,
+};
 use crate::config::{AGENT_HEADER, AGENT_NAME};
 use crate::door::Door;
 use crate::AppState;
@@ -200,8 +203,14 @@ pub async fn post_mcp(
         }
     };
     let filter_tools = method == "tools/list" && id.is_some();
-    if door == Door::Korg && method == "tools/call" {
-        if let Err(r) = stamp_origin(&mut message) {
+    if method == "tools/call" {
+        let rewritten = match door {
+            Door::Korg => stamp_origin(&mut message),
+            Door::Klams => strip_klams_author(&mut message),
+        };
+        if let Err(r) = rewritten {
+            let tool = message["params"]["name"].as_str().unwrap_or("");
+            tracing::warn!(client = %&client[..8.min(client.len())], door = door.name(), tool, "tools/call arguments refused");
             return refuse(id, -32602, r);
         }
     }
@@ -276,6 +285,43 @@ fn stamp_origin(message: &mut Value) -> Result<(), String> {
         return Err("tools/call arguments must be an object".into());
     };
     arguments.insert("origin".into(), Value::String(DUET_ORIGIN.into()));
+    Ok(())
+}
+
+/// Prepare a klams write (`KLAMS_WRITE_TOOLS`) for forwarding: strip
+/// `author_id`, so klams attributes it to the author bound to the identity the
+/// gate forwards as, and refuse a `memory_add` whose `kind` is not exactly
+/// `knowledge`. Arguments that are not an object are refused, as on the korg
+/// door; reads pass untouched (`event_search`'s `author_id` is a filter).
+fn strip_klams_author(message: &mut Value) -> Result<(), String> {
+    let Some(params) = message.get_mut("params").and_then(Value::as_object_mut) else {
+        return Ok(());
+    };
+    let tool = params
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if !KLAMS_WRITE_TOOLS.contains(&tool.as_str()) {
+        return Ok(());
+    }
+    let arguments = params
+        .entry("arguments")
+        .or_insert_with(|| Value::Object(Default::default()));
+    if arguments.is_null() {
+        *arguments = Value::Object(Default::default());
+    }
+    let Some(arguments) = arguments.as_object_mut() else {
+        return Err("tools/call arguments must be an object".into());
+    };
+    if tool == "memory_add"
+        && arguments.get("kind").and_then(Value::as_str) != Some(KLAMS_KNOWLEDGE_KIND)
+    {
+        return Err(format!(
+            "memory_add through korg-gate writes knowledge only: `kind` must be \"{KLAMS_KNOWLEDGE_KIND}\""
+        ));
+    }
+    arguments.remove(KLAMS_AUTHOR_FIELD);
     Ok(())
 }
 
@@ -538,11 +584,11 @@ mod tests {
     fn klams_priming_event_passes_and_its_tool_list_is_filtered_by_its_own_list() {
         // The exact shape klams 0.1.55 answers `tools/list` with: an empty
         // priming event, then the answer.
-        let body = "data: \nid: 0/0\nretry: 3000\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"memory_add\"},{\"name\":\"memory_search\"},{\"name\":\"get_item\"}]}}\n\n";
+        let body = "data: \nid: 0/0\nretry: 3000\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"memory_append_event\"},{\"name\":\"memory_search\"},{\"name\":\"get_item\"}]}}\n\n";
         let out = filter_sse(body, Door::Klams).unwrap();
         assert!(out.starts_with("id: 0/0\nretry: 3000\ndata: \n\n"), "{out}");
         assert!(out.contains("memory_search"));
-        assert!(!out.contains("memory_add"));
+        assert!(!out.contains("memory_append_event"));
         assert!(
             !out.contains("get_item"),
             "a korg tool passed the klams door"

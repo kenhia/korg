@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Read-only, OAuth-gated public front door to korg's and klams's MCP endpoints (Claude Duet)"
+description = "OAuth-gated public front door to korg's and klams's MCP endpoints (Claude Duet): reads and a ruled write set"
 
 # Deliberately no korg-core: the gate is an HTTP proxy plus an OAuth server and
 # nothing else, so it carries no sqlx/Postgres and cross-builds for the Pi

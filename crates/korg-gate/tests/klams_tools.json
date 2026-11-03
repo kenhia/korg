@@ -605,5 +605,158 @@
       ],
       "type": "object"
     }
+  },
+  {
+    "name": "memory_admin_restore",
+    "description": "Admin: restore a soft-deleted memory by id (clears deleted_at).",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "memory_admin_hard_delete",
+    "description": "Admin: permanently delete a memory by id. Events are not deletable.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "memory_admin_list_deleted",
+    "description": "Admin: paginate soft-deleted facts and knowledge for rogue-agent recovery (FR-013).",
+    "inputSchema": {
+      "$defs": {
+        "DeletableKindFilter": {
+          "enum": [
+            "fact",
+            "knowledge"
+          ],
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "author_id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cursor": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kinds": {
+          "default": null,
+          "items": {
+            "$ref": "#/$defs/DeletableKindFilter"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "since": {
+          "default": null,
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "memory_admin_list_authors",
+    "description": "Admin: list authors with the counts that decide whether one is safe to remove (facts, events, knowledge, recorded soft-deletes), plus the agent_names held by more than one row. Set only_empty to see just the removable ones.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "agent_name": {
+          "default": null,
+          "description": "Substring match on `agent_name`. Omit to list every author.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "only_empty": {
+          "default": false,
+          "description": "Only authors owning nothing — the removal candidates.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "memory_admin_remove_author",
+    "description": "Admin: remove an author row. Refused with AUTHOR_HAS_MEMORIES while it still owns anything — merge it first. Never reassigns silently.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "author_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "author_id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "memory_admin_merge_authors",
+    "description": "Admin: reassign every fact, event, knowledge point and soft-delete attribution from one author to another, then remove the source. Use to collapse duplicate agent_name rows.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "from_author_id": {
+          "description": "The author to drain and remove.",
+          "type": "string"
+        },
+        "into_author_id": {
+          "description": "The author that inherits everything.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_author_id",
+        "into_author_id"
+      ],
+      "type": "object"
+    }
   }
 ]

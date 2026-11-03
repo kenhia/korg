@@ -11,11 +11,12 @@
 //! Sprint 095 (WI 4244) opened the korg door to a ruled set of writes, the
 //! scheduling set Claude Duet needs. Every other korg write is refused by name.
 //!
-//! klams's door (sprint 094) has its own list, and since klams has no naming
+//! klams's door (sprint 094) has its own lists, and since klams has no naming
 //! rule to lean on, its forcing test is stricter: every tool in klams's
-//! committed catalogue (`tests/klams_tools.json`) must be in
-//! [`KLAMS_READ_TOOLS`] or [`KLAMS_REFUSED_TOOLS`], so a tool klams adds fails
-//! the build until somebody rules on it.
+//! committed catalogue (`tests/klams_tools.json`, a full-scope view) must be in
+//! [`KLAMS_READ_TOOLS`], [`KLAMS_WRITE_TOOLS`] or [`KLAMS_REFUSED_TOOLS`], so a
+//! tool klams adds fails the build until somebody rules on it. Sprint 097
+//! (WI 4324) opened it to a ruled set of knowledge writes.
 //!
 //! **JSON-RPC methods** are the MCP lifecycle and the two tool methods. Nothing
 //! else — resources, prompts, completion, logging, sampling responses — passes.
@@ -107,6 +108,8 @@ pub const ORIGIN_TOOLS: &[&str] = &["add_comment", "relate"];
 pub const DUET_ORIGIN: &str = "claude-duet";
 
 /// Read-only klams tools exposed through the gate's klams door (WI 4293).
+/// `event_search` takes an `author_id` too, as a filter; reads are forwarded
+/// untouched.
 /// Sorted; keep it that way.
 pub const KLAMS_READ_TOOLS: &[&str] = &[
     "event_search",
@@ -115,19 +118,46 @@ pub const KLAMS_READ_TOOLS: &[&str] = &[
     "memory_search",
 ];
 
-/// klams tools ruled *out* of the klams door: every write, and identity
-/// registration. Not consulted at runtime — anything not in
-/// [`KLAMS_READ_TOOLS`] is refused — but the catalogue test needs it to tell a
-/// tool somebody ruled on from one nobody has seen yet. Sorted.
-pub const KLAMS_REFUSED_TOOLS: &[&str] = &[
-    "dissent_propose",
+/// klams writes exposed through the klams door (WI 4324, ruled by Ken
+/// 2026-11-02): add, supersede, update and delete knowledge. `memory_add` is
+/// further narrowed to [`KLAMS_KNOWLEDGE_KIND`], and every one of these has
+/// `author_id` stripped ([`KLAMS_AUTHOR_FIELD`]) so klams attributes the write
+/// to the identity the gate's header binds. Widening it is a decision
+/// (korg+ GP-17), not an edit. Sorted; keep it that way.
+pub const KLAMS_WRITE_TOOLS: &[&str] = &[
     "memory_add",
-    "memory_append_event",
     "memory_delete",
     "memory_supersede",
     "memory_update",
+];
+
+/// klams tools ruled *out* of the klams door: events and dissents (irreversible
+/// or not Duet's to propose), identity registration, and every admin-scope tool
+/// klams serves. Not consulted at runtime — anything in neither
+/// [`KLAMS_READ_TOOLS`] nor [`KLAMS_WRITE_TOOLS`] is refused — but the
+/// catalogue test needs it to tell a tool somebody ruled on from one nobody has
+/// seen yet. Sorted.
+pub const KLAMS_REFUSED_TOOLS: &[&str] = &[
+    "dissent_propose",
+    "memory_admin_hard_delete",
+    "memory_admin_list_authors",
+    "memory_admin_list_deleted",
+    "memory_admin_merge_authors",
+    "memory_admin_remove_author",
+    "memory_admin_restore",
+    "memory_append_event",
     "register_author",
 ];
+
+/// The one `memory_add` kind the klams door forwards. Facts (user, task, env)
+/// stay out: the gate refuses a `memory_add` whose `arguments.kind` is not
+/// exactly this.
+pub const KLAMS_KNOWLEDGE_KIND: &str = "knowledge";
+
+/// The argument the gate strips from every [`KLAMS_WRITE_TOOLS`] call, so klams
+/// fills in the author bound to the forwarded identity rather than one the
+/// caller named. Strip, don't stamp: the gate does not know that author's id.
+pub const KLAMS_AUTHOR_FIELD: &str = "author_id";
 
 /// JSON-RPC methods the gate forwards, on every door.
 ///
@@ -147,6 +177,11 @@ pub const METHODS: &[&str] = &[
 /// Whether the korg door lets `name` through: a ruled read or a ruled write.
 pub fn tool_allowed(name: &str) -> bool {
     READ_TOOLS.binary_search(&name).is_ok() || WRITE_TOOLS.binary_search(&name).is_ok()
+}
+
+/// Whether the klams door lets `name` through: a ruled read or a ruled write.
+pub fn klams_tool_allowed(name: &str) -> bool {
+    KLAMS_READ_TOOLS.binary_search(&name).is_ok() || KLAMS_WRITE_TOOLS.binary_search(&name).is_ok()
 }
 
 pub fn method_allowed(method: &str) -> bool {
@@ -200,15 +235,29 @@ mod tests {
 
     #[test]
     fn klams_lists_are_sorted_and_disjoint() {
-        for list in [KLAMS_READ_TOOLS, KLAMS_REFUSED_TOOLS] {
+        for list in [KLAMS_READ_TOOLS, KLAMS_WRITE_TOOLS, KLAMS_REFUSED_TOOLS] {
             let mut sorted = list.to_vec();
             sorted.sort_unstable();
             sorted.dedup();
             assert_eq!(sorted, list);
         }
-        for name in KLAMS_READ_TOOLS {
-            assert!(!KLAMS_REFUSED_TOOLS.contains(name), "{name} is in both");
+        for name in KLAMS_READ_TOOLS.iter().chain(KLAMS_WRITE_TOOLS) {
+            assert!(
+                !KLAMS_REFUSED_TOOLS.contains(name),
+                "{name} is allowed and refused"
+            );
         }
+        for name in KLAMS_WRITE_TOOLS {
+            assert!(
+                !KLAMS_READ_TOOLS.contains(name),
+                "{name} is a read and a write"
+            );
+        }
+        assert!(klams_tool_allowed("memory_add"));
+        assert!(klams_tool_allowed("memory_search"));
+        assert!(!klams_tool_allowed("memory_append_event"));
+        assert!(!klams_tool_allowed("memory_admin_restore"));
+        assert!(!klams_tool_allowed("get_item"));
     }
 
     #[test]

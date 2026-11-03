@@ -489,7 +489,10 @@ async fn klams_door_full_flow_then_a_read_reaches_klams_stamped() {
     assert_eq!(prm["resource"], resource);
     assert_eq!(prm["authorization_servers"], json!([h.base]));
     assert_eq!(prm["scopes_supported"], json!(["klams:read"]));
-    assert_eq!(prm["resource_name"], "klams (read-only)");
+    assert_eq!(
+        prm["resource_name"], "klams",
+        "sprint 097: no longer read-only"
+    );
 
     // 3. The sign-in page names klams and carries the resource to the POST.
     let client_id = h.register().await;
@@ -514,8 +517,10 @@ async fn klams_door_full_flow_then_a_read_reaches_klams_stamped() {
         .text()
         .await
         .unwrap();
-    assert!(html.contains("wants <strong>read-only</strong> access to klams."));
-    assert!(html.contains(">Allow read access</button>"));
+    // Sprint 097: klams's door takes writes too.
+    assert!(html.contains("wants access to klams's reads and the ruled write set."));
+    assert!(html.contains(">Allow access</button>"));
+    assert!(!html.contains("read-only"));
     assert!(html.contains(&format!(
         "<input type=\"hidden\" name=\"resource\" value=\"{resource}\">"
     )));
