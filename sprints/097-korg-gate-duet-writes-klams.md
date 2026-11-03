@@ -77,10 +77,6 @@ krgate. It follows sprint 095's pattern. This sprint ran as a karc leg on kai
   button reads **Allow access** (was **Allow read access**). The refusal now
   reads "exposes klams's reads and the ruled write set". `sign_in_button` is
   now one string for both doors.
-- **A refused rewrite logs a WARN** (`tools/call arguments refused … door=…
-  tool=…`) on either door. Before this change, a korg-door unstampable call
-  was refused with no log line. The `tools/call` INFO line still comes first,
-  so the journal shows the call and then its refusal.
 
 ## What shipped
 
@@ -183,6 +179,14 @@ krgate. It follows sprint 095's pattern. This sprint ran as a karc leg on kai
 
 ## Repaired in passing
 
+- **A refused argument rewrite left no log line.** Before this change, a
+  korg-door `tools/call` that could not be stamped was refused silently. Now
+  either door logs a WARN for it (`tools/call arguments refused … door=…
+  tool=…`), right after the `tools/call` INFO line, so the journal shows the
+  call and then its refusal. It is log-only, and the survey shows korg-door
+  responses unchanged. The overseer ruled it a repair in passing (korg:4326
+  comment 4296, ruling 3).
+
 - **`deploy/korg-gate/korg-gate.service` still said read-only** (the nit 095's
   ops half recorded and did not file). Its header comment and `Description=`
   now say "OAuth front door to korg and klams MCP". The same stale wording was
@@ -191,6 +195,15 @@ krgate. It follows sprint 095's pattern. This sprint ran as a karc leg on kai
   install in the ops half. Proof: `just check` and a grep for
   `read-only` under `crates/korg-gate`, `deploy/` and `docs/gate.md` (only
   historical mentions remain).
+
+## Overseer rulings (korg:4326 comment 4296)
+
+1. **Accepted:** the full-scope catalogue taken from klams source. Minting an
+   admin identity only to read the list would have been an auth change in
+   klams, which is outside this slice.
+2. The fixture refresh after slice 1 goes into korg:4308's notes. The test
+   only checks names, so it does not hold this ship.
+3. **Accepted:** the WARN line, as a repair in passing (above).
 
 ## Follow-ups
 
