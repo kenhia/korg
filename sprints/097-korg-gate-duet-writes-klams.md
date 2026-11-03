@@ -210,3 +210,20 @@ krgate. It follows sprint 095's pattern. This sprint ran as a karc leg on kai
 - None filed. The fixture refresh after slice 1 is noted above. It is a
   name-preserving description refresh, and slice 1's own item already asks for
   a note to this leg on any description diff.
+
+## Deployed
+
+Nothing was deployed from this ship, on purpose. The overseer's clearance said
+so (korg:4326 comment 4296), for the same reason as sprints 094 and 095.
+
+The declared step is `deploy-kubsdb`, which rebuilds the korg-api image from
+`main`. The squash `fd6593d` (PR #105) changed only `crates/korg-gate/`,
+`deploy/korg-gate/`, `docs/gate.md`, the README and this record.
+`git diff 1990b09..fd6593d` is empty for `Cargo.lock`, the root `Cargo.toml`,
+`crates/korg-api`, `korg-core`, `korg-mcp`, `korg-img`, `web/`, `contract/` and
+the `Dockerfile`, so kubsdb stays on its recorded release.
+
+The gate goes to krgate by hand in step 3 of korg:4308 (claude-duet), following
+`docs/gate.md` under "Turning the klams writes on", once slice 1 (korg:4325)
+is deployed on kubs0. Until then krgate runs the sprint-095 gate: korg reads
+and the scheduling writes, and klams reads only.
