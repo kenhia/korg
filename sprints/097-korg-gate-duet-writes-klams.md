@@ -227,3 +227,44 @@ The gate goes to krgate by hand in step 3 of korg:4308 (claude-duet), following
 `docs/gate.md` under "Turning the klams writes on", once slice 1 (korg:4325)
 is deployed on kubs0. Until then krgate runs the sprint-095 gate: korg reads
 and the scheduling writes, and klams reads only.
+
+## Deployed, ops half (korg:4308, 2026-11-03)
+
+This was run interactively. The overseer session on cleo did the identity,
+deploy, checks and read-back; Ken did the connector setting and the prompts.
+The Duet-side account is claude-duet `sprints/003-klams-writes-on.md`.
+
+1. **klams identity (kubs0, 12:36 PST).** `claude-duet` was widened to
+   `read,write,manage`. Proven live: a foreign `author_id` is refused, and an
+   add with no `author_id` is stored as `claude-duet`.
+2. **Deploy (krgate, 12:36 PST).** `just gate-pi` on kai from main `edd03d7`,
+   sha256 `f7e9e752…6a86`, replacing the 095 binary `c92eba40…`. Copied to
+   krgate through kai, since cleo has no key there. Installed the binary and
+   the unit from `deploy/korg-gate/`, ran `daemon-reload`, restarted. Operator
+   checks:
+   - the startup line names both upstreams;
+   - klams metadata `resource_name: "klams"` (it was `"klams (read-only)"`);
+   - korg's is unchanged;
+   - both doors return 401 unauthenticated.
+   The unit's "read-only" `Description=`, the nit from 095, went out with it.
+3. **Phone tests (Ken, 17:25–17:35 PST).** Gate journal, door `klams`,
+   times in UTC on 11-04:
+   - `memory_add` 01:25:25
+   - `memory_update` 01:26:17
+   - `memory_supersede` 01:26:48
+   - `memory_delete` 01:32:07, after claude.ai's approval prompt
+   - `memory_add` with kind `fact` 01:33:19, followed by WARN
+     `tools/call arguments refused`; Duet saw "writes knowledge only"
+
+   Every stored record was authored `claude-duet`. A tag search afterwards
+   returns nothing.
+4. **Fixture refresh.** `tests/klams_tools.json` was refreshed from live
+   klams 0.1.57, using the same method as the build: the eleven tools a
+   `claude` identity sees were replaced with the live `tools/list` output, and
+   the six admin tools were kept. klams-mcp's admin descriptors are unchanged
+   between `8ae5c7a` and `268954a`. The diff is slice 1's `author_id` wording
+   on `memory_add`, `memory_append_event` and `dissent_propose` and nothing
+   else. Names are unchanged, so the forcing test is unaffected.
+
+**Gotcha:** krgate's time zone is not UTC. `journalctl --since` without a
+zone reads local time, so pass `UTC`.

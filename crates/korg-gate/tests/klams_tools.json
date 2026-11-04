@@ -58,7 +58,7 @@
   },
   {
     "name": "memory_add",
-    "description": "Persist a fact or knowledge memory. Set kind=\"fact\" with fact_type + payload, or kind=\"knowledge\" with text (+ optional tags/source_path/repo). author_id defaults to the bearer token's bound author.",
+    "description": "Persist a fact or knowledge memory. Set kind=\"fact\" with fact_type + payload, or kind=\"knowledge\" with text (+ optional tags/source_path/repo). Omit author_id — the write is attributed to the author bound to your bearer token; another author's id is refused.",
     "inputSchema": {
       "$defs": {
         "FactTypeArg": {
@@ -97,7 +97,7 @@
         },
         "author_id": {
           "default": "00000000-0000-0000-0000-000000000000",
-          "description": "Optional: defaults to the author bound to the caller's bearer\ntoken (WI #62). Pass explicitly to write as a different\nregistered author.",
+          "description": "Optional: defaults to the author bound to the caller's bearer\ntoken (WI #62). If supplied it must equal that author — a\ndifferent author's id is refused with `INSUFFICIENT_SCOPE`\n(sprint 057, WI 4323). Omit it.",
           "type": [
             "string",
             "null"
@@ -279,13 +279,13 @@
   },
   {
     "name": "memory_append_event",
-    "description": "Append an immutable event (deployment, run, signal). author_id defaults to the bearer token's bound author.",
+    "description": "Append an immutable event (deployment, run, signal). Omit author_id — the write is attributed to the author bound to your bearer token; another author's id is refused.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "author_id": {
           "default": "00000000-0000-0000-0000-000000000000",
-          "description": "Optional: defaults to the author bound to the caller's bearer\ntoken (WI #62). Pass explicitly to write as a different\nregistered author.",
+          "description": "Optional: defaults to the author bound to the caller's bearer\ntoken (WI #62). If supplied it must equal that author — a\ndifferent author's id is refused with `INSUFFICIENT_SCOPE`\n(sprint 057, WI 4323). Omit it.",
           "type": [
             "string",
             "null"
@@ -564,13 +564,13 @@
   },
   {
     "name": "dissent_propose",
-    "description": "File a dissent against a live canonical fact (proposed correction + reason). Lands as a pending AgentProposal a human promotes or discards over the dissents endpoints.",
+    "description": "File a dissent against a live canonical fact (proposed correction + reason). Lands as a pending AgentProposal a human promotes or discards over the dissents endpoints. Omit author_id — the dissent is attributed to the author bound to your bearer token; another author's id is refused.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "author_id": {
           "default": "00000000-0000-0000-0000-000000000000",
-          "description": "Optional: defaults to the author bound to the caller's bearer\ntoken (WI #62). Pass explicitly to write as a different\nregistered author.",
+          "description": "Optional: defaults to the author bound to the caller's bearer\ntoken (WI #62). If supplied it must equal that author — a\ndifferent author's id is refused with `INSUFFICIENT_SCOPE`\n(sprint 057, WI 4323). Omit it.",
           "type": [
             "string",
             "null"
