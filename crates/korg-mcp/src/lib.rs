@@ -30,7 +30,7 @@ pub fn server_instructions() -> &'static str {
      the rows their defaults hid — so a narrowed view can never be mistaken for the \
      whole corpus. list_work_items carries `omitted` too, for the \
      same reason: it is lean by default (no content/details) and hides `closed` \
-     items unless you pass wi_status \"closed\" or \"all\". \
+     and `cut` items unless you pass that status or \"all\". \
      Every read that filters archived rows excludes them by default: pass \
      `archived: null` for both, `true` for archived only. Writes take a project or area by name \
      (`project`/`area`) or by id (`project_id`/`area_id`), never both — except a program, \

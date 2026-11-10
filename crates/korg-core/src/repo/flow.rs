@@ -9,7 +9,8 @@ use sqlx::PgPool;
 use time::OffsetDateTime;
 use ts_rs::TS;
 
-use super::common::report_date_fmt;
+use super::common::{report_date_fmt, sql_list};
+use crate::vocab::WI_TERMINAL_STATUSES;
 
 /// How many days of flow [`work_item_flow`] serves when the caller does not
 /// say (#1318).
@@ -75,8 +76,14 @@ pub struct WorkItemFlowDay {
     /// Work items that moved to `closed` this day, from the transition log.
     /// An item that closes on two different days in the window counts on both;
     /// two closes on one day count once.
+    ///
+    /// "Closed" here means *left the backlog*: a move into any
+    /// [`WI_TERMINAL_STATUSES`] value, so `cut` (#4366) counts too, and a move
+    /// between two terminal values (re-labelling `closed` as `cut`) does not.
+    /// Splitting it would break the series' own arithmetic — `backlog` falls
+    /// by exactly what this counts.
     pub closed: i64,
-    /// Open (non-`closed`) work items at this day's end, reconstructed from
+    /// Open (non-terminal) work items at this day's end, reconstructed from
     /// the transition log. Today's value equals what `list_work_items`
     /// reports as `total`.
     pub backlog: i64,
@@ -96,7 +103,7 @@ pub struct WorkItemFlowSeries {
     /// length from here rather than assuming the default window (kfdc #1319
     /// does), so widening the default needs no consumer edit.
     pub days: Vec<WorkItemFlowDay>,
-    /// Open (non-`closed`) work items at the end of the day **immediately
+    /// Open (non-terminal) work items at the end of the day **immediately
     /// before** `days[0]` — the window's baseline, and the one number the
     /// series structurally cannot supply (#1432).
     ///
@@ -162,7 +169,7 @@ pub async fn work_item_flow(
 ) -> Result<WorkItemFlowSeries> {
     let days = days.unwrap_or(FLOW_DAYS_DEFAULT).max(1);
     let generated: OffsetDateTime = sqlx::query_scalar("SELECT now()").fetch_one(pool).await?;
-    let mut rows = sqlx::query_as::<_, WorkItemFlowDay>(
+    let mut rows = sqlx::query_as::<_, WorkItemFlowDay>(&format!(
         "WITH bounds AS ( \
             SELECT b0.today, \
                    b0.today - (LEAST($1, b0.today - $3::date + 1)::int - 1) AS start_day \
@@ -174,7 +181,7 @@ pub async fn work_item_flow(
                    (n.created AT TIME ZONE $2::text)::date AS created_day, \
                    w.wi_status, \
                    (SELECT max(t.at) FROM transition t \
-                     WHERE t.node_id = n.id AND t.to_status = 'closed') AS last_close_at \
+                     WHERE t.node_id = n.id AND t.to_status = ANY({terminal})) AS last_close_at \
               FROM node n \
               JOIN workitem w ON w.node_id = n.id \
              WHERE NOT n.archived \
@@ -187,7 +194,8 @@ pub async fn work_item_flow(
                    wi.created \
               FROM transition t \
               JOIN wi ON wi.id = t.node_id \
-             WHERE t.to_status = 'closed' \
+             WHERE t.to_status = ANY({terminal}) \
+               AND COALESCE(t.from_status, '') <> ALL({terminal}) \
              ORDER BY t.node_id, ((t.at AT TIME ZONE $2::text)::date), t.at \
          ) \
          SELECT d.day, \
@@ -201,10 +209,10 @@ pub async fn work_item_flow(
                               AND tr.at >= ((d.day + 1)::timestamp AT TIME ZONE $2::text) \
                             ORDER BY tr.at ASC, tr.id ASC \
                             LIMIT 1), \
-                          wi.wi_status) <> 'closed') AS backlog, \
+                          wi.wi_status) <> ALL({terminal})) AS backlog, \
                 (SELECT count(*) FROM wi \
                   WHERE wi.created_day = d.day \
-                    AND (CASE WHEN wi.wi_status = 'closed' \
+                    AND (CASE WHEN wi.wi_status = ANY({terminal}) \
                               THEN COALESCE(wi.last_close_at, now()) \
                               ELSE now() END) - wi.created \
                         > make_interval(days => $4::int)) AS added_durable, \
@@ -215,7 +223,8 @@ pub async fn work_item_flow(
                                         b.today, interval '1 day')::date AS day \
                    FROM bounds b) d \
           ORDER BY d.day",
-    )
+        terminal = sql_list(&WI_TERMINAL_STATUSES)
+    ))
     .bind(days)
     .bind(tz)
     .bind(FLOW_TRANSITION_HORIZON)

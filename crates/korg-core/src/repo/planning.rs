@@ -5,6 +5,9 @@ use serde::Serialize;
 use sqlx::PgPool;
 use ts_rs::TS;
 
+use super::common::sql_list;
+use crate::vocab::WI_TERMINAL_STATUSES;
+
 // --- the planning rail rollup (WI #823) -------------------------------------
 
 /// One project's planning weather, for the Planning page's project rail
@@ -87,7 +90,7 @@ pub struct PlanningRollupRow {
 /// `coalesce` on both counts is what keeps a project with nothing in it in the
 /// result with three zeroes rather than three nulls.
 pub async fn planning_rollup(pool: &PgPool) -> Result<Vec<PlanningRollupRow>> {
-    Ok(sqlx::query_as::<_, PlanningRollupRow>(
+    Ok(sqlx::query_as::<_, PlanningRollupRow>(&format!(
         "WITH live_covers AS ( \
              SELECT DISTINCT r.right_id AS node_id \
                FROM relationship r \
@@ -101,7 +104,7 @@ pub async fn planning_rollup(pool: &PgPool) -> Result<Vec<PlanningRollupRow>> {
                FROM workitem w \
                JOIN node n ON n.id = w.node_id \
                LEFT JOIN live_covers lc ON lc.node_id = w.node_id \
-              WHERE NOT n.archived AND w.wi_status <> 'closed' \
+              WHERE NOT n.archived AND w.wi_status <> ALL({wi_terminal}) \
               GROUP BY n.project_id \
          ), props AS ( \
              SELECT sn.project_id, count(*) AS proposals \
@@ -119,7 +122,8 @@ pub async fn planning_rollup(pool: &PgPool) -> Result<Vec<PlanningRollupRow>> {
            LEFT JOIN wi ON wi.project_id = pj.id \
            LEFT JOIN props ON props.project_id = pj.id \
           ORDER BY pj.name",
-    )
+        wi_terminal = sql_list(&WI_TERMINAL_STATUSES)
+    ))
     .fetch_all(pool)
     .await?)
 }

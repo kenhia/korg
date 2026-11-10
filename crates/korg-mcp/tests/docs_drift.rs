@@ -851,7 +851,7 @@ fn the_extractor_reads_the_spellings_descriptions_use() {
         "a backticked comma list is an enumeration"
     );
     assert!(
-        run("one count per status: open/resolved/done/closed/parked, which sum to it")
+        run("one count per status: open/resolved/done/closed/parked/cut, which sum to it")
             .contains(&set(&korg_core::vocab::WI_STATUSES)),
         "a bare slash run is an enumeration"
     );

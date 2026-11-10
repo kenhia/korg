@@ -401,7 +401,8 @@
       "full_read": "get_work_item",
       "omitted_keys": [
         "archived",
-        "closed"
+        "closed",
+        "cut"
       ],
       "only_on_full_read": [
         "archived",

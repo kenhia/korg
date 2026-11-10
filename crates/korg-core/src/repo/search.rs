@@ -39,11 +39,13 @@ const HEADLINE: &str =
 /// Every searchable document, as one relation. `terminal` is each kind's own
 /// "hidden from the live list" state, so search's default scope agrees with
 /// `list_work_items`, `list_proposals`, `list_programs` and the kanban rather
-/// than inventing a fourth rule.
+/// than inventing a fourth rule. The work-item arm restates
+/// [`crate::vocab::WI_TERMINAL_STATUSES`] because this is a `const`; the
+/// `search_terminal_matches_vocab` test fences the two together.
 const DOCS: &str = r#"
 node_state AS (
     SELECT n.id, n.archived, pj.name AS project, n.updated, n.kind AS owner_kind,
-           CASE WHEN w.node_id IS NOT NULL THEN w.wi_status = 'closed'
+           CASE WHEN w.node_id IS NOT NULL THEN w.wi_status IN ('closed', 'cut')
                 WHEN p.node_id IS NOT NULL THEN p.status::text IN ('done', 'declined')
                 WHEN g.node_id IS NOT NULL THEN g.status = 'done'
                 WHEN c.node_id IS NOT NULL THEN c.status::text IN ('Done', 'Cut')
@@ -171,7 +173,7 @@ impl SearchHit {
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "korg.ts")]
 pub struct SearchOmitted {
-    /// Rows in their kind's own terminal state — `closed` work items,
+    /// Rows in their kind's own terminal state — `closed`/`cut` work items,
     /// `done`/`declined` proposals, `done` programs, `Done`/`Cut` cards.
     pub terminal: i64,
     pub archived: i64,
@@ -364,4 +366,26 @@ async fn count(
             archived: row.2,
         },
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DOCS;
+    use crate::vocab::WI_TERMINAL_STATUSES;
+
+    /// `DOCS` is a `const` and cannot interpolate the vocabulary, so its
+    /// work-item terminal list is a literal. This keeps it equal to the set
+    /// `list_work_items` hides (#4366 added `cut` to both).
+    #[test]
+    fn search_terminal_matches_vocab() {
+        let list = WI_TERMINAL_STATUSES
+            .iter()
+            .map(|s| format!("'{s}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert!(
+            DOCS.contains(&format!("w.wi_status IN ({list})")),
+            "search's work-item terminal arm must list exactly WI_TERMINAL_STATUSES"
+        );
+    }
 }

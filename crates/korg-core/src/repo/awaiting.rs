@@ -15,9 +15,12 @@ use time::OffsetDateTime;
 use ts_rs::TS;
 
 use crate::error::RepoError;
-use crate::vocab::{CARD_TERMINAL_STATUSES, PROGRAM_TERMINAL_STATUSES, PROPOSAL_TERMINAL_STATUSES};
+use crate::vocab::{
+    CARD_TERMINAL_STATUSES, PROGRAM_TERMINAL_STATUSES, PROPOSAL_TERMINAL_STATUSES,
+    WI_TERMINAL_STATUSES,
+};
 
-use super::common::require_node;
+use super::common::{require_node, sql_list};
 
 /// Set or clear the awaiting-Ken marker on any node.
 ///
@@ -148,29 +151,18 @@ pub async fn list_awaiting(pool: &PgPool) -> Result<Vec<AwaitingRow>> {
     Ok(sqlx::query_as::<_, AwaitingRow>(&format!(
         "{AWAITING_SELECT} WHERE n.awaiting_since IS NOT NULL \
             AND NOT n.archived \
-            AND COALESCE(w.wi_status, 'open') <> 'closed' \
+            AND COALESCE(w.wi_status, 'open') <> ALL({wi_terminal}) \
             AND COALESCE(sp.status::text, 'proposed') <> ALL({proposal_terminal}) \
             AND COALESCE(g.status, 'active') <> ALL({program_terminal}) \
             AND COALESCE(cd.status::text, 'Backlog') <> ALL({card_terminal}) \
           ORDER BY n.awaiting_since ASC, n.id ASC",
+        wi_terminal = sql_list(&WI_TERMINAL_STATUSES),
         proposal_terminal = sql_list(&PROPOSAL_TERMINAL_STATUSES),
         program_terminal = sql_list(&PROGRAM_TERMINAL_STATUSES),
         card_terminal = sql_list(&CARD_TERMINAL_STATUSES)
     ))
     .fetch_all(pool)
     .await?)
-}
-
-/// A vocabulary array as a SQL literal list, so the clearing rule and the lane
-/// filter read `vocab`'s terminal sets rather than restating them. The values
-/// are compile-time constants from `vocab`, never caller input.
-fn sql_list(values: &[&str]) -> String {
-    let inner = values
-        .iter()
-        .map(|v| format!("'{v}'"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("(ARRAY[{inner}])")
 }
 
 /// Clear the awaiting marker when the node has reached a state **only Ken
@@ -180,7 +172,8 @@ fn sql_list(values: &[&str]) -> String {
 /// item is the canonical awaiting-Ken state (`vocab` calls `resolved`
 /// "implemented; may still need a user test"), so clearing there would delete
 /// exactly the rows the lane exists to show. `closed` is different: `vocab`
-/// records it as Ken-only.
+/// records it as Ken-only — and so is `cut` (#4366), which is why this reads
+/// [`WI_TERMINAL_STATUSES`] rather than a literal.
 ///
 /// A card's version of that line is [`CARD_TERMINAL_STATUSES`] (#1389) — the
 /// kanban is Ken's board end to end, so reaching its last column is him
@@ -199,7 +192,7 @@ where
          WHERE n.id = $1 AND n.awaiting_since IS NOT NULL AND ( \
                n.archived \
             OR EXISTS (SELECT 1 FROM workitem w \
-                        WHERE w.node_id = n.id AND w.wi_status = 'closed') \
+                        WHERE w.node_id = n.id AND w.wi_status = ANY({wi_terminal})) \
             OR EXISTS (SELECT 1 FROM sprint_proposal sp \
                         WHERE sp.node_id = n.id \
                           AND sp.status::text = ANY({proposal_terminal})) \
@@ -208,6 +201,7 @@ where
             OR EXISTS (SELECT 1 FROM card cd \
                         WHERE cd.node_id = n.id \
                           AND cd.status::text = ANY({card_terminal})))",
+        wi_terminal = sql_list(&WI_TERMINAL_STATUSES),
         proposal_terminal = sql_list(&PROPOSAL_TERMINAL_STATUSES),
         program_terminal = sql_list(&PROGRAM_TERMINAL_STATUSES),
         card_terminal = sql_list(&CARD_TERMINAL_STATUSES)
