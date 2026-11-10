@@ -24,8 +24,8 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use crate::allowlist::{
-    method_allowed, DUET_ORIGIN, KLAMS_AUTHOR_FIELD, KLAMS_KNOWLEDGE_KIND, KLAMS_WRITE_TOOLS,
-    ORIGIN_TOOLS,
+    limited, method_allowed, DUET_ORIGIN, KLAMS_AUTHOR_FIELD, KLAMS_KNOWLEDGE_KIND,
+    KLAMS_WRITE_TOOLS, ORIGIN_TOOLS,
 };
 use crate::config::{AGENT_HEADER, AGENT_NAME};
 use crate::door::Door;
@@ -205,7 +205,7 @@ pub async fn post_mcp(
     let filter_tools = method == "tools/list" && id.is_some();
     if method == "tools/call" {
         let rewritten = match door {
-            Door::Korg => stamp_origin(&mut message),
+            Door::Korg => limit_korg_fields(&message).and_then(|()| stamp_origin(&mut message)),
             Door::Klams => strip_klams_author(&mut message),
         };
         if let Err(r) = rewritten {
@@ -261,6 +261,37 @@ pub async fn delete_mcp(
         Ok(up) => stream_back(up),
         Err(r) => *r,
     }
+}
+
+/// Refuse a call to a field-limited korg write (`LIMITED_TOOLS`) unless its
+/// arguments are an object carrying exactly the ruled fields: every one present,
+/// nothing else. Refused, never trimmed — a caller that asked for more than the
+/// gate forwards should hear so, not get half a write.
+fn limit_korg_fields(message: &Value) -> Result<(), String> {
+    let tool = message["params"]["name"].as_str().unwrap_or("");
+    let Some(limit) = limited(tool) else {
+        return Ok(());
+    };
+    let refusal = || {
+        format!(
+            "{tool} through korg-gate takes exactly {}",
+            limit
+                .fields
+                .iter()
+                .map(|f| format!("`{f}`"))
+                .collect::<Vec<_>>()
+                .join(" and ")
+        )
+    };
+    let Some(arguments) = message["params"]["arguments"].as_object() else {
+        return Err(refusal());
+    };
+    if arguments.len() != limit.fields.len()
+        || !limit.fields.iter().all(|f| arguments.contains_key(*f))
+    {
+        return Err(refusal());
+    }
+    Ok(())
 }
 
 /// Overwrite `origin` on a korg write that carries it (`ORIGIN_TOOLS`) with
@@ -490,10 +521,35 @@ pub fn filter_json(text: &str, door: Door) -> Option<Value> {
                 .and_then(Value::as_str)
                 .is_some_and(|n| door.allows(n))
         });
+        if door == Door::Korg {
+            for tool in tools.iter_mut() {
+                narrow_schema(tool);
+            }
+        }
     } else if msg.get("error").is_none() {
         return None;
     }
     Some(msg)
+}
+
+/// Cut a field-limited tool's advertised schema down to what the gate forwards
+/// (`LIMITED_TOOLS`), so the client is never offered an argument the gate
+/// would refuse. Every limited field becomes required.
+fn narrow_schema(tool: &mut Value) {
+    let Some(limit) = tool["name"].as_str().and_then(limited) else {
+        return;
+    };
+    tool["description"] = Value::String(limit.description.into());
+    if let Some(properties) = tool
+        .get_mut("inputSchema")
+        .and_then(|s| s.get_mut("properties"))
+        .and_then(Value::as_object_mut)
+    {
+        properties.retain(|k, _| limit.fields.contains(&k.as_str()));
+    }
+    if let Some(schema) = tool.get_mut("inputSchema").and_then(Value::as_object_mut) {
+        schema.insert("required".into(), json!(limit.fields));
+    }
 }
 
 /// Filter every `data:` payload in an SSE body that carries a tool list.
@@ -557,6 +613,53 @@ mod tests {
             .map(|t| t["name"].as_str().unwrap())
             .collect();
         assert_eq!(names, ["get_item", "create_work_item"]);
+    }
+
+    #[test]
+    fn update_schedule_is_advertised_with_only_the_fields_the_gate_forwards() {
+        // korg's real schema, so the test sees every field korg would offer.
+        let catalogue: Value =
+            serde_json::from_str(include_str!("../../korg-mcp/tests/tools_schema.json")).unwrap();
+        let real = catalogue
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "update_schedule")
+            .unwrap()
+            .clone();
+        assert!(real["inputSchema"]["properties"].get("cadence").is_some());
+        let others = catalogue
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "update_work_item")
+            .unwrap()
+            .clone();
+        let body = json!({"jsonrpc":"2.0","id":1,"result":{"tools":[real, others.clone()]}});
+        let v = filter_json(&body.to_string(), Door::Korg).unwrap();
+        let schedule = &v["result"]["tools"][0];
+        let mut fields: Vec<_> = schedule["inputSchema"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        fields.sort();
+        assert_eq!(fields, ["node_id", "status"]);
+        assert_eq!(
+            schedule["inputSchema"]["required"],
+            json!(["node_id", "status"])
+        );
+        assert_eq!(
+            schedule["inputSchema"]["properties"]["status"]["enum"],
+            json!(["active", "paused", "done"])
+        );
+        assert!(!schedule["description"]
+            .as_str()
+            .unwrap()
+            .contains("anchor_at"));
+        // A tool without a limit is advertised as korg serves it.
+        assert_eq!(v["result"]["tools"][1], others);
     }
 
     #[test]
