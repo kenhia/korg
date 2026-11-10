@@ -119,8 +119,9 @@ covers:
   — kfdc's Operations panel is the real consumer.
 
   Each slice's rollup reads `work-complete / verified-by-you / total` (#980),
-  where work-complete is `resolved + done + closed` — everything agents consider
-  finished — and verified is `closed`, the status reserved for Ken. The two are
+  where work-complete is `resolved + done + closed + cut` — everything agents
+  consider finished — and verified is `closed + cut`, the statuses reserved for
+  Ken (`cut`, #4366, is his decided-not-to-do). The two are
   separate figures because collapsing them misleads in the state that matters
   most: `N / <N / N` means all the work is done and it is waiting on Ken, which
   the old single count rendered as `0/N` and read as "not started". The bar
@@ -132,7 +133,7 @@ covers:
   Marking a program **done** is gated by a confirmation when any slice is
   unfinished (#1168), and the dialog names them: a slice is unfinished if its
   proposal has not reached `done`/`declined`, or if its work items are not all
-  work-complete (`resolved + done + closed` — the same completion split the
+  work-complete (`resolved + done + closed + cut` — the same completion split the
   rollup uses, so `parked` work counts as remaining). Enabled always rather
   than disabled until everything is finished, because the program that is
   genuinely over but carries a slice nobody will pick up must still close — and
