@@ -121,3 +121,64 @@ oversight. It follows the shape of sprints 095 and 097.
 ## Follow-ups
 
 - None filed.
+
+## Deployed
+
+Merged as `96b6ea0` (PR #109; CI green on the PR: rust 11m8s, web 23s). This
+was a gate-only deploy to **krgate** at 2026-11-09 22:01 PST, under the
+overseer's clearance (korg:4416 comment 4556).
+
+**The declared `deploy-kubsdb` step was skipped on purpose.** korg-api does
+not depend on korg-gate (`cargo tree -p korg-api` has no korg-gate edge), and
+the Dockerfile builds only `-p korg-api`. So the kubsdb image is unchanged,
+and the main korg service was neither rebuilt nor restarted. Another leg was
+using it.
+
+1. **Built from merged main** on kai with `just gate-pi`: aarch64 sha256
+   `7f01d3655f80df43…`. The x86 build of the same commit is `5eaf01f0…`,
+   identical to the branch build, since the gate's source did not change
+   between them.
+2. **Verified the exact build before installing it, without signing in to
+   the live gate** (the overseer's ruling).
+   - kai cannot run aarch64: it has no qemu or binfmt, and installing them
+     would be an unrecorded machine change. So the x86 build of `96b6ea0` ran
+     as a throwaway loopback instance on kai.
+   - The aarch64 binary itself ran as a throwaway on krgate, on
+     `127.0.0.1:18475`, with a `mktemp -d` state directory and a test
+     passphrase. It never touched the live gate's store or its Funnel port.
+   - Both instances ran `.scratch/099/smoke099.py` against live korg-api, and
+     both gave the same results:
+     - 35 tools, with `update_schedule` narrowed to `node_id` and `status`
+       (required).
+     - A forwarded `update_schedule` on a non-schedule id got korg's
+       `not_found`.
+     - `notes` and `cadence` were refused at the gate.
+     - **Negative control:** `create_schedule`, `materialize_schedule` and
+       `update_proposal` were refused.
+     - `get_schedule 3950` was still `done`, with `updated 02:56:46Z`
+       unchanged.
+   - Both instances were torn down: no process left, port 18475 closed,
+     state deleted.
+3. **Installed** with `sudo install -m 0755` and `systemctl restart
+   korg-gate`. There was no env or unit change. The previous binary was
+   `f7e9e752…`; it is the rollback target, and a copy was left at
+   `/tmp/korg-gate-prev` on krgate. The service is `active`, and
+   `/usr/local/bin/korg-gate` hashes to `7f01d365…`, the verified build. The
+   first journal line is `korg-gate starting … upstreams="korg=… klams=…"`.
+4. **Live checks needing no sign-in**, from kai over the public path:
+   - `GET /healthz` returned 200.
+   - `POST /mcp` and `POST /klams/mcp` returned 401.
+   - korg metadata still reads `resource_name: korg` and `korg:read`, and
+     klams reads `klams`.
+
+**Still pending: Ken's live check from claude.ai.** In a fresh chat, have
+Duet pause or retire a schedule through the connector, and turn on Requires
+approval for `update_schedule`. This is recorded as the pending check on
+claude-duet's connector page. WI 4322 stays `resolved` until then.
+
+**Finding for Ken, not built here: gate sign-ins cannot be revoked.**
+korg-gate has no revoke endpoint and no operator command. Access tokens are
+in memory and die on restart. Refresh grants persist in the state dir's
+`state.json` until `refresh_ttl` expires. Revoking one sign-in therefore
+means hand-editing that file and restarting. The alternative is deleting the
+file, which signs out every client, including Duet's connector.
