@@ -114,3 +114,27 @@ status-set literals, rollup field types, `omitted.closed` and
   `WiStatus` enum or union, rollup progress arithmetic over
   `resolved/done/closed`, and an `omitted` shape typed as exactly
   `{closed, archived}`.
+
+## Deployed
+
+2026-11-10 02:18 UTC (2026-11-09 18:18 PST), via the `deploy-kubsdb` skill
+(`.sprint-deploy`). Image `kubsdb.encke-wahoo.ts.net:5000/korg:4f594298ac05`
+(squash merge of #106), with `:latest` pushed alongside it. The skill's own gate
+asserted that the running container's revision label equals the built commit.
+Rollback target: `korg:7a25ffd3659b` (sprint 096), which is present in the
+registry. No migration was involved.
+
+Verified live:
+
+- `scripts/post-deploy-check.sh --compare` passed with zero row-count drift
+  and an unchanged schema (38 migrations).
+- Round-trip on a throwaway item, WI 4402. REST
+  `PATCH {"wi_status":"cut"}` returned `cut`. The survey then reported
+  `omitted: {closed: 251, cut: 1, archived: 3}`, and `wi_status=cut` listed
+  4402 with `omitted.cut: 0`.
+- The live MCP `tools/list` advertises `"closed","parked","cut"`. MCP
+  `update_work_item` with `cut` plus `archived: true` round-tripped, so 4402
+  now reads `cut`, archived.
+- Cross-repo, landed and synced on main: kmon#49 merged (`7eb16d9`). The
+  read-shapes contract was re-vendored in kmon (`dcf5cf7`) and kyac
+  (`a293e3c`), and `just korg-contract --require-live` is OK in both.
