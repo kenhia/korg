@@ -1,4 +1,5 @@
 <!-- kproject:begin — managed by kprojects; do not edit inside this block -->
+
 ## kproject conventions
 
 This project uses the kproject minimal harness
@@ -53,6 +54,7 @@ over ceremony.
 - Mirror `rust-toolchain.toml`, `rustfmt.toml` and `clippy.toml` from a
   sibling homelab repo rather than generating them
 - License is MIT unless specifically directed otherwise
+
 <!-- kproject:end -->
 
 ## Project
