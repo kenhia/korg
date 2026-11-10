@@ -499,10 +499,15 @@ pub struct WorkItemSummary {
 /// (or `"closed"`) zeroes `closed`, `archived: null`/`true` zeroes `archived`.
 /// Naming each field for what it counts keeps it honest under every setting,
 /// rather than meaning "unarchived" half the time.
+///
+/// `cut` (#4366) is the second terminal status and gets its own key on the
+/// same rule as `closed`, never folded into it: the distinction between
+/// finished and decided-not-to-do is the whole reason the status exists.
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "korg.ts")]
 pub struct WorkItemOmitted {
     pub closed: i64,
+    pub cut: i64,
     pub archived: i64,
 }
 
@@ -642,13 +647,15 @@ async fn wi_counts(
     archived: ArchivedFilter,
     shown: Option<&[String]>,
 ) -> Result<(i64, WorkItemOmitted)> {
-    let (total, archived_hidden, closed) = sqlx::query_as::<_, (i64, i64, i64)>(
+    let (total, archived_hidden, closed, cut) = sqlx::query_as::<_, (i64, i64, i64, i64)>(
         "SELECT \
            count(*) FILTER (WHERE ($2::bool IS NULL OR n.archived = $2) \
                               AND ($3::text[] IS NULL OR w.wi_status = ANY($3))), \
            count(*) FILTER (WHERE n.archived AND $2::bool IS NOT NULL AND NOT $2), \
            count(*) FILTER (WHERE ($2::bool IS NULL OR n.archived = $2) \
-                              AND w.wi_status = 'closed') \
+                              AND w.wi_status = 'closed'), \
+           count(*) FILTER (WHERE ($2::bool IS NULL OR n.archived = $2) \
+                              AND w.wi_status = 'cut') \
          FROM workitem w \
          JOIN node n ON n.id = w.node_id \
          LEFT JOIN project pj ON pj.id = n.project_id \
@@ -660,15 +667,16 @@ async fn wi_counts(
     .fetch_one(pool)
     .await?;
     // A status the caller asked for isn't omitted, however many rows it has.
-    let closed_hidden = match shown {
-        Some(list) if list.iter().any(|s| s == "closed") => 0,
+    let hidden = |status: &str, count: i64| match shown {
+        Some(list) if list.iter().any(|s| s == status) => 0,
         None => 0,
-        _ => closed,
+        _ => count,
     };
     Ok((
         total,
         WorkItemOmitted {
-            closed: closed_hidden,
+            closed: hidden("closed", closed),
+            cut: hidden("cut", cut),
             archived: archived_hidden,
         },
     ))
@@ -963,7 +971,7 @@ pub async fn update_work_item(
             .execute(&mut *tx)
             .await?;
     }
-    // D-7: `closed` is Ken-only (see `vocab::WI_STATUSES`), so reaching it means
+    // D-7: `closed` and `cut` are Ken-only (see `vocab::WI_STATUSES`), so reaching one means
     // the ask this item was waiting on has been answered. `resolved`/`done`
     // deliberately do NOT clear — "implemented, needs your user test" is the
     // canonical awaiting-Ken state.

@@ -501,13 +501,20 @@ it is now the slim projection (`wi_number`, `node_id`, `project`, `title`,
 |---|---|
 | omitted | `open` + `resolved` + `done` + `parked` — everything not terminal |
 | `"all"` | every status |
-| one of the five | exactly that status |
+| one of the six | exactly that status |
 
 `resolved` and `done` stay visible deliberately: `done`'s visibility is a
 promise `update_work_item`'s own schema makes, and `resolved` is the
 implemented-but-Ken-may-still-want-to-see state. `closed` is the terminal one,
 and hiding it is what finally makes that schema's "hidden by default" sentence
 true — nothing on the MCP surface hid anything before this.
+
+`cut` (#4366, sprint 098) is the second terminal status and `closed`'s twin:
+mechanically identical on every derived rule — hidden by default, excluded from
+search's live scope, clears an Awaiting-Ken marker, counts as *finished* so a
+dependency on it never blocks — and different only in why the item ended.
+`closed` is finished and accepted; `cut` is decided not to do (superseded, not
+worth it, no longer wanted). Both are reserved for Ken.
 
 `parked` (#810, sprint 054) is visible for a different reason than the other
 three: it is work deferred until a *condition* fires rather than work in
@@ -517,9 +524,11 @@ below a divider instead. Note that it is **unfinished**, so a dependency on a
 parked item still reads as an unmet blocker in `get_board`'s deconfliction
 (#978): deferred is not done.
 
-`omitted` is `{closed, archived}`, a cascade like `list_proposals`': `archived`
-counts what the archived filter hid, `closed` is counted only over rows that
-passed it, so no row lands in both. A field is `0` when you asked to see that
+`omitted` is `{closed, cut, archived}`, a cascade like `list_proposals`':
+`archived` counts what the archived filter hid, `closed` and `cut` are counted
+only over rows that passed it, so no row lands in two. `cut` has its own key
+rather than folding into `closed`, because that distinction is the status's
+whole reason to exist. A field is `0` when you asked to see that
 class.
 
 There is **no `detail` flag**, unlike `list_proposals`. A proposal's full row is
@@ -661,7 +670,7 @@ happen.
 ### Scoping
 
 By default only **live** rows are searched: each kind's own terminal state is
-excluded, matching what its list read hides (`closed` work items,
+excluded, matching what its list read hides (`closed`/`cut` work items,
 `done`/`declined` proposals, `done` programs, `Done`/`Cut` cards), and archived
 rows are excluded too. A comment inherits its parent's state, so closing an item
 takes its discussion out of the default view with it — otherwise the default
@@ -1046,7 +1055,7 @@ The rules, each a decision rather than an accident:
   for work items, the terminal sets for proposals and programs — so a future
   status is handled here for free. Note that work items have **two** partitions
   over one vocabulary and this is not the other one: `WI_TERMINAL_STATUSES` is a
-  *list-visibility* split holding `closed` alone, while a dependency on a `done`
+  *list-visibility* split holding `closed` and `cut`, while a dependency on a `done`
   item is satisfied. Reading the visibility split here would report every `done`
   dependency as an unmet blocker.
 - **One hop.** A closure is a different query and a different UI. A blocked
@@ -1176,6 +1185,9 @@ Three source decisions carry the contract:
 - **`added` comes from `node.created`, never the log.** Creating a work item
   writes no transition row, so an arrivals series derived from transitions is
   silently all zeros. `node.created` is complete for every item.
+- **`closed` means left the backlog.** It counts moves into either terminal
+  status (`closed` or `cut`, #4366) and not moves between them, so `backlog`
+  still falls by exactly what `closed` counts.
 - **`closed` and the backlog reconstruction come from the transition log**,
   which begins at `horizon` (2026-08-08) and was deliberately not backfilled.
   A window reaching past the horizon is **clamped** to it: the series starts
@@ -1284,7 +1296,7 @@ due  ⟺  status = 'active'
   `resolved` counts as outstanding here specifically — a drill that "may still
   need a user test" has not been performed.
 - **`anchor_mode`** picks which event advances the anchor: `created` (at
-  materialisation) or `completed` (when the item reaches `done`/`closed`, a
+  materialisation) or `completed` (when the item reaches `done`/`closed`/`cut`, a
   korg-core write rule, never a trigger). One column serves both styles.
 - **Seed `anchor_at` with the real last-done date.** A quarterly drill last run
   2026-07-08 anchored there comes due 2026-10-08 rather than the day it is filed.
@@ -1893,7 +1905,7 @@ away. The web UI's one-click clear is the same core call.
 
 | transition | clears the marker? | why |
 |---|---|---|
-| work item → `closed` | **yes** | `closed` is Ken-only, so the ask is answered by definition |
+| work item → `closed` / `cut` | **yes** | both are Ken-only, so the ask is answered by definition |
 | work item → `resolved` / `done` | **no** | "implemented, may still need a user test" is *the* canonical awaiting-Ken state |
 | proposal → `done` / `declined` | **yes** | both are Ken's call on the bundle |
 | program → `done` | **yes** | same |

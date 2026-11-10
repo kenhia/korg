@@ -25,6 +25,18 @@ pub(super) fn parked_last(column: &str) -> String {
     format!("({column} = '{}') ASC", vocab::PARKED_STATUS)
 }
 
+/// A vocabulary array as a SQL literal list, so SQL filters read `vocab`'s
+/// status sets rather than restating them. The values are compile-time
+/// constants from `vocab`, never caller input.
+pub(super) fn sql_list(values: &[&str]) -> String {
+    let inner = values
+        .iter()
+        .map(|v| format!("'{v}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("(ARRAY[{inner}])")
+}
+
 pub(super) fn validate_status(value: &str, allowed: &[&str], what: &str) -> Result<()> {
     Ok(vocab::validate(value, allowed, what)?)
 }

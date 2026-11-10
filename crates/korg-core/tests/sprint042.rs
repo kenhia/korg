@@ -79,8 +79,9 @@ fn the_membership_predicate_matches_the_proposal_vocabulary() {
     );
     assert_eq!(
         korg_core::vocab::WI_TERMINAL_STATUSES,
-        ["closed"],
-        "planning_rollup's denominator excludes exactly the terminal statuses"
+        ["closed", "cut"],
+        "planning_rollup's denominator excludes exactly the terminal statuses \
+         (derived from this const since #4366; pinned here so a change is seen)"
     );
 }
 

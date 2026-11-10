@@ -43,18 +43,20 @@ import {
  * `isTerminal()` would have silently changed one page's meaning.
  */
 
-/** The one status hidden from default listings. `closed` is Ken's, and
- *  reserved — agents stop at `done`. */
-export const HIDDEN_BY_DEFAULT: WiStatus = "closed";
+/** The statuses hidden from default listings — korg-core's
+ *  `WI_TERMINAL_STATUSES`. Both are Ken's, and reserved — agents stop at
+ *  `done`. `closed` is finished and accepted; `cut` (#4366) is decided not to
+ *  do. Same mechanics, different reason. */
+export const HIDDEN_BY_DEFAULT: ReadonlySet<string> = new Set<WiStatus>(["closed", "cut"]);
 
 /** True when a listing should hide this item unless the user asks for it. */
 export function isHiddenByDefault(status: string): boolean {
-  return status === HIDDEN_BY_DEFAULT;
+  return HIDDEN_BY_DEFAULT.has(status);
 }
 
 /** Work-item statuses a default listing shows. */
 export function defaultVisibleStatuses(): WiStatus[] {
-  return WI_STATUSES.filter((s) => s !== HIDDEN_BY_DEFAULT);
+  return WI_STATUSES.filter((s) => !HIDDEN_BY_DEFAULT.has(s));
 }
 
 /**
@@ -66,6 +68,7 @@ const SATISFIED_STATUSES: ReadonlySet<string> = new Set<WiStatus>([
   "resolved",
   "done",
   "closed",
+  "cut",
 ]);
 
 /** True when a work item no longer blocks the items that depend on it. */
@@ -409,6 +412,7 @@ export type SliceCounts = {
   resolved: number;
   done: number;
   closed: number;
+  cut: number;
 };
 
 /**
@@ -427,6 +431,9 @@ export type SliceCounts = {
  *   finished. `resolved` counts here because that is exactly what it means:
  *   implemented, awaiting Ken.
  * - **Ken-verified** = `closed` — the status reserved for him.
+ *
+ * `cut` (#4366) counts in both, as `closed` does: it is Ken's other terminal
+ * call, and an item he decided not to do is not work left on the slice.
  *
  * `N / <N / N` is the state worth spotting across the room: all the work is
  * done and it is waiting on Ken. Both the triplet and the bar are computed
@@ -448,8 +455,8 @@ export function sliceProgress(s: SliceCounts): {
   verifiedPct: number;
 } {
   const total = s.covered_count;
-  const workComplete = s.resolved + s.done + s.closed;
-  const verified = s.closed;
+  const workComplete = s.resolved + s.done + s.closed + s.cut;
+  const verified = s.closed + s.cut;
   // An empty slice is not "complete", it is empty, and the bar says so by
   // staying blank rather than reading 100%.
   const pct = (n: number) => (total === 0 ? 0 : Math.round((n / total) * 100));
@@ -489,7 +496,7 @@ const SLICE_FINISHED_STATUSES = ["done", "declined"];
 export function sliceUnfinished(s: SliceCounts & { status: string }): string | null {
   const reasons: string[] = [];
   if (!SLICE_FINISHED_STATUSES.includes(s.status)) reasons.push(`still ${s.status}`);
-  const remaining = s.covered_count - (s.resolved + s.done + s.closed);
+  const remaining = s.covered_count - (s.resolved + s.done + s.closed + s.cut);
   if (remaining > 0) {
     reasons.push(`${remaining} of ${s.covered_count} work items unfinished`);
   }

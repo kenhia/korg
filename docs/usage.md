@@ -119,8 +119,9 @@ covers:
   — kfdc's Operations panel is the real consumer.
 
   Each slice's rollup reads `work-complete / verified-by-you / total` (#980),
-  where work-complete is `resolved + done + closed` — everything agents consider
-  finished — and verified is `closed`, the status reserved for Ken. The two are
+  where work-complete is `resolved + done + closed + cut` — everything agents
+  consider finished — and verified is `closed + cut`, the statuses reserved for
+  Ken (`cut`, #4366, is his decided-not-to-do). The two are
   separate figures because collapsing them misleads in the state that matters
   most: `N / <N / N` means all the work is done and it is waiting on Ken, which
   the old single count rendered as `0/N` and read as "not started". The bar
@@ -132,7 +133,7 @@ covers:
   Marking a program **done** is gated by a confirmation when any slice is
   unfinished (#1168), and the dialog names them: a slice is unfinished if its
   proposal has not reached `done`/`declined`, or if its work items are not all
-  work-complete (`resolved + done + closed` — the same completion split the
+  work-complete (`resolved + done + closed + cut` — the same completion split the
   rollup uses, so `parked` work counts as remaining). Enabled always rather
   than disabled until everything is finished, because the program that is
   genuinely over but carries a slice nobody will pick up must still close — and
@@ -293,7 +294,7 @@ describing a route that no longer exists.
 | `PATCH` | `/api/projects/:name` | Update project metadata (everything but the name). |
 | `GET` | `/api/projects/:name/plan` | A project's work items plus their `depends_on` edges, for plan/frontier views — `{items, edges, total}`. **Every** item, archived included: the handler walks the pages rather than taking the first 500 (#1391), and `total` is there so a consumer can check the payload against itself. Archived rows ride along on purpose — an archived item is still a dependency others were satisfied by, and dropping it from the graph turns a met dependency into a missing node; filtering for display is the consumer's call. |
 | `GET`, `POST` | `/api/work-items` | List (`{items,total,limit,offset}`; filters `project`, `archived`, `limit`, `offset`, and `order` — `asc` by `wi_number`, the default, or `desc`, which the Work Items page walks so its 2000-row bound trims the oldest rows (WI 3763)) or create. |
-| `GET` | `/api/work-items/survey` | Slim, paginated work-item projection (no content/details); filters `project`, `wi_status` (+ `all`), `archived` (tri-state since #851, excluding archived by default). Since #861 it shares the MCP `list_work_items` read, so omitting `wi_status` means everything **not terminal** rather than every status, and the response carries `omitted: {closed, archived}`. |
+| `GET` | `/api/work-items/survey` | Slim, paginated work-item projection (no content/details); filters `project`, `wi_status` (+ `all`), `archived` (tri-state since #851, excluding archived by default). Since #861 it shares the MCP `list_work_items` read, so omitting `wi_status` means everything **not terminal** rather than every status, and the response carries `omitted: {closed, cut, archived}`. |
 | `GET` | `/api/work-items/flow` | Daily work-item flow (#1318): one row per day in the board's timezone — added, closed, backlog, each with its durable split, plus `backlog_before` (the open count the day before the window — the delta's baseline; null at the horizon). `days` defaults to 10; a window reaching past the transition horizon is clamped to it, and the response names the horizon — see [api.md](api.md#the-flow-series-1318). |
 | `GET`, `PATCH` | `/api/work-items/:wi_number` | Fetch with inlined comments (same shape as the MCP tool), or update. |
 | `GET`, `POST`, `PATCH`, `DELETE` | `/api/areas` | List, create, rename/re-describe, or delete areas (delete refuses while work items are filed under one). Selected by `{project, name}` in the body. |
@@ -451,7 +452,7 @@ Vocabularies are validated in korg-core, so an unknown value comes back as a
 400 naming the whole allowed set rather than a 500 carrying raw Postgres text:
 
 - node `kind`: `workitem`, `card`, `link`, `sprint_proposal`, `report`, `handoff`, `program`, `schedule`, `attachment`
-- `wi_status`: `open`, `resolved`, `done`, `closed`, `parked`
+- `wi_status`: `open`, `resolved`, `done`, `closed`, `parked`, `cut`
 - `wi_type`: `task`, `bug`, `chore`, `feature`, `research`, `tweak`, `brainstorm`, `maintenance`
 - `wi_tshirt`: `XS`, `S`, `M`, `L`, `XL`, `Huge`, `Unknown`
 - card `status`: `Backlog`, `Research`, `OnDeck`, `Active`, `Done`, `Cut`
@@ -654,7 +655,7 @@ renders those summaries.
 **`list_work_items` joined it in WI #861**, with the same two ideas and one more:
 the lean projection is now the *only* MCP projection (the full tier is
 `get_work_item`), and the row filter is `wi_status`, which defaults to everything
-not terminal. `omitted` is `{closed, archived}`. `survey_work_items` was a
+not terminal. `omitted` is `{closed, cut, archived}`. `survey_work_items` was a
 deprecated alias for it and was deleted in sprint 038 (WI #871) once its last
 caller moved; `GET /api/work-items` still returns full rows, because the Work
 Items page searches `content` in the browser.

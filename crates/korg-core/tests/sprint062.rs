@@ -42,6 +42,7 @@ fn rollup_buckets_cover_wi_statuses() {
         done: 0,
         closed: 0,
         parked: 0,
+        cut: 0,
     })
     .unwrap();
     let proposal = serde_json::to_value(BoardProposal {
@@ -59,6 +60,7 @@ fn rollup_buckets_cover_wi_statuses() {
         done: 0,
         closed: 0,
         parked: 0,
+        cut: 0,
         updated: time::OffsetDateTime::UNIX_EPOCH,
         synopsis: None,
     })
@@ -120,7 +122,7 @@ async fn covered_rollups_bucket_a_parked_item_and_still_sum() {
     assert_eq!(slice.covered_count, n);
     assert_eq!(slice.parked, 1, "get_program's slice rollup buckets parked");
     assert_eq!(
-        slice.open + slice.resolved + slice.done + slice.closed + slice.parked,
+        slice.open + slice.resolved + slice.done + slice.closed + slice.parked + slice.cut,
         slice.covered_count,
         "a slice's buckets must sum to its covered_count"
     );
@@ -134,7 +136,7 @@ async fn covered_rollups_bucket_a_parked_item_and_still_sum() {
     assert_eq!(row.covered_count, n);
     assert_eq!(row.parked, 1, "the board's cov CTE buckets parked");
     assert_eq!(
-        row.open + row.resolved + row.done + row.closed + row.parked,
+        row.open + row.resolved + row.done + row.closed + row.parked + row.cut,
         row.covered_count,
         "BoardProposal's counts must sum to covered_count — the claim its doc \
          comment makes"

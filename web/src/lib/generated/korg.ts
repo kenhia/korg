@@ -321,6 +321,10 @@ covered_count: number, open: number, resolved: number, done: number, closed: num
  */
 parked: number, 
 /**
+ * Decided not to do (#4366) — terminal and finished, like `closed`.
+ */
+cut: number, 
+/**
  * When the proposal row last changed. korg's only staleness signal: it is
  * *last touched*, not last progressed, which is why the board does not
  * build an event feed out of it (D-7).
@@ -894,7 +898,11 @@ rank: string | null, covered_count: number, open: number, resolved: number, done
  * and nowhere else, so a consumer deriving open-by-subtraction read them
  * as open.
  */
-parked: number, };
+parked: number, 
+/**
+ * Decided not to do (#4366) — terminal and finished, like `closed`.
+ */
+cut: number, };
 
 /**
  * One extended test holding a program in `soaking` (#2152) — a member of the
@@ -1448,7 +1456,7 @@ snippet: string, score: number, updated: string, };
  */
 export type SearchOmitted = { 
 /**
- * Rows in their kind's own terminal state — `closed` work items,
+ * Rows in their kind's own terminal state — `closed`/`cut` work items,
  * `done`/`declined` proposals, `done` programs, `Done`/`Cut` cards.
  */
 terminal: number, archived: number, };
@@ -1637,10 +1645,16 @@ added: number,
  * Work items that moved to `closed` this day, from the transition log.
  * An item that closes on two different days in the window counts on both;
  * two closes on one day count once.
+ *
+ * "Closed" here means *left the backlog*: a move into any
+ * [`WI_TERMINAL_STATUSES`] value, so `cut` (#4366) counts too, and a move
+ * between two terminal values (re-labelling `closed` as `cut`) does not.
+ * Splitting it would break the series' own arithmetic — `backlog` falls
+ * by exactly what this counts.
  */
 closed: number, 
 /**
- * Open (non-`closed`) work items at this day's end, reconstructed from
+ * Open (non-terminal) work items at this day's end, reconstructed from
  * the transition log. Today's value equals what `list_work_items`
  * reports as `total`.
  */
@@ -1667,7 +1681,7 @@ export type WorkItemFlowSeries = {
  */
 days: Array<WorkItemFlowDay>, 
 /**
- * Open (non-`closed`) work items at the end of the day **immediately
+ * Open (non-terminal) work items at the end of the day **immediately
  * before** `days[0]` — the window's baseline, and the one number the
  * series structurally cannot supply (#1432).
  *
@@ -1725,8 +1739,12 @@ omitted: WorkItemOmitted, };
  * (or `"closed"`) zeroes `closed`, `archived: null`/`true` zeroes `archived`.
  * Naming each field for what it counts keeps it honest under every setting,
  * rather than meaning "unarchived" half the time.
+ *
+ * `cut` (#4366) is the second terminal status and gets its own key on the
+ * same rule as `closed`, never folded into it: the distinction between
+ * finished and decided-not-to-do is the whole reason the status exists.
  */
-export type WorkItemOmitted = { closed: number, archived: number, };
+export type WorkItemOmitted = { closed: number, cut: number, archived: number, };
 
 export type WorkItemRow = { wi_number: number, node_id: number, project: string | null, area: string | null, wi_type: string, wi_status: string, wi_tshirt: string, sprint: string | null, title: string, content: string, details: string | null, 
 /**

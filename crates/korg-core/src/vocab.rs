@@ -199,6 +199,14 @@ pub const PARKED_STATUS: &str = "parked";
 /// (agent satisfied — terminal but still visible in default lists)
 /// `→ closed` (Ken only; hidden by default).
 ///
+/// `cut` (#4366, sprint 098) is `closed`'s twin: mechanically identical on
+/// every axis below — terminal, hidden by default, finished — and different
+/// only in *why* the item ended. `closed` is finished and accepted; `cut` is
+/// decided not to do (superseded, not worth it, no longer wanted). Cards have
+/// `Cut` beside `Done` and proposals `declined` beside `done`; work items were
+/// the one kind whose single terminal state made the two indistinguishable
+/// afterwards. Reserved for Ken exactly as `closed` is.
+///
 /// `parked` (WI #810, sprint 054) is off that line entirely — it is not a later
 /// stage of `open` but a sideways move from it: work that is real and wanted but
 /// waiting on a condition rather than on a person ("things to consider when a
@@ -212,7 +220,7 @@ pub const PARKED_STATUS: &str = "parked";
 /// value is a one-line vocabulary change and not a migration — and why the two
 /// partition fences below are the only thing standing between a new status and
 /// a silently mis-filed corpus.
-pub const WI_STATUSES: [&str; 5] = ["open", "resolved", "done", "closed", "parked"];
+pub const WI_STATUSES: [&str; 6] = ["open", "resolved", "done", "closed", "parked", "cut"];
 
 /// The work items a list read means by default (WI #861), i.e. everything that
 /// is not terminal. The program plan's §8 answer 1 decided the split: `closed`
@@ -230,7 +238,11 @@ pub const WI_LIVE_STATUSES: [&str; 4] = ["open", "resolved", "done", "parked"];
 /// `list_work_items` unless asked for, and counted in its `omitted`. Kept beside
 /// the full vocabulary so a fifth status cannot be added without deciding which
 /// side it falls on; `wi_statuses_partition_cleanly` fences that.
-pub const WI_TERMINAL_STATUSES: [&str; 1] = ["closed"];
+///
+/// `cut` (#4366) is here beside `closed`, and counted in `omitted` under its
+/// own key — folding it into `closed` would erase the one distinction it exists
+/// to keep.
+pub const WI_TERMINAL_STATUSES: [&str; 2] = ["closed", "cut"];
 
 /// The statuses that mean **the work is finished** (#978, sprint 053).
 ///
@@ -250,7 +262,12 @@ pub const WI_TERMINAL_STATUSES: [&str; 1] = ["closed"];
 /// finishing a materialised maintenance item restarts a `completed`-anchored
 /// schedule's clock). Naming it makes the two agree by construction rather than
 /// by two matching literals in different files.
-pub const WI_FINISHED_STATUSES: [&str; 2] = ["done", "closed"];
+///
+/// `cut` (#4366) is finished on this axis too, and that is a statement about
+/// effect, not meaning: nothing is going to happen to a cut item, so a row
+/// depending on it would otherwise be held blocked forever by work nobody will
+/// do — the same reasoning that frees a dependent of an archived blocker.
+pub const WI_FINISHED_STATUSES: [&str; 3] = ["done", "closed", "cut"];
 
 /// The complement of [`WI_FINISHED_STATUSES`] — a dependency in one of these
 /// still blocks. `resolved` is the interesting member: "implemented; may still
@@ -897,6 +914,25 @@ mod partition {
     /// defeating the status) or as finished (making a dependency on indefinitely
     /// deferred work read as satisfied). Those are the two plausible mistakes,
     /// so they get a test that names them.
+    /// `cut` (#4366) must sit on exactly `closed`'s corner of both partitions:
+    /// hidden and finished. The partition fences above would pass with it filed
+    /// anywhere, so this names the requirement directly.
+    #[test]
+    fn cut_mirrors_closed_on_both_axes() {
+        for (set, name) in [
+            (WI_TERMINAL_STATUSES.as_slice(), "WI_TERMINAL_STATUSES"),
+            (WI_FINISHED_STATUSES.as_slice(), "WI_FINISHED_STATUSES"),
+            (WI_LIVE_STATUSES.as_slice(), "WI_LIVE_STATUSES"),
+            (WI_UNFINISHED_STATUSES.as_slice(), "WI_UNFINISHED_STATUSES"),
+        ] {
+            assert_eq!(
+                set.contains(&"cut"),
+                set.contains(&"closed"),
+                "`cut` must classify exactly as `closed` does in {name}"
+            );
+        }
+    }
+
     #[test]
     fn parked_is_visible_but_never_counts_as_finished() {
         assert!(

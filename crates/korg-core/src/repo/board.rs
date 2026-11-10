@@ -73,6 +73,8 @@ pub struct BoardProposal {
     /// Deferred indefinitely (#810). Unfinished, so it counts against progress
     /// the way `open` does, not toward it.
     pub parked: i64,
+    /// Decided not to do (#4366) — terminal and finished, like `closed`.
+    pub cut: i64,
     /// When the proposal row last changed. korg's only staleness signal: it is
     /// *last touched*, not last progressed, which is why the board does not
     /// build an event feed out of it (D-7).
@@ -480,6 +482,7 @@ struct BoardProposalRow {
     done: i64,
     closed: i64,
     parked: i64,
+    cut: i64,
     updated: OffsetDateTime,
 }
 
@@ -500,6 +503,7 @@ impl BoardProposalRow {
             done: self.done,
             closed: self.closed,
             parked: self.parked,
+            cut: self.cut,
             updated: self.updated,
             synopsis,
         }
@@ -518,6 +522,7 @@ impl BoardProposalRow {
             done: self.done,
             closed: self.closed,
             parked: self.parked,
+            cut: self.cut,
         }
     }
 }

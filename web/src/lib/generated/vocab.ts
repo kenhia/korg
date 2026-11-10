@@ -3,7 +3,7 @@
 export const NODE_KINDS = ["workitem", "card", "link", "sprint_proposal", "report", "handoff", "program", "schedule", "attachment"] as const;
 export type NodeKind = (typeof NODE_KINDS)[number];
 
-export const WI_STATUSES = ["open", "resolved", "done", "closed", "parked"] as const;
+export const WI_STATUSES = ["open", "resolved", "done", "closed", "parked", "cut"] as const;
 export type WiStatus = (typeof WI_STATUSES)[number];
 
 export const WI_TYPES = ["task", "bug", "chore", "feature", "research", "tweak", "brainstorm", "maintenance"] as const;

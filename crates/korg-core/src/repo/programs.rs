@@ -505,6 +505,8 @@ pub struct ProgramSlice {
     /// and nowhere else, so a consumer deriving open-by-subtraction read them
     /// as open.
     pub parked: i64,
+    /// Decided not to do (#4366) — terminal and finished, like `closed`.
+    pub cut: i64,
 }
 
 /// One extended test holding a program in `soaking` (#2152) — a member of the
