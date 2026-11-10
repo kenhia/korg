@@ -46,7 +46,7 @@ scope, and its tool allowlist:
 
 | Door | Path | Upstream | `resource` | Scope | Tools |
 |---|---|---|---|---|---|
-| korg | `/mcp` | `KORG_GATE_UPSTREAM` | `KORG_GATE_PUBLIC_URL`, byte for byte | `korg:read` | `READ_TOOLS` (26) + `WRITE_TOOLS` (8) |
+| korg | `/mcp` | `KORG_GATE_UPSTREAM` | `KORG_GATE_PUBLIC_URL`, byte for byte | `korg:read` | `READ_TOOLS` (26) + `WRITE_TOOLS` (9) |
 | klams | `/klams/mcp` | `KORG_GATE_UPSTREAM_KLAMS` | `<origin>/klams/mcp` | `klams:read` | `KLAMS_READ_TOOLS` (4) + `KLAMS_WRITE_TOOLS` (4) |
 
 **Every token is bound to its door** (RFC 8707). A sign-in names its door by
@@ -132,6 +132,7 @@ test that says widening it is a decision:
 | `create_link` | The reading list, from the phone |
 | `relate` | Wire `depends_on`/`covers` while scheduling. `origin` is overwritten |
 | `propose_sprint`, `create_program` | Duet's charter: scheduling the work its scans find |
+| `update_schedule` | Retire, pause or resume a schedule — **status only** (sprint 099, below) |
 
 **Refused by name** (`REFUSED_TOOLS`): `update_proposal` and `update_program`
 (status transitions start and finish sprints, and stay with Ken and the sprint
@@ -139,10 +140,25 @@ skills); `create_handoff`, `update_handoff`; `update_comment`, `delete_comment`;
 `update_link`, `delete_link`, `mark_link_read`; `unrelate`; cards
 (`create_card`, `update_card`); areas and projects (`create_area`,
 `update_area`, `delete_area`, `create_project`, `update_project`); reports
-(`create_report`, `review_report`, `set_report_source`); and schedules
-(`create_schedule`, `update_schedule`, `materialize_schedule`). A refused call is
+(`create_report`, `review_report`, `set_report_source`); and creating or
+materializing a schedule (`create_schedule`, `materialize_schedule`). A refused call is
 a JSON-RPC error and never reaches korg. Widening the set is one allowlist line,
 one test, a GP-17 amendment, and a line in claude-duet's `docs/rulings.md`.
+
+**`update_schedule` is a status change and nothing else (sprint 099, WI 4322).**
+Ken asked on 2026-11-03 that Duet be able to retire the schedules it reviews.
+The gate forwards an `update_schedule` call only when its arguments are exactly
+`node_id` and `status` (`active`, `paused` or `done`, korg's own enum) — both
+present, nothing else. Any other field (`notes`, `archived`, `cadence`,
+`anchor_at`, the template, an `origin`) or a missing status is refused with
+`-32602` ("update_schedule through korg-gate takes exactly `node_id` and
+`status`"), never trimmed and forwarded. `tools/list` advertises the tool with
+its schema cut to those two fields, both required, and a gate-written
+description, so the client is not offered an argument the gate would refuse.
+The rule lives in `LIMITED_TOOLS` (`allowlist.rs`). Duet records *why* it
+retired a schedule with `add_comment` on the schedule, which stamps `origin`;
+`update_schedule` has no `origin` field, so its attribution is the gate's
+journal line and the `X-Homelab-Agent` header, as for the other writes.
 
 **`origin` is the gate's, not the caller's.** korg records `origin` unverified
 (#1879), so the gate is the only place it can be made true. On the two korg

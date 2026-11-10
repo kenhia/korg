@@ -10,6 +10,8 @@
 //!
 //! Sprint 095 (WI 4244) opened the korg door to a ruled set of writes, the
 //! scheduling set Claude Duet needs. Every other korg write is refused by name.
+//! Sprint 099 (WI 4322) added `update_schedule`, limited to a status change
+//! ([`LIMITED_TOOLS`]).
 //!
 //! klams's door (sprint 094) has its own lists, and since klams has no naming
 //! rule to lean on, its forcing test is stricter: every tool in klams's
@@ -54,8 +56,10 @@ pub const READ_TOOLS: &[&str] = &[
 
 /// korg writes exposed through the gate (WI 4244, ruled by Ken 2026-10-31):
 /// the scheduling set — comment, raise Awaiting Ken, file and update work
-/// items, save a link, wire edges, propose sprints and programs. Widening it is
-/// a decision (korg+ GP-17), not an edit. Sorted; keep it that way.
+/// items, save a link, wire edges, propose sprints and programs — plus
+/// `update_schedule` (WI 4322, Ken 2026-11-03), narrowed by [`LIMITED_TOOLS`].
+/// Widening it is a decision (korg+ GP-17), not an edit. Sorted; keep it that
+/// way.
 pub const WRITE_TOOLS: &[&str] = &[
     "add_comment",
     "create_link",
@@ -64,12 +68,42 @@ pub const WRITE_TOOLS: &[&str] = &[
     "propose_sprint",
     "relate",
     "set_awaiting",
+    "update_schedule",
     "update_work_item",
 ];
 
+/// korg writes the gate forwards only with exactly these arguments, each
+/// present and nothing else, and advertises in `tools/list` with its schema
+/// cut down to them and the description given here. `update_schedule` is a
+/// status change — retire (`done`), pause, or resume — and none of the
+/// template, cadence, anchor, notes or archive fields (WI 4322).
+pub const LIMITED_TOOLS: &[LimitedTool] = &[LimitedTool {
+    name: "update_schedule",
+    fields: &["node_id", "status"],
+    description: "Change a schedule's status by node_id: `done` retires it, `paused` \
+                  stops it surfacing without losing its anchor or history, `active` \
+                  resumes it. Through korg-gate this tool takes `node_id` and \
+                  `status` and nothing else; returns the updated schedule.",
+}];
+
+/// One [`LIMITED_TOOLS`] entry.
+pub struct LimitedTool {
+    pub name: &'static str,
+    /// The argument names a call must carry, all of them and no others.
+    pub fields: &'static [&'static str],
+    /// The description the gate advertises in place of korg's.
+    pub description: &'static str,
+}
+
+/// The [`LIMITED_TOOLS`] entry for `name`, if it has one.
+pub fn limited(name: &str) -> Option<&'static LimitedTool> {
+    LIMITED_TOOLS.iter().find(|t| t.name == name)
+}
+
 /// korg tools ruled *out* of the korg door (WI 4244's ruling): proposal and
 /// program status changes, handoffs, comment and link edits and deletes,
-/// `unrelate`, cards, areas, projects, reports and schedules. Not consulted at
+/// `unrelate`, cards, areas, projects, reports, and creating or materializing
+/// a schedule. Not consulted at
 /// runtime — anything in neither [`READ_TOOLS`] nor [`WRITE_TOOLS`] is refused
 /// — but the catalogue test needs it to tell a tool somebody ruled on from one
 /// nobody has seen yet. Sorted.
@@ -96,7 +130,6 @@ pub const REFUSED_TOOLS: &[&str] = &[
     "update_program",
     "update_project",
     "update_proposal",
-    "update_schedule",
 ];
 
 /// The korg write tools that carry korg's self-reported `origin` field
@@ -231,6 +264,18 @@ mod tests {
                 "{name} stamps origin but is not a write"
             );
         }
+        for tool in LIMITED_TOOLS {
+            assert!(
+                WRITE_TOOLS.contains(&tool.name),
+                "{} is limited but is not a write",
+                tool.name
+            );
+            assert!(
+                tool.fields.contains(&"node_id"),
+                "{} cannot name its target",
+                tool.name
+            );
+        }
     }
 
     #[test]
@@ -273,6 +318,8 @@ mod tests {
         assert!(!method_allowed("tools/Call"));
         assert!(tool_allowed("create_work_item"));
         assert!(!tool_allowed("update_proposal"));
+        assert!(!tool_allowed("create_schedule"));
+        assert!(!tool_allowed("materialize_schedule"));
         assert!(!tool_allowed("create_work_item "));
         assert!(!tool_allowed(""));
         assert!(!tool_allowed("get_work_item "));

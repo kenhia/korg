@@ -11,8 +11,8 @@ mod common;
 
 use common::*;
 use korg_gate::allowlist::{
-    looks_read_only, DUET_ORIGIN, KLAMS_READ_TOOLS, KLAMS_REFUSED_TOOLS, KLAMS_WRITE_TOOLS,
-    READ_TOOLS, REFUSED_TOOLS, WRITE_TOOLS,
+    limited, looks_read_only, DUET_ORIGIN, KLAMS_READ_TOOLS, KLAMS_REFUSED_TOOLS,
+    KLAMS_WRITE_TOOLS, READ_TOOLS, REFUSED_TOOLS, WRITE_TOOLS,
 };
 use serde_json::json;
 
@@ -61,7 +61,7 @@ fn every_read_shaped_tool_in_the_catalogue_is_a_read() {
 }
 
 #[test]
-fn the_write_set_is_exactly_the_ruled_eight() {
+fn the_write_set_is_exactly_the_ruled_nine() {
     assert_eq!(
         WRITE_TOOLS,
         [
@@ -72,6 +72,7 @@ fn the_write_set_is_exactly_the_ruled_eight() {
             "propose_sprint",
             "relate",
             "set_awaiting",
+            "update_schedule",
             "update_work_item"
         ],
         "widening the korg door's writes is a decision (korg+ GP-17), not an edit"
@@ -139,7 +140,7 @@ async fn every_refused_tool_is_refused_on_call_and_the_list_is_reads_plus_writes
     expected.sort_unstable();
     names.sort_unstable();
     assert_eq!(names, expected);
-    assert_eq!(names.len(), 34);
+    assert_eq!(names.len(), 35);
 }
 
 #[tokio::test]
@@ -147,7 +148,13 @@ async fn every_write_tool_reaches_korg_stamped_as_duet() {
     let h = Harness::start().await;
     let (_, token, _) = h.access_token().await;
 
-    for (i, name) in WRITE_TOOLS.iter().enumerate() {
+    // Field-limited writes have their own test below; any extra argument
+    // would be refused.
+    let open: Vec<_> = WRITE_TOOLS
+        .iter()
+        .filter(|n| limited(n).is_none())
+        .collect();
+    for (i, name) in open.iter().enumerate() {
         let body = h
             .rpc(
                 &token,
@@ -168,7 +175,7 @@ async fn every_write_tool_reaches_korg_stamped_as_duet() {
         .iter()
         .filter(|(_, m)| m["method"] == "tools/call")
         .collect();
-    assert_eq!(calls.len(), WRITE_TOOLS.len());
+    assert_eq!(calls.len(), open.len());
     for (headers, msg) in calls {
         let name = msg["params"]["name"].as_str().unwrap();
         assert_eq!(headers["x-homelab-agent"], "claude-duet", "{name}");
@@ -182,6 +189,116 @@ async fn every_write_tool_reaches_korg_stamped_as_duet() {
             _ => assert_eq!(origin, "overseer", "{name}"),
         }
     }
+}
+
+#[tokio::test]
+async fn update_schedule_reaches_korg_with_a_status_and_nothing_else() {
+    let h = Harness::start().await;
+    let (_, token, _) = h.access_token().await;
+
+    // The three status moves forward untouched.
+    for (i, status) in ["done", "paused", "active"].iter().enumerate() {
+        let body = h
+            .rpc(
+                &token,
+                json!({"jsonrpc":"2.0","id":i,"method":"tools/call",
+                       "params":{"name":"update_schedule",
+                                 "arguments":{"node_id":3950,"status":status}}}),
+            )
+            .await
+            .json_value()
+            .await;
+        assert_eq!(
+            body["result"]["content"][0]["text"], "called update_schedule",
+            "{status}: {body}"
+        );
+    }
+    {
+        let seen = h.seen.0.lock().unwrap();
+        assert_eq!(seen.len(), 3);
+        for ((headers, msg), status) in seen.iter().zip(["done", "paused", "active"]) {
+            assert_eq!(headers["x-homelab-agent"], "claude-duet");
+            assert_eq!(
+                msg["params"]["arguments"],
+                json!({"node_id":3950,"status":status})
+            );
+        }
+    }
+
+    // Anything else — another field alongside, a field without the status, no
+    // target, no arguments, arguments that are not an object — is refused.
+    let refused = [
+        json!({"node_id":3950,"status":"done","notes":"retired"}),
+        json!({"node_id":3950,"status":"done","archived":true}),
+        json!({"node_id":3950,"status":"done","origin":"overseer"}),
+        json!({"node_id":3950,"cadence":"yearly"}),
+        json!({"node_id":3950,"anchor_at":"2027-01-01T00:00:00Z"}),
+        json!({"node_id":3950}),
+        json!({"status":"done"}),
+        json!({}),
+        json!(null),
+        json!("node_id=3950 status=done"),
+    ];
+    for (i, arguments) in refused.iter().enumerate() {
+        let body = h
+            .rpc(
+                &token,
+                json!({"jsonrpc":"2.0","id":100 + i,"method":"tools/call",
+                       "params":{"name":"update_schedule","arguments":arguments}}),
+            )
+            .await
+            .json_value()
+            .await;
+        assert_eq!(body["error"]["code"], -32602, "{arguments}: {body}");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("takes exactly `node_id` and `status`"),
+            "{body}"
+        );
+    }
+    // No `arguments` key at all.
+    let body = h
+        .rpc(
+            &token,
+            json!({"jsonrpc":"2.0","id":200,"method":"tools/call",
+                   "params":{"name":"update_schedule"}}),
+        )
+        .await
+        .json_value()
+        .await;
+    assert_eq!(body["error"]["code"], -32602, "{body}");
+    assert_eq!(
+        h.seen.0.lock().unwrap().len(),
+        3,
+        "an off-limit update_schedule reached korg"
+    );
+}
+
+#[tokio::test]
+async fn the_other_schedule_writes_stay_refused() {
+    // The negative control for WI 4322: opening update_schedule opened nothing
+    // next to it.
+    let h = Harness::start().await;
+    let (_, token, _) = h.access_token().await;
+    for (i, name) in ["create_schedule", "materialize_schedule"]
+        .iter()
+        .enumerate()
+    {
+        assert!(REFUSED_TOOLS.contains(name), "{name}");
+        let body = h
+            .rpc(
+                &token,
+                json!({"jsonrpc":"2.0","id":i,"method":"tools/call",
+                       "params":{"name":name,"arguments":{"node_id":3950}}}),
+            )
+            .await
+            .json_value()
+            .await;
+        assert_eq!(body["error"]["code"], -32602, "{name}: {body}");
+    }
+    assert!(h.seen.0.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
