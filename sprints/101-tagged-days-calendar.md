@@ -113,3 +113,41 @@ oversight.
   it with kdashdata's `jsonschema_mini`. Finally, add and remove a throwaway
   tag to show the on-change write.
 - WI 4676 asks Ken's GP-17 decision on whether Duet may tag days.
+
+## Deployed
+
+2026-11-14 (PST), on the ship turn of karc leg `korg-4191a8`, cleared by the
+overseer in comment 4698 on korg:4667.
+
+- **korg image, via `deploy-kubsdb`** (the `.sprint-deploy` step). It was
+  built from main `c49e2b6` and pushed as `korg:c49e2b6aae2e` and
+  `korg:latest`. The revision gate passed ("running revision c49e2b6…").
+  `post-deploy-check.sh --compare` reported OK, with no count down. Migration
+  0039 applied: `GET /api/tagged-days` answered 200 `[]`, and `tools/list`
+  serves 60 tools, the three tagged-day tools among them. The rollback target
+  is `korg:792725128826`. Rolling back across 0039 is image-only; the table
+  is harmless to an older image.
+- **Seeded through the deployed MCP tools** (`tools/call` on `/mcp`): Ken's
+  three tags, two days off and one yearly special day. The values are in
+  korg's database, not here.
+- **First publish fired by trigger.** A transient user unit,
+  `systemd-run --user --wait --collect`, ran the service's ExecStart, PATH
+  and working directory. It wrote `(absent)`, with 7 days and 2 of them off.
+  The live record read back from central showed the 11th (Veterans Day, not
+  off), the 25th (off), the 26th (Thanksgiving, not off), and the 27th (off
+  plus the special day with its stored short). It validated against kdashdata
+  main `0e921a1`'s schema with `jsonschema_mini` and no errors. kdashdata's
+  C reader (`kdash_dump`) read it with 0 skipped and today covered.
+- **The timer, via k-homelab `5b38d46`** (pushed to main, checkout on kubs0
+  synced, k-homelab `just check` green). That commit added the
+  `korg-calendar` block to `manifests/kai.yml`, the consumer page with its
+  README row, and a changelog-kai entry. `bin/audit kai repo-user-timer`
+  reported `WOULD CHANGE` for the new block only. `bin/apply kai
+  repo-user-timer`, run from kubs0, reported `changed`. The timer is enabled
+  and active.
+- **The on-change write, by the timer's own firings.**
+  - A throwaway tag added at 01:24:16 was written at 01:25:03 (`changed`, 8
+    days).
+  - Its removal at 01:25:11 was written at 01:26:03 (`changed`, 7 days).
+  - The 01:27:02 firing succeeded and wrote nothing (`ts` unchanged).
+  - Only Ken's three tags remain.
