@@ -28,9 +28,18 @@ gen:
 #
 # The korg-migrate snapshot suites run only if snapshots/*.dump are present;
 # see KORG_SNAPSHOT_TESTS in docs/setup.md.
-check: fmt-check gen-check web-check
+check: fmt-check gen-check web-check pulse-check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
+
+# korg-pulse, the kdash:korg:pulse publisher (WI 4611): its record against the
+# kdashdata schema pinned in pulse/vendor/. Stdlib python3 only.
+pulse-check:
+    python3 -m unittest discover -s pulse
+
+# Print the pulse record live korg would publish now, writing nothing.
+pulse-dry:
+    bin/korg-pulse --dry-run
 
 fmt-check:
     cargo fmt --all --check

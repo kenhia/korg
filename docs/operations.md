@@ -489,6 +489,34 @@ A baseline JSON captured before the removal still carries the retired key; the
 compare loop iterates the *after* snapshot's keys, so an absent key is simply not
 compared rather than reported as a loss.
 
+## korg-pulse — the dashboard feed
+
+`bin/korg-pulse` publishes korg's board numbers as `kdash:korg:pulse`. That is
+the record behind the korg half of kpidash's korg + klams card (WI 4611,
+sprint 100). The contract is kdashdata's (CD-28), pinned in `pulse/vendor/`.
+
+- **It reads korg; it is not korg.** It calls two public REST reads,
+  `/api/board` and `/api/work-items/flow?days=30`, and writes with `kdash-pub`.
+  The korg service has no Redis dependency and the image does not carry the
+  publisher.
+- **Every number is copied.** `open` and the 30-day `history` are the flow's
+  `backlog` column. The lane counts and `by_project` are the board's `awaiting`,
+  `active`, `queue` (the `proposed` rows only) and `depth[].wi_total`. The
+  history is reconstructed by korg from its transition log on every run, so the
+  publisher stores nothing between runs.
+- **A torn read is refused, not published.** If the per-project counts add up
+  to more than the backlog (a write landed between the two reads), it re-reads
+  once, then exits 1 and leaves the previous record to go stale.
+- **Where it runs: kai**, as the systemd user timer
+  `systemd/korg-pulse.{service,timer}`, every 5 minutes, declaring
+  `expected_refresh_s: 300`. Keep the timer and `DEFAULT_REFRESH_S` in step.
+  kai and not kubsdb, because kubsdb has no `kdash-pub`. kai has it, with
+  central's auth from `/etc/khomelab/secrets.env`. k-homelab installs the units
+  from this checkout through its `repo-user-timer` recipe.
+- **By hand:** `just pulse-dry` prints the record live korg would produce.
+  `bin/korg-pulse` publishes it once. `kdash-pub get kdash:korg:pulse` reads
+  back what is live. `KORG_URL` (or `--korg`) points it at another korg.
+
 ## Destructive operations
 
 `korg-migrate --reset` runs `TRUNCATE node, project, area … CASCADE`. Read that

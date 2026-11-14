@@ -1,0 +1,307 @@
+{
+ "generated": "2026-11-14T01:00:00Z",
+ "active": [
+  {
+   "node_id": 1,
+   "title": "proposal 1",
+   "status": "active",
+   "project": "korg",
+   "rank": "0",
+   "pinned": false
+  },
+  {
+   "node_id": 2,
+   "title": "proposal 2",
+   "status": "active",
+   "project": "korg",
+   "rank": "0",
+   "pinned": false
+  }
+ ],
+ "queue": [
+  {
+   "node_id": 3,
+   "title": "proposal 3",
+   "status": "proposed",
+   "project": "korg",
+   "rank": "0",
+   "pinned": false
+  },
+  {
+   "node_id": 4,
+   "title": "proposal 4",
+   "status": "proposed",
+   "project": "korg",
+   "rank": "0",
+   "pinned": false
+  },
+  {
+   "node_id": 5,
+   "title": "proposal 5",
+   "status": "proposed",
+   "project": "korg",
+   "rank": "0",
+   "pinned": false
+  },
+  {
+   "node_id": 6,
+   "title": "proposal 6",
+   "status": "parked",
+   "project": "korg",
+   "rank": "0",
+   "pinned": false
+  }
+ ],
+ "proposals_omitted": {
+  "done": 10,
+  "declined": 1,
+  "archived": 0
+ },
+ "proposal_edges": [],
+ "blocked": [],
+ "programs": [],
+ "programs_omitted": {},
+ "awaiting": [
+  {
+   "node_id": 7,
+   "kind": "work_item",
+   "title": "decide"
+  },
+  {
+   "node_id": 8,
+   "kind": "sprint_proposal",
+   "title": "review"
+  }
+ ],
+ "depth": [
+  {
+   "project": "agent-skills",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 2
+  },
+  {
+   "project": "empty",
+   "status": "active",
+   "category": null,
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 0
+  },
+  {
+   "project": "k-homelab",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 7
+  },
+  {
+   "project": "kdashdata",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 2
+  },
+  {
+   "project": "kligd",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 9
+  },
+  {
+   "project": "korg",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 5
+  },
+  {
+   "project": "old",
+   "status": "archived",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p01",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p02",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p03",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p04",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p05",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p06",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p07",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p08",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p09",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p10",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p11",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p12",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p13",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p14",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p15",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p16",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p17",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p18",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p19",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p20",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  },
+  {
+   "project": "p21",
+   "status": "active",
+   "category": "Ops",
+   "proposals": 0,
+   "wi_in_proposal": 0,
+   "wi_total": 1
+  }
+ ],
+ "reports": [],
+ "events": [],
+ "sources": [],
+ "due_schedules": [],
+ "in_flight_schedules": []
+}

@@ -1,0 +1,13 @@
+[Unit]
+Description=korg-pulse every 5 minutes
+
+[Timer]
+# Keep in step with DEFAULT_REFRESH_S (300) in pulse/korg_pulse.py: the record
+# declares that cadence as expected_refresh_s and the reader greys the card
+# once ts is older than it plus a grace.
+OnCalendar=*:0/5
+RandomizedDelaySec=30
+Persistent=false
+
+[Install]
+WantedBy=timers.target

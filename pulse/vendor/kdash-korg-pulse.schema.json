@@ -1,0 +1,282 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kdash-korg-pulse.schema.json",
+  "title": "kdash korg pulse",
+  "description": "Payload of kdash:korg:pulse — latest-value TS-OWNED (STRING JSON, no TTL), exactly 3 segments, on central (KDASH_CENTRAL_REDIS). The korg backlog at a glance: how many work items are open, how that number moved over 30 days, the three lane counts, and how the open items split across projects. Contract v1 (CD-28), the first built key of CD-26's kdash:korg:* family. The consumers are kpidash's korg + klams card (which reads open, history, awaiting, active and by_project) and a standalone korg card (which adds queued and the projects count); the fuller set is contracted now so the standalone card needs no version bump. Written by a publisher that reads korg's own rollups and COPIES korg's figures, never re-deriving them (CD-26). Freshness is reader-owned: the writer publishes its own cadence in `expected_refresh_s` and the reader greys the card once `ts` is older than that plus its grace (kdash_cadence_stale). Field names are pinned; a rename, retype or removal lands as kdash:korg:v2:pulse (rules.md Versioning), never in place.",
+  "type": "object",
+  "required": ["ts", "expected_refresh_s", "open", "projects", "awaiting", "active", "queued", "by_project", "other_open", "history"],
+  "additionalProperties": true,
+  "properties": {
+    "ts": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100000000000,
+      "description": "Unix seconds (float) when the publisher read korg, writer's clock. Bounded at 1e11 so a millisecond stamp fails instead of reading as permanently fresh."
+    },
+    "expected_refresh_s": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 86400,
+      "description": "How long the publisher expects between its own writes, in seconds. The reader greys the record once `ts` is older than this plus its own grace — the claude:limits rule, made the default for this family (CD-28)."
+    },
+    "open": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "korg's backlog: work items in any non-terminal status (open, resolved, done, parked), unarchived, all projects. Exactly the figure korg's work_item_flow reports as today's `backlog` and list_work_items reports as `total` — copied, never recounted. Equal to the last `history` entry's `open` whenever `history` is non-empty."
+    },
+    "projects": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many projects hold at least one of the `open` items. Always >= the length of `by_project`; the difference is how many projects the cap left out."
+    },
+    "awaiting": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Length of korg's Awaiting Ken lane (list_awaiting / the board's `awaiting`). korg's own name for it; kfdc calls the same lane Commander's Call."
+    },
+    "active": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Sprint proposals in status `active` (the board's `active` list)."
+    },
+    "queued": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Sprint proposals in status `proposed` — the Planning queue, kfdc's On Deck. Parked proposals are not counted: they are not startable."
+    },
+    "by_project": {
+      "type": "array",
+      "maxItems": 24,
+      "description": "Open items per project, LARGEST FIRST (ties by name, ascending), at most 24 entries; projects with no open item are omitted. The card shows the first entry as the top project and draws one bar segment per entry. Overflow is never silent: items in projects past the cap, and items with no project at all, are counted in `other_open`. Empty only when `open` is 0 or every open item is unassigned.",
+      "items": {
+        "type": "object",
+        "required": ["name", "open"],
+        "additionalProperties": true,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 47,
+            "description": "The korg project's name, verbatim (`k-homelab`, `kdashdata`)."
+          },
+          "open": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "That project's share of `open`, by the same definition."
+          }
+        }
+      }
+    },
+    "other_open": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Open items NOT in any `by_project` entry: those in projects past the 24-entry cap, plus those with no project. 0 when everything is listed. The sum of every `by_project[].open` plus `other_open` is `open` — a producer obligation the validator cannot check (no arithmetic keywords, CD-24)."
+    },
+    "history": {
+      "type": "array",
+      "maxItems": 30,
+      "description": "Daily backlog, OLDEST FIRST, at most 30 entries, the last being today in korg's board timezone. Copied from korg's work_item_flow `backlog` column. May be shorter than 30, or empty, while korg's transition log does not reach back that far: missing days are absent, never zero-filled, because a 0 is a real backlog level.",
+      "items": {
+        "type": "object",
+        "required": ["date", "open"],
+        "additionalProperties": true,
+        "properties": {
+          "date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "description": "Calendar date in korg's board timezone, `YYYY-MM-DD`."
+          },
+          "open": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The backlog at that day's end (today: at `ts`)."
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "ts": 1794617100.4,
+      "expected_refresh_s": 60,
+      "open": 25,
+      "projects": 16,
+      "awaiting": 1,
+      "active": 0,
+      "queued": 1,
+      "by_project": [
+        {"name": "kligd", "open": 5},
+        {"name": "k-homelab", "open": 4},
+        {"name": "kdeskdash", "open": 2},
+        {"name": "kloom", "open": 2},
+        {"name": "kai-ops", "open": 1},
+        {"name": "kdashdata", "open": 1},
+        {"name": "kfdc", "open": 1},
+        {"name": "klams", "open": 1},
+        {"name": "korg", "open": 1},
+        {"name": "kpidash", "open": 1},
+        {"name": "krot", "open": 1},
+        {"name": "kweather", "open": 1},
+        {"name": "kxeneon", "open": 1},
+        {"name": "agent-skills", "open": 1},
+        {"name": "knarr", "open": 1},
+        {"name": "karc", "open": 1}
+      ],
+      "other_open": 0,
+      "history": [
+        {"date": "2026-11-11", "open": 21},
+        {"date": "2026-11-12", "open": 22},
+        {"date": "2026-11-13", "open": 25}
+      ]
+    },
+    {
+      "ts": 1794617100.4,
+      "expected_refresh_s": 60,
+      "open": 0,
+      "projects": 0,
+      "awaiting": 0,
+      "active": 0,
+      "queued": 0,
+      "by_project": [],
+      "other_open": 0,
+      "history": []
+    },
+    {
+      "ts": 1794617100.4,
+      "expected_refresh_s": 300,
+      "open": 120,
+      "projects": 26,
+      "awaiting": 4,
+      "active": 2,
+      "queued": 3,
+      "by_project": [
+        {"name": "p01", "open": 20}, {"name": "p02", "open": 10}, {"name": "p03", "open": 9},
+        {"name": "p04", "open": 8}, {"name": "p05", "open": 7}, {"name": "p06", "open": 6},
+        {"name": "p07", "open": 5}, {"name": "p08", "open": 5}, {"name": "p09", "open": 4},
+        {"name": "p10", "open": 4}, {"name": "p11", "open": 4}, {"name": "p12", "open": 3},
+        {"name": "p13", "open": 3}, {"name": "p14", "open": 3}, {"name": "p15", "open": 3},
+        {"name": "p16", "open": 3}, {"name": "p17", "open": 2}, {"name": "p18", "open": 2},
+        {"name": "p19", "open": 2}, {"name": "p20", "open": 2}, {"name": "p21", "open": 2},
+        {"name": "p22", "open": 2}, {"name": "p23", "open": 2}, {"name": "p24", "open": 1}
+      ],
+      "other_open": 8,
+      "history": [
+        {"date": "2026-10-15", "open": 96}, {"date": "2026-10-16", "open": 97},
+        {"date": "2026-10-17", "open": 97}, {"date": "2026-10-18", "open": 99},
+        {"date": "2026-10-19", "open": 100}, {"date": "2026-10-20", "open": 100},
+        {"date": "2026-10-21", "open": 102}, {"date": "2026-10-22", "open": 103},
+        {"date": "2026-10-23", "open": 103}, {"date": "2026-10-24", "open": 105},
+        {"date": "2026-10-25", "open": 106}, {"date": "2026-10-26", "open": 108},
+        {"date": "2026-10-27", "open": 108}, {"date": "2026-10-28", "open": 109},
+        {"date": "2026-10-29", "open": 111}, {"date": "2026-10-30", "open": 112},
+        {"date": "2026-10-31", "open": 112}, {"date": "2026-11-01", "open": 113},
+        {"date": "2026-11-02", "open": 114}, {"date": "2026-11-03", "open": 115},
+        {"date": "2026-11-04", "open": 115}, {"date": "2026-11-05", "open": 116},
+        {"date": "2026-11-06", "open": 117}, {"date": "2026-11-07", "open": 117},
+        {"date": "2026-11-08", "open": 118}, {"date": "2026-11-09", "open": 118},
+        {"date": "2026-11-10", "open": 119}, {"date": "2026-11-11", "open": 119},
+        {"date": "2026-11-12", "open": 120}, {"date": "2026-11-13", "open": 120}
+      ]
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "ts": 1794617100.4,
+        "expected_refresh_s": 60,
+        "open": 25,
+        "projects": 1,
+        "awaiting": 1,
+        "active": 0,
+        "queued": 1,
+        "by_project": [{"name": "kligd", "open": 25}],
+        "history": []
+      },
+      "why": "`other_open` absent: the overflow count is required even when it is 0, because a feed that caps a list must say what the cap left out (CD-26), and absence is indistinguishable from a publisher that forgot"
+    },
+    {
+      "record": {
+        "ts": 1794617100.4,
+        "expected_refresh_s": 60,
+        "open": 25,
+        "projects": 25,
+        "awaiting": 0,
+        "active": 0,
+        "queued": 0,
+        "by_project": [
+          {"name": "p01", "open": 1}, {"name": "p02", "open": 1}, {"name": "p03", "open": 1},
+          {"name": "p04", "open": 1}, {"name": "p05", "open": 1}, {"name": "p06", "open": 1},
+          {"name": "p07", "open": 1}, {"name": "p08", "open": 1}, {"name": "p09", "open": 1},
+          {"name": "p10", "open": 1}, {"name": "p11", "open": 1}, {"name": "p12", "open": 1},
+          {"name": "p13", "open": 1}, {"name": "p14", "open": 1}, {"name": "p15", "open": 1},
+          {"name": "p16", "open": 1}, {"name": "p17", "open": 1}, {"name": "p18", "open": 1},
+          {"name": "p19", "open": 1}, {"name": "p20", "open": 1}, {"name": "p21", "open": 1},
+          {"name": "p22", "open": 1}, {"name": "p23", "open": 1}, {"name": "p24", "open": 1},
+          {"name": "p25", "open": 1}
+        ],
+        "other_open": 0,
+        "history": []
+      },
+      "why": "25 `by_project` entries: the cap is 24 and the 25th project belongs in `other_open`, not on the wire as a segment the card has no room for"
+    },
+    {
+      "record": {
+        "ts": 1794617100400,
+        "expected_refresh_s": 60,
+        "open": 0,
+        "projects": 0,
+        "awaiting": 0,
+        "active": 0,
+        "queued": 0,
+        "by_project": [],
+        "other_open": 0,
+        "history": []
+      },
+      "why": "`ts` in milliseconds reads as a record from the far future, which readers treat as clock skew and therefore fresh — a dead publisher would never go stale"
+    },
+    {
+      "record": {
+        "ts": 1794617100.4,
+        "expected_refresh_s": 60,
+        "open": 3,
+        "projects": 1,
+        "awaiting": 0,
+        "active": 0,
+        "queued": 0,
+        "by_project": [{"name": "korg", "open": 3}],
+        "other_open": 0,
+        "history": [{"date": "11/13/2026", "open": 3}]
+      },
+      "why": "history dates are ISO `YYYY-MM-DD`; a locale-formatted date sorts wrongly and the card cannot label the axis from it"
+    },
+    {
+      "record": {
+        "ts": 1794617100.4,
+        "expected_refresh_s": 60,
+        "open": 3,
+        "projects": 2,
+        "awaiting": 0,
+        "active": 0,
+        "queued": 0,
+        "by_project": [{"name": "korg", "open": 3}, {"name": "klams", "open": 0}],
+        "other_open": 0,
+        "history": []
+      },
+      "why": "a project with no open item is omitted, not listed at 0 — a zero-width segment is still a segment, and the gap it leaves is a bar that lies"
+    },
+    {
+      "record": {
+        "ts": 1794617100.4,
+        "open": 3,
+        "projects": 1,
+        "awaiting": 0,
+        "active": 0,
+        "queued": 0,
+        "by_project": [{"name": "korg", "open": 3}],
+        "other_open": 0,
+        "history": []
+      },
+      "why": "`expected_refresh_s` absent: this family's staleness is the writer's own cadence plus the reader's grace, so a record that does not say its cadence cannot be judged stale at all"
+    }
+  ]
+}

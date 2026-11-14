@@ -112,6 +112,10 @@ jobs:
             exit 1
           fi
 
+      # korg-pulse (WI 4611): stdlib python3, which the runner already has.
+      - name: korg-pulse contract
+        run: python3 -m unittest discover -s pulse
+
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
