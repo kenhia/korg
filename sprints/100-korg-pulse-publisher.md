@@ -97,3 +97,30 @@ contract facts forward.
 - The timer runs whatever the kai checkout has checked out. During a korg
   sprint on kai, that is the sprint branch. This is the same arrangement as
   every other `repo-user-timer` consumer, and is noted rather than changed.
+
+## Deployed
+
+2026-11-13 (PST), on the ship turn of karc leg `korg-0cc987`, cleared by the
+overseer in comment 4664 on korg:4616.
+
+- **korg image, via `deploy-kubsdb`** (the `.sprint-deploy` step). It was built
+  from main `7927251` and pushed as `korg:792725128826` and `korg:latest`. The
+  revision gate passed ("running revision 7927251…"), and
+  `post-deploy-check.sh --compare` reported OK with no count down. The image
+  carries no publisher code; this deploy keeps production on main. On it,
+  `/api/board`, `/api/work-items/flow?days=30` and `/plan` all answer 200, and
+  `just pulse-dry` reads it cleanly (open 35, 30 history days). The rollback
+  target is `korg:4f594298ac05`.
+- **The korg-pulse timer, via k-homelab `19e47dd`** (pushed to main, checkout
+  on kubs0 synced). That commit added the `korg-pulse` block to
+  `manifests/kai.yml`, the consumer page
+  `recipes/repo-user-timer/consumers/korg-pulse.md` with its README row, and a
+  changelog-kai entry. `bin/audit kai repo-user-timer` reported
+  `WOULD CHANGE`, for the new block only. `bin/apply kai repo-user-timer`, run
+  from kubs0, reported `changed`. `korg-pulse.timer` is enabled and active on
+  kai.
+- **The timer's own first firing:** 17:35:37 PST, `Result=success`, logging
+  `open=35 projects=18 awaiting=1 active=2 queued=4 history=30`. The key read
+  back 8 s later passed the vendored validator with no errors, and it matched
+  a `/api/board` read taken in the same second: open 35, awaiting 1, active 2,
+  queued 4, and `by_project` equal entry for entry.
