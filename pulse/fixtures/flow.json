@@ -1,0 +1,65 @@
+{
+ "backlog_before": 40,
+ "horizon": "2026-08-08",
+ "timezone": "America/Los_Angeles",
+ "durable_after_days": 7,
+ "generated": "2026-11-14T01:00:00Z",
+ "days": [
+  {
+   "day": "2026-11-07",
+   "added": 3,
+   "closed": 1,
+   "backlog": 41,
+   "added_durable": 0,
+   "closed_durable": 0
+  },
+  {
+   "day": "2026-11-08",
+   "added": 3,
+   "closed": 1,
+   "backlog": 44,
+   "added_durable": 0,
+   "closed_durable": 0
+  },
+  {
+   "day": "2026-11-09",
+   "added": 3,
+   "closed": 1,
+   "backlog": 44,
+   "added_durable": 0,
+   "closed_durable": 0
+  },
+  {
+   "day": "2026-11-10",
+   "added": 3,
+   "closed": 1,
+   "backlog": 46,
+   "added_durable": 0,
+   "closed_durable": 0
+  },
+  {
+   "day": "2026-11-11",
+   "added": 3,
+   "closed": 1,
+   "backlog": 48,
+   "added_durable": 0,
+   "closed_durable": 0
+  },
+  {
+   "day": "2026-11-12",
+   "added": 3,
+   "closed": 1,
+   "backlog": 47,
+   "added_durable": 0,
+   "closed_durable": 0
+  },
+  {
+   "day": "2026-11-13",
+   "added": 3,
+   "closed": 1,
+   "backlog": 50,
+   "added_durable": 0,
+   "closed_durable": 0
+  }
+ ]
+}

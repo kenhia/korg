@@ -1,0 +1,13 @@
+[Unit]
+Description=korg-pulse: publish korg's board numbers as kdash:korg:pulse (korg WI 4611)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/src/tools/korg
+# kdash-pub is in /usr/local/bin; ~/.local/bin is carried for the
+# repo-user-timer recipe's PATH guard, which every consumer's unit keeps.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/src/tools/korg/bin/korg-pulse
+TimeoutStartSec=2min

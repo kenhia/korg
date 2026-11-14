@@ -1,0 +1,5 @@
+#!/bin/sh
+# korg-pulse runner: publish kdash:korg:pulse once (WI 4611). The timer's
+# ExecStart, and the repo-user-timer recipe's `runner:`. Arguments pass
+# through, so `bin/korg-pulse --dry-run` prints the record and writes nothing.
+exec python3 "$(dirname "$0")/../pulse/korg_pulse.py" "$@"
