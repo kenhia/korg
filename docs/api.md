@@ -37,6 +37,7 @@ enumerates the tools a third time. All three are drift-tested against
 | Handoffs | `create_handoff`, `get_handoff`, `update_handoff` |
 | Attachments | `get_attachment`, `list_attachments` |
 | Projects and areas | `list_projects`, `get_project`, `create_project`, `update_project`, `list_areas`, `create_area`, `update_area`, `delete_area` |
+| Tagged days | `list_tagged_days`, `add_tagged_day`, `remove_tagged_day` |
 
 Two tools are not what their names suggest:
 
@@ -226,7 +227,7 @@ the same envelope", which was true of four of them:
 |---|---|
 | `{items, total, limit, offset}` | `list_work_items`, `list_cards`, `list_links`, `search` |
 | `{items, total, limit, truncated}` | `neighbors` (`truncated`, not `offset` — it caps rather than pages) |
-| bare array | `list_reports`, `list_areas`, `list_comments`, `list_awaiting`, `list_report_sources`, `list_attachments` |
+| bare array | `list_reports`, `list_areas`, `list_comments`, `list_awaiting`, `list_report_sources`, `list_attachments`, `list_tagged_days` |
 | `{items, omitted}` | `list_proposals`, `list_programs`, `list_projects`, `list_schedules` |
 
 (`omitted` counts the rows a read's own defaults hid. `list_work_items` and

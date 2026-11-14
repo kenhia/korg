@@ -16,8 +16,8 @@ use korg_core::error::{ErrorClass, ErrorCode};
 use korg_core::ops;
 use korg_core::repo::{
     self, CardPatch, HandoffPatch, LinkPatch, NewCard, NewHandoff, NewLink, NewProgram,
-    NewProposal, NewReport, NewSchedule, NewWorkItem, ProgramPatch, ProjectPatch, ProposalPatch,
-    ReportSourcePatch, SchedulePatch, WorkItemPatch,
+    NewProposal, NewReport, NewSchedule, NewTaggedDay, NewWorkItem, ProgramPatch, ProjectPatch,
+    ProposalPatch, RemoveTaggedDay, ReportSourcePatch, SchedulePatch, WorkItemPatch,
 };
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
@@ -283,6 +283,9 @@ pub fn tools() -> Vec<Tool> {
         tool::<ops::ProjectName>("get_project", "Fetch one project by name: every column — including `notes`, the long-form operational context the lean list omits, and `created`/`updated`, which say how stale this project's routing metadata is — plus the areas under it, so a focused read needs no follow-up list_areas. isError with code `not_found` if there is none."),
         tool::<ops::CreateProject>("create_project", "Create a project by name (idempotent — returns the existing id if it already exists). Returns its id."),
         tool2::<ops::ProjectName, ProjectPatch>("update_project", "Update a project's metadata by name (the name itself is immutable), returning the updated project: status (active|archived — those are the only two, and the question they answer is \"is this a legitimate target for new work?\"), machines, deploy_to, category, description, notes, gh_repo, src_path, starred. Omitted fields are unchanged. `description` is capped at 160 characters — it is a routing line, not a blurb; put anything longer in `notes`. `starred` marks a project hot for the week, which is what lifts it into the band at the top of korg's project rails — it orders nothing and gates nothing, and is not the `pinned` that sprint proposals and programs carry. ARCHIVING IS NOT JUST A STATUS (korg #3003): a patch setting status `archived` also clears `src_path`, `machines` and `deploy_to` in the same transaction, because all three answer \"where is the source\" and for an archived project the answer is \"nowhere\". Nothing is lost — the cleared values are appended to `notes` first — and setting any of them in the same call will not survive it. Coming back is unaffected: `update_project` is deliberately outside the refusal that stops archived projects taking new work, so setting status `active` and re-locating the row in one call works, and clears nothing."),
+        tool::<ops::NoArgs>("list_tagged_days", "Every tagged day korg holds for Ken's calendar (WI 4664) -- his personal days OFF and his SPECIAL days (birthdays, anniversaries) -- as a bare array ordered by date: {id, date, yearly, kind, label, short, created}. A `yearly` row repeats on its month and day every year from its own date on. Holidays are NOT here: US federal holidays are computed by rule when the calendar is published, and a holiday is not a day off unless Ken tagged that date `off` as well. These rows feed the `kdash:calendar` record kpidash's calendar card draws; the kai publisher picks up a change within a minute."),
+        tool::<NewTaggedDay>("add_tagged_day", "Tag one date for Ken's calendar card (WI 4664) in ONE call. \"Tag the 27th as a day off\" is {date:\"YYYY-MM-DD\", kind:\"off\"}. \"Sam's birthday is 3 March\" is {date, kind:\"special\", label:\"Sam's birthday\", short:\"Sam\", yearly:true} -- `yearly` makes it repeat every year, so a birthday is entered once. A date that is both a day off AND a special day is two calls, one per kind; the calendar shows them as one day. `label` is required for `special` and refused for `off` (at most 31 characters); `short` is an optional tight-space label for a special day (at most 12). Dates are Ken's local calendar (America/Los_Angeles). Do NOT tag holidays: they are computed. The same tag twice is `conflict`, naming the existing id. Returns the stored row; the kai publisher puts it on the panel within a minute."),
+        tool::<RemoveTaggedDay>("remove_tagged_day", "Remove tags from Ken's calendar in ONE call (WI 4664): by `id` (one row, as list_tagged_days or add_tagged_day returned it), or by `date` -- every tag on that date, including a yearly tag whose month and day it is -- narrowed with `kind` to remove only the day off or only the special day. Pass exactly one of `id` and `date`. Returns the removed rows; removing nothing is `not_found`, so a mistyped date is never a silent success. Holidays are computed and cannot be removed."),
         tool::<ops::ProjectRef>("list_areas", "List the areas under a project (by project name), each with its `description` — what the area is for. get_project inlines the same rows, so a focused project read needs no follow-up call."),
         tool::<ops::CreateArea>("create_area", "Create an area under a project by name (idempotent — updates the description if it already exists). Returns its id."),
         tool::<ops::UpdateArea>("update_area", "Rename an area (`new_name`) and/or re-describe it (`description`; null clears), selected by project + current name. Returns the updated row. Work items keep pointing at the same area through a rename. isError `not_found` if no such area, `conflict` if the new name is already taken in that project."),
@@ -784,6 +787,15 @@ impl KorgServer {
             "update_project" => {
                 let (a, patch) = parse_args2::<ops::ProjectName, ProjectPatch>(args)?;
                 respond(repo::update_project_by_name(pool, &a.name, &patch).await)
+            }
+            "list_tagged_days" => respond(repo::list_tagged_days(pool).await),
+            "add_tagged_day" => {
+                let new: NewTaggedDay = parse_args(args)?;
+                respond(repo::add_tagged_day(pool, new).await)
+            }
+            "remove_tagged_day" => {
+                let sel: RemoveTaggedDay = parse_args(args)?;
+                respond(repo::remove_tagged_day(pool, sel).await)
             }
             "list_areas" => {
                 let a: ops::ProjectRef = parse_args(args)?;

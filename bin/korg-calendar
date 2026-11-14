@@ -1,0 +1,5 @@
+#!/bin/sh
+# korg-calendar runner: publish kdash:calendar if it changed or is due (WI 4664).
+# The timer's ExecStart, and the repo-user-timer recipe's `runner:`. Arguments
+# pass through: `--dry-run` prints the record, `--force` writes it regardless.
+exec python3 "$(dirname "$0")/../calfeed/korg_calendar.py" "$@"

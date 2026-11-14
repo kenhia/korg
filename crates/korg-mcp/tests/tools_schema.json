@@ -2301,6 +2301,100 @@
     "name": "update_project"
   },
   {
+    "description": "Every tagged day korg holds for Ken's calendar (WI 4664) -- his personal days OFF and his SPECIAL days (birthdays, anniversaries) -- as a bare array ordered by date: {id, date, yearly, kind, label, short, created}. A `yearly` row repeats on its month and day every year from its own date on. Holidays are NOT here: US federal holidays are computed by rule when the calendar is published, and a holiday is not a day off unless Ken tagged that date `off` as well. These rows feed the `kdash:calendar` record kpidash's calendar card draws; the kai publisher picks up a change within a minute.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "name": "list_tagged_days"
+  },
+  {
+    "description": "Tag one date for Ken's calendar card (WI 4664) in ONE call. \"Tag the 27th as a day off\" is {date:\"YYYY-MM-DD\", kind:\"off\"}. \"Sam's birthday is 3 March\" is {date, kind:\"special\", label:\"Sam's birthday\", short:\"Sam\", yearly:true} -- `yearly` makes it repeat every year, so a birthday is entered once. A date that is both a day off AND a special day is two calls, one per kind; the calendar shows them as one day. `label` is required for `special` and refused for `off` (at most 31 characters); `short` is an optional tight-space label for a special day (at most 12). Dates are Ken's local calendar (America/Los_Angeles). Do NOT tag holidays: they are computed. The same tag twice is `conflict`, naming the existing id. Returns the stored row; the kai publisher puts it on the panel within a minute.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "description": "The date, `YYYY-MM-DD`, in Ken's local calendar (America/Los_Angeles).\nFor a `yearly` tag, any year's date works; it repeats from that year on.",
+          "format": "date",
+          "type": "string"
+        },
+        "kind": {
+          "description": "`off` (a personal day off) or `special` (a named day such as a birthday).",
+          "enum": [
+            "off",
+            "special"
+          ],
+          "type": "string"
+        },
+        "label": {
+          "description": "Required for `special`, refused for `off`: the day's name, at most 31\ncharacters (\"Sam's birthday\").",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "short": {
+          "description": "Optional for `special`, refused for `off`: a label for tight spaces, at\nmost 12 characters (\"Sam\").",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "yearly": {
+          "default": false,
+          "description": "Repeat on this month and day every year (birthdays, anniversaries).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "date",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "name": "add_tagged_day"
+  },
+  {
+    "description": "Remove tags from Ken's calendar in ONE call (WI 4664): by `id` (one row, as list_tagged_days or add_tagged_day returned it), or by `date` -- every tag on that date, including a yearly tag whose month and day it is -- narrowed with `kind` to remove only the day off or only the special day. Pass exactly one of `id` and `date`. Returns the removed rows; removing nothing is `not_found`, so a mistyped date is never a silent success. Holidays are computed and cannot be removed.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "description": "Every tag on this date, `YYYY-MM-DD` — including a yearly tag whose\nmonth and day it is. Pass `kind` to remove only the day off, or only\nthe special day.",
+          "format": "date",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "One row, as `list_tagged_days` returned it.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "off",
+            "special",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "remove_tagged_day"
+  },
+  {
     "description": "List the areas under a project (by project name), each with its `description` — what the area is for. get_project inlines the same rows, so a focused project read needs no follow-up call.",
     "inputSchema": {
       "additionalProperties": false,

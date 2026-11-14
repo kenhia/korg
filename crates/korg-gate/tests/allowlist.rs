@@ -140,7 +140,7 @@ async fn every_refused_tool_is_refused_on_call_and_the_list_is_reads_plus_writes
     expected.sort_unstable();
     names.sort_unstable();
     assert_eq!(names, expected);
-    assert_eq!(names.len(), 35);
+    assert_eq!(names.len(), 36); // 27 reads (list_tagged_days joined in sprint 101) + 9 writes
 }
 
 #[tokio::test]

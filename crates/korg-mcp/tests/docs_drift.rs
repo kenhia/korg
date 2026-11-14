@@ -82,6 +82,7 @@ const CATEGORIES: &[&str] = &[
     "Handoffs",
     "Attachments",
     "Projects and areas",
+    "Tagged days",
 ];
 
 /// Parse the `## Tool catalogue` table into (category, tool names).
@@ -567,6 +568,7 @@ const VOCAB_BULLETS: &[(&str, &str)] = &[
     ("source `freshness`", "SOURCE_FRESHNESS"),
     ("source `asserts`", "SOURCE_ASSERTIONS"),
     ("activity `action`", "ACTIVITY_ACTIONS"),
+    ("tagged day `kind`", "TAGGED_DAY_KINDS"),
 ];
 
 fn vocabulary(const_name: &str) -> &'static [&'static str] {

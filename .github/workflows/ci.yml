@@ -115,6 +115,9 @@ jobs:
       # korg-pulse (WI 4611): stdlib python3, which the runner already has.
       - name: korg-pulse contract
         run: python3 -m unittest discover -s pulse
+      # korg-calendar (WI 4664): stdlib python3 too.
+      - name: korg-calendar contract
+        run: python3 -m unittest discover -s calfeed
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings

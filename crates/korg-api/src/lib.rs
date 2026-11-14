@@ -60,6 +60,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/connectors/projects", get(connectors::projects))
         .route("/api/machines", get(list_machines))
         .route("/api/machines/:name", put(set_machine))
+        .route("/api/tagged-days", get(list_tagged_days))
         .route(
             "/api/work-items",
             get(list_work_items).post(create_work_item),
@@ -969,6 +970,15 @@ async fn list_activity(
     Query(filter): Query<repo::ActivityFilter>,
 ) -> ApiResult {
     Ok(Json(json!(repo::list_activity(&s.pool, filter).await?)))
+}
+
+// --- tagged days (WI 4664) --------------------------------------------------
+
+/// `GET /api/tagged-days` — every stored tag, the calendar publisher's read.
+/// Writes are MCP-only in this slice (no web UI yet), like `/api/machines`
+/// is REST-only in the other direction.
+async fn list_tagged_days(State(s): State<AppState>) -> ApiResult {
+    Ok(Json(json!(repo::list_tagged_days(&s.pool).await?)))
 }
 
 // --- machines (WI 2919) ------------------------------------------------------
