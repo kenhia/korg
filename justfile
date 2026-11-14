@@ -28,7 +28,7 @@ gen:
 #
 # The korg-migrate snapshot suites run only if snapshots/*.dump are present;
 # see KORG_SNAPSHOT_TESTS in docs/setup.md.
-check: fmt-check gen-check web-check pulse-check
+check: fmt-check gen-check web-check pulse-check calendar-check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
 
@@ -40,6 +40,15 @@ pulse-check:
 # Print the pulse record live korg would publish now, writing nothing.
 pulse-dry:
     bin/korg-pulse --dry-run
+
+# korg-calendar, the kdash:calendar publisher (WI 4664): holiday rules and the
+# record against the kdashdata schema pinned in calfeed/vendor/. Stdlib only.
+calendar-check:
+    python3 -m unittest discover -s calfeed
+
+# Print the calendar record live korg would publish now, writing nothing.
+calendar-dry:
+    bin/korg-calendar --dry-run
 
 fmt-check:
     cargo fmt --all --check

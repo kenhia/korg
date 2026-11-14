@@ -1,0 +1,272 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kenhia/kdashdata/contracts/schemas/kdash-calendar.schema.json",
+  "title": "kdash calendar",
+  "description": "Payload of kdash:calendar — latest-value TS-OWNED (STRING JSON, no TTL), exactly 2 segments, on central (KDASH_CENTRAL_REDIS). The TAGGED days for kpidash's time and calendar card: Ken's personal days off, holidays and special days, already expanded to concrete dates. The panel draws the clock, the month grid and the weekends itself; this feed carries only the dates that have something to say. Contract v1 (CD-30). Yearly repeats and holiday rules are the publisher's business: every entry is one concrete date, and the reader does no date arithmetic beyond comparing `YYYY-MM-DD` strings. All dates are local calendar dates in America/Los_Angeles, the home's timezone, NOT the fleet hosts' UTC system clock; a consumer computes `today` in that zone before comparing. Freshness: tags change rarely, so an old `ts` is a muted hint at most and NEVER a reason to blank the calendar; the real stale condition is a window [`from`, `to`] that no longer covers today (kdash_calendar_covers). Field names are pinned; a rename, retype or removal lands as kdash:calendar:v2 (rules.md Versioning), never in place.",
+  "type": "object",
+  "required": [
+    "ts",
+    "expected_refresh_s",
+    "from",
+    "to",
+    "days"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "ts": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 100000000000,
+      "description": "Unix seconds (float) when the publisher built the record, writer's clock. Bounded at 1e11 so a millisecond stamp fails instead of reading as permanently fresh."
+    },
+    "expected_refresh_s": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 86400,
+      "description": "How long the publisher expects between its own scheduled writes, in seconds; 3600 for an hourly publisher (it also writes on every change to the list). A reader MAY mute the card's tag colours once `ts` is older than this plus its grace (kdash_cadence_stale); it must keep drawing the last good record either way."
+    },
+    "from": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "First date the record covers, inclusive, `YYYY-MM-DD`: the first day of the current month at `ts`, so the whole visible month is always inside the window."
+    },
+    "to": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "Last date the record covers, inclusive, `YYYY-MM-DD`: at least 90 days after `ts`'s date. Never before `from` (a producer obligation; the C reader rejects a record that breaks it). A date in [from, to] with no entry in `days` is AFFIRMATIVELY untagged; a date outside it is unknown."
+    },
+    "days": {
+      "type": "array",
+      "maxItems": 64,
+      "description": "One entry per TAGGED date inside [from, to], sorted by date ascending, each date at most once; ONE entry carries all of that date's tags (a day off that is also a birthday is one entry with `off` true and `special` set). An untagged date is simply absent, and weekends are never listed for being weekends. Every entry carries at least one tag — `off` true, `holiday` or `special` — and lies inside the window; both are producer obligations the validator cannot check (no anyOf, no date comparison: CD-24), and the C reader skips and counts an entry that breaks either. Empty when nothing in the window is tagged.",
+      "items": {
+        "type": "object",
+        "required": [
+          "date",
+          "off"
+        ],
+        "additionalProperties": true,
+        "properties": {
+          "date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "description": "The tagged date, `YYYY-MM-DD`, America/Los_Angeles."
+          },
+          "off": {
+            "type": "boolean",
+            "description": "A personal day off for Ken. Independent of `holiday`: a holiday Ken works is `off` false, and a holiday he takes is `off` true with the holiday named."
+          },
+          "holiday": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 31,
+            "description": "The holiday's name (`Thanksgiving`). Absent when the date is not a holiday; never null, never empty. A holiday falling on a weekend is listed on the date itself, and the weekday it is OBSERVED on is its own entry whose name says so (`Independence Day (observed)`). Two holidays on one date are joined into this one string by the publisher."
+          },
+          "special": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 31,
+            "description": "A special day's name (`Ken's birthday`, an anniversary). Absent when there is none; never null, never empty. Two on one date are joined into this one string by the publisher."
+          },
+          "short": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 12,
+            "description": "Optional label for tight spaces (`Thanksgiving`, `Bday`), at most 12 characters, chosen by the publisher for the entry as a whole. Absent means the card has no short label and picks its own fallback; it never truncates `holiday` or `special` into this."
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "ts": 1794643200.5,
+      "expected_refresh_s": 3600,
+      "from": "2026-11-01",
+      "to": "2027-02-14",
+      "days": [
+        {
+          "date": "2026-11-11",
+          "off": false,
+          "holiday": "Veterans Day",
+          "short": "Veterans"
+        },
+        {
+          "date": "2026-11-25",
+          "off": true
+        },
+        {
+          "date": "2026-11-26",
+          "off": true,
+          "holiday": "Thanksgiving",
+          "short": "Thanksgiving"
+        },
+        {
+          "date": "2026-11-27",
+          "off": true,
+          "special": "Ken's birthday",
+          "short": "Bday"
+        },
+        {
+          "date": "2026-12-25",
+          "off": true,
+          "holiday": "Christmas Day",
+          "short": "Christmas"
+        },
+        {
+          "date": "2027-01-01",
+          "off": true,
+          "holiday": "New Year's Day",
+          "short": "New Year"
+        },
+        {
+          "date": "2027-01-18",
+          "off": false,
+          "holiday": "Martin Luther King Jr. Day",
+          "short": "MLK Day"
+        },
+        {
+          "date": "2027-02-14",
+          "off": false,
+          "special": "Valentine's Day"
+        }
+      ]
+    },
+    {
+      "ts": 1794643200,
+      "expected_refresh_s": 3600,
+      "from": "2026-11-01",
+      "to": "2027-02-12",
+      "days": []
+    },
+    {
+      "ts": 1783015200,
+      "expected_refresh_s": 3600,
+      "from": "2026-07-01",
+      "to": "2026-09-30",
+      "days": [
+        {
+          "date": "2026-07-03",
+          "off": true,
+          "holiday": "Independence Day (observed)",
+          "special": "Lake trip",
+          "short": "July 4th"
+        },
+        {
+          "date": "2026-07-04",
+          "off": false,
+          "holiday": "Independence Day"
+        }
+      ],
+      "publisher": "korg",
+      "v": 1
+    }
+  ],
+  "x-counterexamples": [
+    {
+      "record": {
+        "ts": 1794643200,
+        "expected_refresh_s": 3600,
+        "from": "2026-11-01",
+        "to": "2027-02-14",
+        "days": [
+          {
+            "date": "2026-11-26",
+            "holiday": "Thanksgiving"
+          }
+        ]
+      },
+      "why": "`off` is required on every entry; a holiday Ken works still says `off: false`"
+    },
+    {
+      "record": {
+        "ts": 1794643200,
+        "expected_refresh_s": 3600,
+        "from": "2026-11-01",
+        "to": "2027-02-14",
+        "days": [
+          {
+            "date": "2026-11-26",
+            "off": true,
+            "holiday": null
+          }
+        ]
+      },
+      "why": "an untagged holiday is ABSENT, not null — null is not a holiday name"
+    },
+    {
+      "record": {
+        "ts": 1794643200,
+        "expected_refresh_s": 3600,
+        "from": "2026-11-01",
+        "to": "2027-02-14",
+        "days": [
+          {
+            "date": "2026-11-26",
+            "off": true,
+            "short": "Thanksgiving Day"
+          }
+        ]
+      },
+      "why": "`short` is at most 12 characters; a label that will not fit the tight space is not a short label"
+    },
+    {
+      "record": {
+        "ts": 1794643200,
+        "expected_refresh_s": 3600,
+        "from": "2026-11-01",
+        "to": "2027-02-14",
+        "days": [
+          {
+            "date": "11/26/2026",
+            "off": true
+          }
+        ]
+      },
+      "why": "a locale date; every date on this feed is `YYYY-MM-DD`"
+    },
+    {
+      "record": {
+        "ts": 1794643200,
+        "expected_refresh_s": 3600,
+        "from": "2026-11-01",
+        "to": "2027-02-14",
+        "days": [
+          {
+            "date": "2026-11-26",
+            "off": "yes"
+          }
+        ]
+      },
+      "why": "`off` is a boolean, not a word"
+    },
+    {
+      "record": {
+        "ts": 1794643200,
+        "expected_refresh_s": 3600,
+        "from": "2026-11-01",
+        "days": []
+      },
+      "why": "`to` absent: a record that does not say where its window ends cannot say a date is untagged"
+    },
+    {
+      "record": {
+        "ts": 1794643200000,
+        "expected_refresh_s": 3600,
+        "from": "2026-11-01",
+        "to": "2027-02-14",
+        "days": []
+      },
+      "why": "a millisecond `ts` would read as permanently fresh"
+    },
+    {
+      "record": {
+        "ts": 1794643200,
+        "from": "2026-11-01",
+        "to": "2027-02-14",
+        "days": []
+      },
+      "why": "`expected_refresh_s` absent: the writer must declare its cadence (CD-28)"
+    }
+  ]
+}

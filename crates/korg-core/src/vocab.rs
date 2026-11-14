@@ -610,6 +610,16 @@ pub const SCHEDULE_TERMINAL_STATUSES: [&str; 1] = ["done"];
 /// exact class of silent wrong this sprint exists to remove.
 pub const SCHEDULE_SUBSTITUTIONS: [&str; 5] = ["YEAR", "MONTH", "DAY", "DATE", "QUARTER"];
 
+/// What a tagged day says about its date (WI 4664, migration 0039).
+///
+/// * `off` — a personal day off for Ken. Independent of holidays: a computed
+///   holiday is not a day off unless one of these says so.
+/// * `special` — a named day (a birthday, an anniversary); carries a `label`.
+///
+/// Holidays are deliberately NOT a kind. They are computed by rule at publish
+/// time (`calfeed/us_holidays.py`), so there is no row to store for them.
+pub const TAGGED_DAY_KINDS: [&str; 2] = ["off", "special"];
+
 /// Whether korg can currently believe what a report source last said (#950).
 ///
 /// * `fresh` — filed within its cadence plus grace.
@@ -730,7 +740,7 @@ pub const PROJECT_CATEGORIES: [&str; 8] = [
 /// hand-kept copy that drifts (the old `api.ts` `WI_TYPES` had nine entries,
 /// six of which the server rejects). `docs_drift` (korg-mcp) walks it too, so a
 /// vocabulary enumerated in prose is checked against this registry, not a copy.
-pub const EXPORTED: [(&str, &str, &[&str]); 19] = [
+pub const EXPORTED: [(&str, &str, &[&str]); 20] = [
     ("NODE_KINDS", "NodeKind", &NODE_KINDS),
     ("WI_STATUSES", "WiStatus", &WI_STATUSES),
     ("WI_TYPES", "WiType", &WI_TYPES),
@@ -753,6 +763,7 @@ pub const EXPORTED: [(&str, &str, &[&str]); 19] = [
     ("SOURCE_FRESHNESS", "SourceFreshness", &SOURCE_FRESHNESS),
     ("SOURCE_ASSERTIONS", "SourceAssertion", &SOURCE_ASSERTIONS),
     ("ACTIVITY_ACTIONS", "ActivityAction", &ACTIVITY_ACTIONS),
+    ("TAGGED_DAY_KINDS", "TaggedDayKind", &TAGGED_DAY_KINDS),
     // Not a domain vocabulary but the same kind of fact: a closed set the
     // client must agree with. The web app branches on it to tell "you typed
     // something wrong" from "korg broke" (sprint 019).

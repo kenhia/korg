@@ -1,0 +1,13 @@
+[Unit]
+Description=korg-calendar every minute (writes only on change, or hourly)
+
+[Timer]
+# Every minute so a tag added through korg's MCP tools reaches the panel within
+# a minute: korg runs on kubsdb and cannot poke this host. The script writes
+# only when the record changed or the live one is nearly DEFAULT_REFRESH_S
+# (3600) old, so a quiet minute writes and logs nothing.
+OnCalendar=minutely
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -391,6 +391,27 @@
       "shape": "filtered"
     },
     {
+      "envelope_keys": [],
+      "full_read": null,
+      "omitted_keys": [],
+      "only_on_full_read": [],
+      "only_on_list_read": [],
+      "projection": "unpaired",
+      "projection_switch": null,
+      "read": "list_tagged_days",
+      "row_keys": [
+        "created",
+        "date",
+        "id",
+        "kind",
+        "label",
+        "short",
+        "yearly"
+      ],
+      "row_optional_keys": [],
+      "shape": "bare_array"
+    },
+    {
       "envelope_keys": [
         "items",
         "limit",

@@ -46,6 +46,7 @@ mod routes;
 mod schedules;
 mod search;
 mod selectors;
+mod tagged_days;
 mod work_items;
 
 pub use crate::error::RepoError;
@@ -73,4 +74,5 @@ pub use reports::*;
 pub use routes::*;
 pub use schedules::*;
 pub use search::*;
+pub use tagged_days::*;
 pub use work_items::*;

@@ -517,6 +517,36 @@ sprint 100). The contract is kdashdata's (CD-28), pinned in `pulse/vendor/`.
   `bin/korg-pulse` publishes it once. `kdash-pub get kdash:korg:pulse` reads
   back what is live. `KORG_URL` (or `--korg`) points it at another korg.
 
+## korg-calendar — the calendar feed
+
+`bin/korg-calendar` publishes Ken's tagged days, merged with the US federal
+holidays, as `kdash:calendar`: the record behind kpidash's time and calendar
+card (WI 4664, sprint 101). The contract is kdashdata's (CD-30), pinned in
+`calfeed/vendor/`.
+
+- **The list lives in korg.** Table `tagged_day` (migration 0039), written by
+  the MCP tools `add_tagged_day` and `remove_tagged_day` and read by
+  `list_tagged_days` and `GET /api/tagged-days`. A tag is a day `off` or a
+  named `special` day; `yearly` repeats a birthday every year from its own
+  date on. Ken's own days are data and are never written into this repo.
+- **Holidays are computed, never stored.** `calfeed/us_holidays.py` derives
+  the eleven federal holidays for any year, plus a `<Name> (observed)` entry
+  on the Friday or Monday when a fixed-date one falls on a weekend. A holiday
+  is `off: false` unless Ken also tagged that date off.
+- **One entry per date.** A date's day off, holidays and special days fold
+  into one entry. A special day's stored `short` wins over a holiday's. The
+  window runs from the first of the current month to 92 days ahead, at most 64
+  entries, all in America/Los_Angeles dates.
+- **Hourly, and on change.** The kai user timer
+  `systemd/korg-calendar.{service,timer}` fires every minute. The script reads
+  the live record back and writes only when the window or the days differ, or
+  when the live one is nearly an hour old (`expected_refresh_s: 3600`). korg
+  runs on kubsdb and cannot poke kai, so this is how a new tag shows within a
+  minute. A quiet minute writes and logs nothing.
+- **By hand:** `just calendar-dry` prints the record live korg would produce.
+  `bin/korg-calendar` publishes if needed, and `bin/korg-calendar --force`
+  publishes regardless. `kdash-pub get kdash:calendar` reads back what is live.
+
 ## Destructive operations
 
 `korg-migrate --reset` runs `TRUNCATE node, project, area … CASCADE`. Read that

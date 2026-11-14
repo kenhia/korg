@@ -151,6 +151,15 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
     .await
     .expect("attachment");
 
+    // A tagged day for `remove_tagged_day` to remove (WI 4664). Made-up date
+    // and name: Ken's own days live only in the database.
+    let doomed_tag = repo::add_tagged_day(
+        pool,
+        serde_json::from_value(json!({"date": "2026-03-03", "kind": "off"})).expect("new tag"),
+    )
+    .await
+    .expect("tagged day");
+
     BTreeMap::from([
         // --- work items ---
         (
@@ -315,6 +324,13 @@ async fn fixtures(pool: &PgPool) -> BTreeMap<&'static str, Value> {
             json!({"project": "korg", "name": "renameable", "new_name": "renamed"}),
         ),
         ("delete_area", json!({"project": "korg", "name": "doomed"})),
+        // --- tagged days ---
+        ("list_tagged_days", json!({})),
+        (
+            "add_tagged_day",
+            json!({"date": "2026-04-05", "kind": "special", "label": "Sam's birthday", "short": "Sam", "yearly": true}),
+        ),
+        ("remove_tagged_day", json!({"id": doomed_tag.id})),
     ])
 }
 

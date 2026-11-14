@@ -206,6 +206,16 @@ async fn seed(pool: &PgPool) -> Vec<ReadSpec> {
     repo::create_handoff(pool, handoff_in)
         .await
         .expect("handoff");
+    // Two tagged days (WI 4664): a day off with no label beside a yearly
+    // special day with one, so the nullable columns are measured over both.
+    for tag in [
+        json!({"date": "2026-03-03", "kind": "off"}),
+        json!({"date": "2026-04-05", "kind": "special", "label": "Sam's birthday", "short": "Sam", "yearly": true}),
+    ] {
+        repo::add_tagged_day(pool, serde_json::from_value(tag).expect("new tag"))
+            .await
+            .expect("tagged day");
+    }
 
     vec![
         ReadSpec {
@@ -276,6 +286,11 @@ async fn seed(pool: &PgPool) -> Vec<ReadSpec> {
             read: "list_attachments",
             calls: vec![json!({"node_id": tagged.node_id})],
             full_read: Some(("get_attachment", json!({"img_id": attachment.img_id}))),
+        },
+        ReadSpec {
+            read: "list_tagged_days",
+            calls: vec![json!({})],
+            full_read: None,
         },
         ReadSpec {
             read: "search",

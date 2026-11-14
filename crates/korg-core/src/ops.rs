@@ -243,6 +243,13 @@ pub mod schema {
     pub fn schedule_anchor(_: &mut SchemaGenerator) -> Schema {
         enumerated(&vocab::SCHEDULE_ANCHORS)
     }
+    pub fn tagged_day_kind(_: &mut SchemaGenerator) -> Schema {
+        enumerated(&vocab::TAGGED_DAY_KINDS)
+    }
+    /// `remove_tagged_day`'s narrowing filter: null or omitted means every kind.
+    pub fn tagged_day_kind_filter(_: &mut SchemaGenerator) -> Schema {
+        nullable_enumerated(&vocab::TAGGED_DAY_KINDS)
+    }
     pub fn schedule_status(_: &mut SchemaGenerator) -> Schema {
         enumerated(&vocab::SCHEDULE_STATUSES)
     }
@@ -300,6 +307,11 @@ pub mod schema {
     /// widened, because a required date and a clearable one are different
     /// contracts and a client that reads the schema strictly should be able to
     /// tell them apart.
+    /// An optional `YYYY-MM-DD` selector — omitted means "not selecting by date".
+    pub fn optional_date(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({ "type": ["string", "null"], "format": "date", "description": "YYYY-MM-DD" })
+    }
+
     pub fn soak_date(_: &mut SchemaGenerator) -> Schema {
         json_schema!({
             "type": ["string", "null"],

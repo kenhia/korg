@@ -14,7 +14,7 @@ pub fn server_instructions() -> &'static str {
     "korg MCP server — one typed-node data model over Postgres covering work items, cards, \
      comments, reading-list links, generalized relationships, \
      sprint proposals, programs, reports, handoffs, schedules, attachments, projects and areas, \
-     and a one-call \
+     tagged days, and a one-call \
      Board rollup. \
      Mutations validate their target and return the updated entity; errors are isError \
      results carrying {message, code} where code is one of invalid_input, not_found, \
@@ -23,7 +23,7 @@ pub fn server_instructions() -> &'static str {
      whole filtered corpus on every page — including one whose offset overshot the last \
      row, which returns no items and the same total; \
      the unpaginated ones (list_reports, list_areas, \
-     list_comments, list_awaiting, list_report_sources, list_attachments) return a bare array and \
+     list_comments, list_awaiting, list_report_sources, list_attachments, list_tagged_days) return a bare array and \
      have no archived \
      filter; and the filtered ones \
      (list_proposals, list_programs, list_projects, list_schedules) return {items, omitted}, where `omitted` counts \
@@ -58,6 +58,9 @@ pub fn server_instructions() -> &'static str {
      A report source that filed on a cadence and then stopped is itself an alert: \
      list_report_sources says whether korg can still believe each one, and anything \
      not `fresh` asserts `unknown` rather than its last known status. \
+     Ken's calendar card reads tagged days: add_tagged_day marks a date as his day off \
+     or a special day (yearly for birthdays), remove_tagged_day takes it away, one call \
+     each; holidays are computed by rule and are never tagged. \
      Search is a full-text read over the WHOLE corpus — every node kind plus every \
      COMMENT, which is where resolutions, verdicts and recon notes live. Reach for it \
      instead of paging a list and reading rows yourself when you are looking for \

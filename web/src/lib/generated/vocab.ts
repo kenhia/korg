@@ -54,6 +54,9 @@ export type SourceAssertion = (typeof SOURCE_ASSERTIONS)[number];
 export const ACTIVITY_ACTIONS = ["created", "edited", "status_changed", "comment_added", "comment_edited", "comment_deleted", "related", "unrelated", "attached", "detached"] as const;
 export type ActivityAction = (typeof ACTIVITY_ACTIONS)[number];
 
+export const TAGGED_DAY_KINDS = ["off", "special"] as const;
+export type TaggedDayKind = (typeof TAGGED_DAY_KINDS)[number];
+
 export const ERROR_CODES = ["invalid_input", "not_found", "conflict", "internal"] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 

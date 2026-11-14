@@ -141,7 +141,11 @@ skills); `create_handoff`, `update_handoff`; `update_comment`, `delete_comment`;
 (`create_card`, `update_card`); areas and projects (`create_area`,
 `update_area`, `delete_area`, `create_project`, `update_project`); reports
 (`create_report`, `review_report`, `set_report_source`); and creating or
-materializing a schedule (`create_schedule`, `materialize_schedule`). A refused call is
+materializing a schedule (`create_schedule`, `materialize_schedule`); and tagging
+or untagging Ken's calendar days (`add_tagged_day`, `remove_tagged_day`, sprint
+101 — the slice that added them kept the gate out of scope, so they are refused
+until somebody rules otherwise; `list_tagged_days` is a read like every other
+`list_*`). A refused call is
 a JSON-RPC error and never reaches korg. Widening the set is one allowlist line,
 one test, a GP-17 amendment, and a line in claude-duet's `docs/rulings.md`.
 
