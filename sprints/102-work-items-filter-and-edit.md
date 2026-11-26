@@ -53,3 +53,23 @@ choices that were left to the leg.
 ## Follow-ups
 
 None.
+
+## Deployed
+
+- **When:** 2026-11-26 at about 19:30 UTC (11:30 PST), by the `deploy-kubsdb`
+  skill (from `.sprint-deploy`) on the karc ship turn, cleared by the overseer
+  in korg:5078 comment 5192.
+- **What:** merge `7fedae6` (PR #112) as image
+  `kubsdb.encke-wahoo.ts.net:5000/korg:7fedae6ce067`, with `latest` also
+  pushed. The running container's revision label matches. The rollback target
+  is `korg:c49e2b6aae2e`, confirmed present in the registry.
+- **Checks:** `post-deploy-check.sh --compare` passed. Every row count and the
+  schema were unchanged (work_items 2467, node_max 5098, 39 migrations).
+  `/work-items` and `/work-items/5024` returned 200.
+- **Live checks, in headless Chromium from kai against production:**
+  - The filter gave `hyp` → `khyprland`. `home` and `HOME` each gave
+    `homelab-ai`, `homelab-health`, `k-homelab`. Clearing the box removed the
+    match list.
+  - On `/work-items/5024`: Edit, change the title, Save. The page stayed on the
+    same URL and the API returned the new title. The title was then reverted
+    the same way, and the API confirmed the original.
