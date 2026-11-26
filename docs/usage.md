@@ -74,6 +74,19 @@ covers:
   read and set it through `list_projects detail:"full"` / `update_project` — it
   orders nothing and gates nothing, and it is not the `pinned` that sprint
   proposals and programs carry.
+
+  A **filter box sits under "All projects"** (#5071). It runs a
+  case-insensitive substring match on the project name. While it has text, the
+  rail is one flat alphabetical list of the matches, with no band and no
+  category headers, so `home` gives `homelab-ai`, `homelab-health` and
+  `k-homelab` without any scrolling. It matches only the projects the rail is
+  showing, so the *show all projects* tick still decides whether non-active
+  projects are included. Escape or clearing the box restores the normal rail.
+  The text is not remembered across navigation.
+
+  **A work item's own page edits in place** (#5024). `/work-items/<n>` is where
+  "find by ID" and pasted links land. Its **Edit** button opens the same form
+  the list uses, and Save returns to the read view without leaving the page.
 - **Review completed** (`/work-items/review`) — the close-out page, reached by
   the `Review` button beside `Only Prop` rather than from the top nav. Lists
   **only** `done` and `resolved` items (a status-filtered server read, so an
