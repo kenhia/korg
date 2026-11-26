@@ -167,6 +167,25 @@
   // copy of a shared idea in this rail's lifetime.
   const projectGroups = $derived(railGroups(visibleProjects));
 
+  // WI #5071 — a filter box under "All projects", so a project that is not
+  // starred can be reached without scrolling the rail and back up again.
+  //
+  // A straight case-insensitive substring match on the name, over what the rail
+  // is *showing* (so "show all projects" still decides whether non-active ones
+  // are in play). While it has text, the rail is one flat alphabetical list of
+  // matches — no starred band, no category headers — because grouping a
+  // three-row result only spreads it out again. Clearing it restores the normal
+  // rail. Deliberately not sticky: a filter that survives navigation is a rail
+  // that silently hides projects the next time the page is opened.
+  let railFilter = $state("");
+  const railMatches = $derived.by(() => {
+    const q = railFilter.trim().toLowerCase();
+    if (q === "") return null;
+    return visibleProjects
+      .filter((p) => p.name.toLowerCase().includes(q))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  });
+
   function openEditProject(p: ProjectRow) {
     editProject = p;
     eStatus = p.status;
@@ -819,7 +838,24 @@
               onclick={() => pick(ALL)}>All projects</button>
             {@render openCount(allOpen, "open work items across every project shown")}
           </div>
-          {#if groupByCategory}
+          <div class="border-t border-[var(--color-border)] px-2 py-1.5">
+            <input
+              type="search"
+              class="w-full rounded bg-[var(--color-surface-hi)] px-2 py-1 text-sm outline-none"
+              placeholder="Filter projects…"
+              aria-label="Filter projects"
+              data-testid="project-filter"
+              bind:value={railFilter}
+              onkeydown={(e) => e.key === "Escape" && (railFilter = "")}
+            />
+          </div>
+          {#if railMatches}
+            <div class="border-t border-[var(--color-border)]" data-testid="project-filter-matches">
+              {#each railMatches as p (p.id)}{@render projectRow(p)}{:else}
+                <p class="px-3 py-2 text-xs text-[var(--color-muted)]">No project matches “{railFilter.trim()}”.</p>
+              {/each}
+            </div>
+          {:else if groupByCategory}
             {#each projectGroups as g (g.key)}
               <!-- A headerless band (WI #1629) still gets the rule: Ken's mock
                    reads "All Projects / --- / kagviz kfdc korg / --- /
