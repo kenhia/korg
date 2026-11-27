@@ -53,3 +53,46 @@ under oversight.
   listed; `remove_tagged_day id 15` → removed; listed again, gone. Negative
   controls `update_proposal` and `create_card` refused `-32602`. Torn down:
   no process, port closed, state removed.
+
+## Deployed
+
+Merged as `9702a10` (PR #113; CI green on the PR: rust 10m1s, web 21s). This
+was a gate-only deploy to **krgate** at 2026-11-27 12:20 PST, under the
+overseer's clearance (korg:5108 comment 5235).
+
+**The declared `deploy-kubsdb` step was skipped on purpose**, by the
+overseer's ruling. korg-api does not depend on korg-gate (`cargo tree -p
+korg-api` shows no korg-gate edge), and nothing server-side changed. So the
+korg service was neither rebuilt nor restarted, and the sibling legs were not
+disturbed.
+
+1. **Built from merged main** on kai with `just gate-pi`: aarch64 sha256
+   `7c73c277…`.
+2. **Verified the exact build before installing it, with no sign-in on the
+   live gate.** It ran as a throwaway on krgate on `127.0.0.1:18475`, with a
+   `mktemp -d` state dir, a test passphrase, and the live gate's own
+   upstream. `smoke103.py` gave the same results as on kai:
+   - `tools/list` returned 38 tools, including all three tagged-day tools.
+   - `list_tagged_days` read the list.
+   - `add_tagged_day 1999-01-04 off` created id 16. It was listed, then
+     removed with `remove_tagged_day`, and was gone afterwards.
+   - **Negative control:** `update_proposal` and `create_card` were refused
+     with `-32602`.
+
+   Teardown: no process, port closed, state and binary deleted.
+3. **Installed** with `sudo install -m 0755` and `systemctl restart korg-gate`.
+   There was no env or unit change. The service is `active`, and
+   `/usr/local/bin/korg-gate` hashes to `7c73c277…`. The previous binary,
+   `7f01d365…` (sprint 099), is the rollback target, and a copy is at
+   `/tmp/korg-gate-prev` on krgate. The journal's start line names both
+   upstreams.
+4. **Live checks needing no sign-in**, from kai over the public path:
+   - `GET /healthz` returned 200.
+   - `POST /mcp` and `POST /klams/mcp` returned 401, and the korg one points
+     at its resource metadata.
+   - korg metadata still reads `resource_name: korg` and `korg:read`, and
+     klams reads `klams` and `klams:read`.
+
+**Still pending: Ken's check from claude.ai.** Confirm the korg connector
+lists `add_tagged_day` and `remove_tagged_day`, and that both are set to
+**Needs approval**.
