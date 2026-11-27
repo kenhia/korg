@@ -133,6 +133,7 @@ test that says widening it is a decision:
 | `relate` | Wire `depends_on`/`covers` while scheduling. `origin` is overwritten |
 | `propose_sprint`, `create_program` | Duet's charter: scheduling the work its scans find |
 | `update_schedule` | Retire, pause or resume a schedule — **status only** (sprint 099, below) |
+| `add_tagged_day`, `remove_tagged_day` | Tag and untag Ken's calendar days — the whole tools (sprint 103, WI 4676, Ken 2026-11-27) |
 
 **Refused by name** (`REFUSED_TOOLS`): `update_proposal` and `update_program`
 (status transitions start and finish sprints, and stay with Ken and the sprint
@@ -141,11 +142,10 @@ skills); `create_handoff`, `update_handoff`; `update_comment`, `delete_comment`;
 (`create_card`, `update_card`); areas and projects (`create_area`,
 `update_area`, `delete_area`, `create_project`, `update_project`); reports
 (`create_report`, `review_report`, `set_report_source`); and creating or
-materializing a schedule (`create_schedule`, `materialize_schedule`); and tagging
-or untagging Ken's calendar days (`add_tagged_day`, `remove_tagged_day`, sprint
-101 — the slice that added them kept the gate out of scope, so they are refused
-until somebody rules otherwise; `list_tagged_days` is a read like every other
-`list_*`). A refused call is
+materializing a schedule (`create_schedule`, `materialize_schedule`). Ken's
+calendar-day tools (sprint 101) were refused by default until his ruling of
+2026-11-27 moved the add/remove pair into the write set above;
+`list_tagged_days` was always a read like every other `list_*`. A refused call is
 a JSON-RPC error and never reaches korg. Widening the set is one allowlist line,
 one test, a GP-17 amendment, and a line in claude-duet's `docs/rulings.md`.
 

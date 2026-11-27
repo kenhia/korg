@@ -282,29 +282,37 @@ gzip stream, and rejects anything under 10 KB before renaming it into place. So
 a file present in `/gratch/backups/korg/` is a file that passed those checks —
 absence, not corruption, is the failure mode to watch for.
 
-**The dump is no longer all of korg's state.** Sprint 056 added image
-attachments (#582/#1119): the metadata is in Postgres like everything else, but
-the *bytes* live on kubsdb's local SSD at `/datastore/korg/images`, bind-mounted
-into the container. That directory has **no second copy yet** — the nightly
-rsync to `/gratch` is slice 3 of the Images program (k-homelab #1122). Until it
-lands:
+**The dump is not all of korg's state.** Sprint 056 added image attachments
+(#582/#1119): the metadata is in Postgres like everything else, but the *bytes*
+live on kubsdb's local SSD at `/datastore/korg/images`, bind-mounted into the
+container. They have their own nightly copy:
+
+| | |
+|---|---|
+| What | `rsync -rlt` of `/datastore/korg/images/` — additive: a blob deleted from the store stays in the copy |
+| Where | `/gratch/backups/korg/images/` on kubsdb (NAS-backed, like the dumps); the last sync's time is in `/gratch/backups/korg/.images-last-sync` |
+| When | `korg-images-sync.timer`, `OnCalendar=*-*-* 03:47`, after the dump |
+| Script | `/usr/local/bin/korg-images-sync.sh` on kubsdb — refuses to run if `/gratch` is not mounted, rather than "backing up" to local disk |
+| Managed by | k-homelab (Images program slice 3, #1122) |
+
+The November 2026 drill restored it byte-identical (below). The dump and the
+image copy are taken half an hour apart and are not one snapshot:
 
 - A restore from a dump reproduces every attachment *row* and every
-  `has_attachment` edge. If the store was lost with the machine, those rows
-  reference bytes that exist nowhere, and korg serves a 404 saying exactly that
-  (`recorded but its bytes are missing from the store`) rather than a 500.
+  `has_attachment` edge. A blob uploaded after the night's sync has a row in a
+  later dump and no bytes anywhere if the SSD is then lost, and korg serves a
+  404 saying exactly that (`recorded but its bytes are missing from the store`)
+  rather than a 500.
 - `GET /api/img/stats` reports `total_bytes` as korg *believes* it — summed from
   recorded sizes. Comparing it against `du -sb /datastore/korg/images` is how you
   find the gap in either direction: bytes-without-rows are stranded blobs,
   rows-without-bytes are a store that did not come back.
 
-Losing kubsdb's SSD therefore costs the screenshots and nothing else. That is a
-known, accepted, temporary gap — not a surprise to discover mid-incident.
-
 ### Is the backup current?
 
 ```bash
-ssh kubsdb 'ls -la /gratch/backups/korg/ | tail -3; systemctl list-timers korg-backup.timer'
+ssh kubsdb 'ls -la /gratch/backups/korg/ | tail -3; cat /gratch/backups/korg/.images-last-sync
+            systemctl list-timers korg-backup.timer korg-images-sync.timer'
 ```
 
 The newest dump should be from last night and should be *larger* than its
@@ -335,7 +343,9 @@ dumps are plain SQL, not custom-format archives, and reaching for `pg_restore`
 on one produces a confusing error at the worst possible moment.
 
 A restore rewinds the database but **not** `/datastore/korg/images`, which is
-outside Postgres entirely. Rolling back to a dump from before some uploads
+outside Postgres entirely. If the store itself was lost, copy it back from
+`/gratch/backups/korg/images/` first (`rsync -rlt` the other way, with korg
+stopped). Rolling back to a dump from before some uploads
 leaves their blobs on disk with no rows pointing at them — harmless, invisible,
 and reconcilable by comparing `GET /api/img/stats` against `du` on the store.
 The reverse (rows without bytes) is the one worth noticing, and it renders as a
@@ -357,10 +367,14 @@ EOF
 ### Restore drills
 
 A backup nobody has restored is a hypothesis. The last verified restore was
-2026-07-08 (WI #234), into a scratch database as above. Worth repeating roughly
-quarterly, and worth repeating after any change to the schema's shape — the
-drill costs a few minutes and is the only thing that converts "we have dumps"
-into "we can recover".
+2026-11-13 (k-homelab WI 4587, comment 4623), part of the quarterly homelab
+drill: the night's dump into `korg_scratch` matched live table for table and
+row for row, and the image copy came back with 0 differences against the store,
+every attachment row finding its blob by sha256. The previous one was
+2026-07-08 (WI #234). The homelab drill is korg schedule 1110, next due
+2027-02-13. Worth repeating roughly quarterly, and worth repeating after any
+change to the schema's shape — the drill costs a few minutes and is the only
+thing that converts "we have dumps" into "we can recover".
 
 ## Querying the live database
 

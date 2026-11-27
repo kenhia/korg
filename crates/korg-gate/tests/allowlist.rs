@@ -61,16 +61,18 @@ fn every_read_shaped_tool_in_the_catalogue_is_a_read() {
 }
 
 #[test]
-fn the_write_set_is_exactly_the_ruled_nine() {
+fn the_write_set_is_exactly_the_ruled_eleven() {
     assert_eq!(
         WRITE_TOOLS,
         [
             "add_comment",
+            "add_tagged_day",
             "create_link",
             "create_program",
             "create_work_item",
             "propose_sprint",
             "relate",
+            "remove_tagged_day",
             "set_awaiting",
             "update_schedule",
             "update_work_item"
@@ -140,7 +142,7 @@ async fn every_refused_tool_is_refused_on_call_and_the_list_is_reads_plus_writes
     expected.sort_unstable();
     names.sort_unstable();
     assert_eq!(names, expected);
-    assert_eq!(names.len(), 36); // 27 reads (list_tagged_days joined in sprint 101) + 9 writes
+    assert_eq!(names.len(), 38); // 27 reads (list_tagged_days joined in sprint 101) + 11 writes (the tagged-day pair, sprint 103)
 }
 
 #[tokio::test]

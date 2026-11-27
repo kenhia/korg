@@ -58,16 +58,19 @@ pub const READ_TOOLS: &[&str] = &[
 /// korg writes exposed through the gate (WI 4244, ruled by Ken 2026-10-31):
 /// the scheduling set — comment, raise Awaiting Ken, file and update work
 /// items, save a link, wire edges, propose sprints and programs — plus
-/// `update_schedule` (WI 4322, Ken 2026-11-03), narrowed by [`LIMITED_TOOLS`].
+/// `update_schedule` (WI 4322, Ken 2026-11-03), narrowed by [`LIMITED_TOOLS`],
+/// and tagging and untagging Ken's calendar days (WI 4676, Ken 2026-11-27).
 /// Widening it is a decision (korg+ GP-17), not an edit. Sorted; keep it that
 /// way.
 pub const WRITE_TOOLS: &[&str] = &[
     "add_comment",
+    "add_tagged_day",
     "create_link",
     "create_program",
     "create_work_item",
     "propose_sprint",
     "relate",
+    "remove_tagged_day",
     "set_awaiting",
     "update_schedule",
     "update_work_item",
@@ -104,14 +107,11 @@ pub fn limited(name: &str) -> Option<&'static LimitedTool> {
 /// korg tools ruled *out* of the korg door (WI 4244's ruling): proposal and
 /// program status changes, handoffs, comment and link edits and deletes,
 /// `unrelate`, cards, areas, projects, reports, and creating or materializing
-/// a schedule. Tagging and untagging Ken's calendar days (WI 4664) joined it
-/// unruled-by-default: the proposal kept korg-gate out of that slice, and
-/// opening them is a GP-17 decision. Not consulted at
+/// a schedule. Not consulted at
 /// runtime — anything in neither [`READ_TOOLS`] nor [`WRITE_TOOLS`] is refused
 /// — but the catalogue test needs it to tell a tool somebody ruled on from one
 /// nobody has seen yet. Sorted.
 pub const REFUSED_TOOLS: &[&str] = &[
-    "add_tagged_day",
     "create_area",
     "create_card",
     "create_handoff",
@@ -123,7 +123,6 @@ pub const REFUSED_TOOLS: &[&str] = &[
     "delete_link",
     "mark_link_read",
     "materialize_schedule",
-    "remove_tagged_day",
     "review_report",
     "set_report_source",
     "unrelate",
